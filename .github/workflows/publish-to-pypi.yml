@@ -1,0 +1,45 @@
+name: Publish Python packages to PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+
+    environment:
+      name: pypi
+
+    strategy:
+      matrix:
+        package:
+          - glyff
+          - glyff-file-store
+          - glyff-pydantic
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Hatch
+        run: pip install hatch
+
+      - name: Build package
+        working-directory: packages/${{ matrix.package }}
+        run: hatch build
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/${{ matrix.package }}/dist
