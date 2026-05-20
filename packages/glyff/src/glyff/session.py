@@ -1,0 +1,52 @@
+from .context import Context, TransactionScope, reset_context, set_context
+from .interfaces import ArgsHasher, SessionStore
+from .sequencer import Sequencer
+
+
+class Session:
+    """
+    Manages the lifecycle of a workflow execution.
+    It sets up the execution context and the top-level transaction.
+    """
+
+    def __init__(
+        self,
+        id: str,
+        store: SessionStore,
+        hasher: ArgsHasher,
+    ):
+        self._id = id
+        self._store = store
+        self._hasher = hasher
+        self._context: Context | None = None
+        self._context_token = None
+
+    @property
+    def id(self) -> str:
+        """Returns the ID of this Session."""
+        return self._id
+
+    @property
+    def store(self) -> SessionStore:
+        """Returns the SessionStore used by this Session."""
+        return self._store
+
+    async def __aenter__(self) -> "Session":
+        self._context = Context(
+            session_id=self._id,
+            store=self._store,
+            sequencer=Sequencer(),
+            hasher=self._hasher,
+            transaction_scope_factory=lambda: TransactionScope(self._store),
+        )
+        self._context_token = set_context(self._context)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._context and self._context_token:
+            # The top-level transaction is managed by the TransactionScope
+            # obtained via get_transaction_scope(). We just need to ensure
+            # its __aexit__ is called if it was created.
+            if top_level_scope := self._context.get_transaction_scope():
+                await top_level_scope.__aexit__(exc_type, exc_val, exc_tb)
+            reset_context(self._context_token)

@@ -1,0 +1,10 @@
+[tool.uv.workspace]
+members = [
+    "packages/glyff",
+    "packages/glyff-file-store",
+    "packages/glyff-pydantic",
+]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+asyncio_mode = "auto"
