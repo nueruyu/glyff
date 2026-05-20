@@ -1,0 +1,14 @@
+{
+  "include": [
+    "packages/glyff",
+    "packages/glyff-file-store",
+    "packages/glyff-pydantic"
+  ],
+  "ignore": {
+    "customPatterns": []
+  },
+  "output": {
+    "filePath": "./out/repomix/glyff-full.md",
+    "style": "markdown"
+  }
+}
