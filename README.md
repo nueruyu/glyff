@@ -8,9 +8,6 @@ and resuming them later from the same point.
 ## Example
 
 ```python
-import asyncio
-import uuid
-
 import glyff
 import glyff.exceptions
 import glyff_file_store
@@ -55,7 +52,9 @@ async def main(session_id: str, answer: str | None = None):
             result = await greet("Alice", answer=answer)
             print(result)
     except glyff.exceptions.YieldException:
-        print(f"Session paused. Resume with: --session-id {session_id} --answer <value>")
+        print(
+            f"Session paused. Resume with: --session-id {session_id} --answer <value>"
+        )
 
 
 if __name__ == "__main__":

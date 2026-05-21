@@ -1,10 +1,22 @@
 [project]
 name = "glyff"
 description = "Guaranteed Lightweight Yieldable Function Foundation for checkpointed and resumable task execution."
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
-dependencies = [
-]
+dependencies = []
 dynamic = ["version"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Typing :: Typed",
+]
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
