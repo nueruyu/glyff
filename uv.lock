@@ -29,7 +29,6 @@ wheels = [
 
 [[package]]
 name = "glyff"
-version = "0.1.0"
 source = { editable = "packages/glyff" }
 
 [package.dev-dependencies]
@@ -50,7 +49,6 @@ dev = [
 
 [[package]]
 name = "glyff-file-store"
-version = "0.1.0"
 source = { editable = "packages/glyff-file-store" }
 dependencies = [
     { name = "glyff" },
@@ -73,7 +71,6 @@ dev = [
 
 [[package]]
 name = "glyff-pydantic"
-version = "0.1.0"
 source = { editable = "packages/glyff-pydantic" }
 dependencies = [
     { name = "glyff" },
