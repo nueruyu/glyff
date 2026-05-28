@@ -26,8 +26,9 @@ class IdentityAware:
 class AnotherIdentityAware:
     _id = "class_id_456"
 
-    def __glyff_identity__(self) -> str:
-        return self._id
+    @classmethod
+    def __glyff_identity__(cls) -> str:
+        return cls._id
 
     @classmethod
     def class_method(cls, x: int):
@@ -90,7 +91,6 @@ def test_hash_non_serializable_raises_type_error():
         pass
 
     sig = inspect.signature(func_with_obj)
-    import pytest
 
     with pytest.raises(TypeError, match="could not be serialized to JSON"):
         h.hash_args(func_with_obj, sig, (object(),), {})
@@ -99,51 +99,53 @@ def test_hash_non_serializable_raises_type_error():
 def test_method_hash_differs_for_different_instances():
     inst1 = IdentityAware("id1")
     inst2 = IdentityAware("id2")
-    sig = inspect.signature(inst1.method)
+    func = IdentityAware.method
+    sig = inspect.signature(func)
 
-    h1 = h.hash_args(inst1.method, sig, (inst1, 10), {})
-    h2 = h.hash_args(inst2.method, sig, (inst2, 10), {})
+    h1 = h.hash_args(func, sig, (inst1, 10), {})
+    h2 = h.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 != h2
 
 
 def test_method_hash_is_same_for_same_instance():
     inst = IdentityAware("id1")
-    sig = inspect.signature(inst.method)
+    func = IdentityAware.method
+    sig = inspect.signature(func)
 
-    h1 = h.hash_args(inst.method, sig, (inst, 10), {})
-    h2 = h.hash_args(inst.method, sig, (inst, 10), {})
+    h1 = h.hash_args(func, sig, (inst, 10), {})
+    h2 = h.hash_args(func, sig, (inst, 10), {})
 
     assert h1 == h2
 
 
 def test_class_method_hash_includes_class_identity():
-    cls2 = AnotherIdentityAware
-    sig2 = inspect.signature(cls2.class_method)
+    func = AnotherIdentityAware.class_method.__func__
+    sig = inspect.signature(func)
 
-    h1 = h.hash_args(cls2.class_method, sig2, (cls2, 10), {})
-    h2 = h.hash_args(
-        AnotherIdentityAware.class_method, sig2, (AnotherIdentityAware, 10), {}
-    )
+    h1 = h.hash_args(func, sig, (AnotherIdentityAware, 10), {})
+    h2 = h.hash_args(func, sig, (AnotherIdentityAware, 10), {})
 
     assert h1 == h2
 
 
 def test_hash_method_on_class_without_identity_raises_type_error():
     inst = NoIdentity()
-    sig = inspect.signature(inst.method)
+    func = NoIdentity.method
+    sig = inspect.signature(func)
 
     with pytest.raises(
         TypeError, match="does not implement a callable '__glyff_identity__' method"
     ):
-        h.hash_args(inst.method, sig, (inst, 10), {})
+        h.hash_args(func, sig, (inst, 10), {})
 
 
 def test_hash_method_on_class_with_non_callable_identity_raises_type_error():
     inst = NonCallableIdentity()
-    sig = inspect.signature(inst.method)
+    func = NonCallableIdentity.method
+    sig = inspect.signature(func)
 
     with pytest.raises(
         TypeError, match="does not implement a callable '__glyff_identity__' method"
     ):
-        h.hash_args(inst.method, sig, (inst, 10), {})
+        h.hash_args(func, sig, (inst, 10), {})

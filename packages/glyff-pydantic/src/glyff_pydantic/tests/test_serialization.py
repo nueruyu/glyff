@@ -89,10 +89,11 @@ def test_method_hash_differs_for_different_instances():
     inst1 = IdentityAware("id1")
     inst2 = IdentityAware("id2")
     model = MyModel(x=1, y="a")
-    sig = inspect.signature(inst1.method)
+    func = IdentityAware.method
+    sig = inspect.signature(func)
 
-    h1 = h.hash_args(inst1.method, sig, (inst1, model), {})
-    h2 = h.hash_args(inst2.method, sig, (inst2, model), {})
+    h1 = h.hash_args(func, sig, (inst1, model), {})
+    h2 = h.hash_args(func, sig, (inst2, model), {})
 
     assert h1 != h2
 
@@ -100,10 +101,11 @@ def test_method_hash_differs_for_different_instances():
 def test_method_hash_is_same_for_same_instance():
     inst = IdentityAware("id1")
     model = MyModel(x=1, y="a")
-    sig = inspect.signature(inst.method)
+    func = IdentityAware.method
+    sig = inspect.signature(func)
 
-    h1 = h.hash_args(inst.method, sig, (inst, model), {})
-    h2 = h.hash_args(inst.method, sig, (inst, model), {})
+    h1 = h.hash_args(func, sig, (inst, model), {})
+    h2 = h.hash_args(func, sig, (inst, model), {})
 
     assert h1 == h2
 
@@ -111,9 +113,10 @@ def test_method_hash_is_same_for_same_instance():
 def test_hash_method_on_class_without_identity_raises_type_error():
     inst = NoIdentity()
     model = MyModel(x=1, y="a")
-    sig = inspect.signature(inst.method)
+    func = NoIdentity.method
+    sig = inspect.signature(func)
 
     with pytest.raises(
         TypeError, match="does not implement a callable '__glyff_identity__' method"
     ):
-        h.hash_args(inst.method, sig, (inst, model), {})
+        h.hash_args(func, sig, (inst, model), {})
