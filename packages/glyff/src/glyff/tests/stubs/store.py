@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any, NamedTuple
 
 from glyff import ExecutionId
@@ -27,6 +28,14 @@ class StubExecution(Execution):
     async def fail(self, error: str) -> None:
         self._store._record("fail", self._id, error)
         await self._store.execution_impl.fail(error)
+
+    async def yield_item(self, item: Any, item_type: Any) -> None:
+        self._store._record("yield_item", self._id, item, item_type)
+        await self._store.execution_impl.yield_item(item, item_type)
+
+    async def complete_stream(self) -> None:
+        self._store._record("complete_stream", self._id)
+        await self._store.execution_impl.complete_stream()
 
 
 class StubTransaction(Transaction):
@@ -72,3 +81,9 @@ class StubSessionStore(SessionStore):
     ) -> ExecutionRecord | None:
         self._record("get_execution_record", execution_id, return_type)
         return await self._mem_store.get_execution_record(execution_id, return_type)
+
+    def get_stream_items(
+        self, execution_id: ExecutionId, item_type: Any
+    ) -> AsyncIterator[Any]:
+        self._record("get_stream_items", execution_id, item_type)
+        return self._mem_store.get_stream_items(execution_id, item_type)

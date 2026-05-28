@@ -1,5 +1,6 @@
 import inspect
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from typing import Any, Callable
 
 from .models import ExecutionId, ExecutionRecord
@@ -35,6 +36,16 @@ class Execution(ABC):
     @abstractmethod
     async def fail(self, error: str) -> None:
         """Marks the task as failed with an error message."""
+        ...
+
+    @abstractmethod
+    async def yield_item(self, item: Any, item_type: Any) -> None:
+        """Records a single yielded item from a streaming execution."""
+        ...
+
+    @abstractmethod
+    async def complete_stream(self) -> None:
+        """Marks a streaming execution as successfully completed."""
         ...
 
 
@@ -89,4 +100,11 @@ class SessionStore(ABC):
         Gets the persisted state of a task.
         The result, if any, is deserialized to the given type.
         """
+        ...
+
+    @abstractmethod
+    def get_stream_items(
+        self, execution_id: ExecutionId, item_type: Any
+    ) -> AsyncIterator[Any]:
+        """Gets the persisted items from a streaming execution."""
         ...

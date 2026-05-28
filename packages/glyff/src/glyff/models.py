@@ -6,6 +6,15 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class ReturnTypeInfo:
+    """Holds structured information about a function's return type."""
+
+    full_type: type
+    is_streaming: bool = False
+    item_type: Any = Any  # type of items if is_streaming is True
+
+
+@dataclass(frozen=True)
 class ExecutionId:
     """
     A unique, deterministic identifier for a task call.

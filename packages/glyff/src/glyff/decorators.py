@@ -1,10 +1,11 @@
 import functools
 import inspect
-from typing import Any, Callable, ParamSpec, TypeVar, cast
+from collections.abc import AsyncIterator
+from typing import Any, Callable, ParamSpec, TypeVar, cast, get_args, get_origin
 
 from .context import get_context
 from .executor import execute
-from .models import ExecutionId
+from .models import ExecutionId, ReturnTypeInfo
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -28,24 +29,67 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
             f"Please ensure all types are correctly defined and imported. Error: {e}"
         ) from e
 
-    @functools.wraps(func)
-    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        ctx = get_context()
-        parent_id = ctx.current_execution_id
-        seq = await ctx.sequencer.next(parent_id, task_name)
-        args_hash = ctx.hasher.hash_args(func, sig, args, kwargs)
-        execution_id = ExecutionId(
-            parent_id=parent_id, name=task_name, sequence=seq, args_hash=args_hash
-        )
+    is_streaming = get_origin(return_type) is AsyncIterator
+    item_type = Any
+    if is_streaming:
+        type_args = get_args(return_type)
+        if type_args:
+            item_type = type_args[0]
 
-        result = await execute(
-            ctx=ctx,
-            execution_id=execution_id,
-            func=func,
-            args=args,
-            kwargs=kwargs,
-            return_type=return_type,
-        )
-        return cast(R, result)
+    type_info = ReturnTypeInfo(
+        full_type=return_type, is_streaming=is_streaming, item_type=item_type
+    )
 
-    return cast(Callable[P, R], wrapper)
+    if type_info.is_streaming:
+        # For streaming functions: return a sync wrapper that directly gives an
+        # AsyncIterator without needing `await`. This matches the declared return
+        # type (AsyncIterator[X]) and avoids Pylance "not awaitable" errors.
+        @functools.wraps(func)
+        def streaming_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            async def _gen() -> AsyncIterator[Any]:
+                ctx = get_context()
+                parent_id = ctx.current_execution_id
+                seq = await ctx.sequencer.next(parent_id, task_name)
+                args_hash = ctx.hasher.hash_args(func, sig, args, kwargs)
+                execution_id = ExecutionId(
+                    parent_id=parent_id,
+                    name=task_name,
+                    sequence=seq,
+                    args_hash=args_hash,
+                )
+                stream = await execute(
+                    ctx=ctx,
+                    execution_id=execution_id,
+                    func=func,
+                    args=args,
+                    kwargs=kwargs,
+                    type_info=type_info,
+                )
+                async for item in stream:
+                    yield item
+
+            return cast(R, _gen())
+
+        return cast(Callable[P, R], streaming_wrapper)
+    else:
+
+        @functools.wraps(func)
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            ctx = get_context()
+            parent_id = ctx.current_execution_id
+            seq = await ctx.sequencer.next(parent_id, task_name)
+            args_hash = ctx.hasher.hash_args(func, sig, args, kwargs)
+            execution_id = ExecutionId(
+                parent_id=parent_id, name=task_name, sequence=seq, args_hash=args_hash
+            )
+            result = await execute(
+                ctx=ctx,
+                execution_id=execution_id,
+                func=func,
+                args=args,
+                kwargs=kwargs,
+                type_info=type_info,
+            )
+            return cast(R, result)
+
+        return cast(Callable[P, R], wrapper)

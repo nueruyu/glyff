@@ -6,7 +6,7 @@ from glyff.context import Context, TransactionScope, reset_context, set_context
 from glyff.exceptions import ExecutionFailedError, YieldException
 from glyff.executor import execute
 from glyff.interfaces import Serializer
-from glyff.models import ExecutionId, ExecutionStatus
+from glyff.models import ExecutionId, ExecutionStatus, ReturnTypeInfo
 from glyff.tests.stubs.store import StubSessionStore
 
 
@@ -25,6 +25,10 @@ def set_context_for_tests(test_context: Context):
     reset_context(token)
 
 
+def _type_info(t: type) -> ReturnTypeInfo:
+    return ReturnTypeInfo(full_type=t, is_streaming=False)
+
+
 async def test_successful_execution(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,
@@ -41,7 +45,7 @@ async def test_successful_execution(
         func=sample_func,
         args=(),
         kwargs={},
-        return_type=str,
+        type_info=_type_info(str),
     )
 
     assert result == "hello"
@@ -88,7 +92,7 @@ async def test_completed_task_is_skipped(
         func=sample_func,
         args=(),
         kwargs={},
-        return_type=str,
+        type_info=_type_info(str),
     )
 
     assert result == "cached_result"
@@ -121,7 +125,7 @@ async def test_failed_task_raises_error(
             func=sample_func,
             args=(),
             kwargs={},
-            return_type=str,
+            type_info=_type_info(str),
         )
     assert not executed
 
@@ -141,7 +145,7 @@ async def test_session_interrupted_skips_failure_staging(
             func=sample_func,
             args=(),
             kwargs={},
-            return_type=str,
+            type_info=_type_info(str),
         )
 
     assert not test_context.tracer.call_stack
@@ -166,7 +170,7 @@ async def test_general_exception_stages_failure(
             func=sample_func,
             args=(),
             kwargs={},
-            return_type=str,
+            type_info=_type_info(str),
         )
 
     assert not test_context.tracer.call_stack
@@ -193,7 +197,7 @@ async def test_base_exception_triggers_rollback(
             func=sample_func,
             args=(),
             kwargs={},
-            return_type=str,
+            type_info=_type_info(str),
         )
 
     assert not mock_store.get_calls("complete")

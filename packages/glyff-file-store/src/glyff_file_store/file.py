@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypedDict
@@ -29,18 +31,20 @@ _EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
 
 
 class _FileTransaction(Transaction):
-    def __init__(self, client: FileClient):
+    def __init__(self, client: FileClient, store: "FileSessionStore"):
         self._client = client
+        self._store = store
 
     async def commit(self) -> None:
-        await self._client.commit_staged()
+        # 2PC: executions log is the final commit path (durability marker)
+        await self._client.commit_staged(final_commit_path=self._store.executions_path)
 
     async def rollback(self) -> None:
         await self._client.clear_staged()
 
 
 class _FileExecution(Execution):
-    def __init__(self, store: FileSessionStore, execution_id: ExecutionId):
+    def __init__(self, store: "FileSessionStore", execution_id: ExecutionId):
         self._store = store
         self._id = execution_id
 
@@ -65,6 +69,24 @@ class _FileExecution(Execution):
         entry = self._create_log_entry(ExecutionStatus.FAILED, error=error)
         await self._store._add_log_entry(entry)
 
+    async def yield_item(self, item: Any, item_type: Any) -> None:
+        stream_path = self._store._id_to_stream_path(self._id)
+        serialized_bytes = self._store._serializer.serialize(item, item_type)
+        line_bytes = serialized_bytes + b"\n"
+
+        async def _on_write() -> bytes:
+            return line_bytes
+
+        await self._store._client.stage_append(stream_path, _on_write)
+
+    async def complete_stream(self) -> None:
+        stream_path = self._store._id_to_stream_path(self._id)
+        entry = self._create_log_entry(
+            ExecutionStatus.COMPLETED,
+            result={"stream_path": str(stream_path)},
+        )
+        await self._store._add_log_entry(entry)
+
 
 class FileSessionStore(SessionStore):
     """
@@ -77,7 +99,7 @@ class FileSessionStore(SessionStore):
         client: FileClient,
         serializer: Serializer,
         format: str = "jsonl",
-        **kwargs,
+        **_,
     ):
         if format not in ("json", "jsonl"):
             raise ValueError("format must be either 'json' or 'jsonl'")
@@ -87,20 +109,20 @@ class FileSessionStore(SessionStore):
         self._executions_path = Path(f"executions.{format}")
 
         self._states: dict[str, ExecutionStatus] = {}
-        self._results: dict[str, Any] = {}  # Caches JSON-compatible objects
+        self._results: dict[str, Any] = {}
         self._errors: dict[str, str] = {}
 
         self._staged_log_entries: list[LogEntry] = []
         self._lock = asyncio.Lock()
 
         self._load_executions()
+        self._cleanup_orphan_streams()
 
     @property
     def executions_path(self) -> Path:
         return self._executions_path
 
     def _id_to_callstack(self, execution_id: ExecutionId) -> list[str]:
-        """Converts an ExecutionId to a call stack list (outermost → innermost)."""
         frames: list[str] = []
         current: ExecutionId | None = execution_id
         while current is not None:
@@ -110,7 +132,6 @@ class FileSessionStore(SessionStore):
         return frames
 
     def _id_to_key(self, execution_id: ExecutionId) -> str:
-        """Converts an ExecutionId to a stable, unique string key."""
         parent_path = (
             f"{self._id_to_key(execution_id.parent_id)}/"
             if execution_id.parent_id
@@ -118,13 +139,16 @@ class FileSessionStore(SessionStore):
         )
         return f"{parent_path}{execution_id.name}#{execution_id.sequence}:{execution_id.args_hash}"
 
+    def _id_to_stream_path(self, execution_id: ExecutionId) -> Path:
+        key = self._id_to_key(execution_id)
+        digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return Path(f"streams/{digest}.stream.jsonl")
+
     @staticmethod
     def _callstack_to_key(call_stack: list[str]) -> str:
-        """Converts a call stack list back to the stable string key."""
         return "/".join(call_stack)
 
     def _load_executions(self) -> None:
-        """Parses the executions file to build the in-memory state."""
         abs_path = self._client.resolve(self._executions_path)
         if not abs_path.exists():
             return
@@ -133,7 +157,7 @@ class FileSessionStore(SessionStore):
         with open(abs_path, "r", encoding="utf-8") as f:
             if self._format == "jsonl":
                 lines_to_process.extend(f.readlines())
-            else:  # json
+            else:
                 content = f.read()
                 if not content.strip():
                     return
@@ -141,7 +165,7 @@ class FileSessionStore(SessionStore):
                     entries = json.loads(content)
                     lines_to_process.extend([json.dumps(e) for e in entries])
                 except json.JSONDecodeError:
-                    return  # Ignore corrupted file
+                    return
 
         for line in lines_to_process:
             if not line.strip():
@@ -150,7 +174,6 @@ class FileSessionStore(SessionStore):
                 entry: LogEntry = json.loads(line)
                 key = self._callstack_to_key(entry["call_stack"])
                 event_type = entry["event_type"]
-
                 status = _EVENT_TYPE_TO_STATUS.get(event_type)
 
                 if status is ExecutionStatus.STARTED:
@@ -168,6 +191,31 @@ class FileSessionStore(SessionStore):
             except (json.JSONDecodeError, KeyError):
                 pass
 
+    def _cleanup_orphan_streams(self) -> None:
+        streams_dir = self._client.resolve("streams")
+        if not streams_dir.exists():
+            return
+
+        completed_stream_paths: set[Path] = set()
+        for key, status in self._states.items():
+            if status == ExecutionStatus.COMPLETED:
+                result = self._results.get(key)
+                if isinstance(result, dict) and "stream_path" in result:
+                    completed_stream_paths.add(
+                        self._client.resolve(result["stream_path"])
+                    )
+
+        now = datetime.now(timezone.utc)
+        for f in streams_dir.iterdir():
+            if f in completed_stream_paths:
+                continue
+            try:
+                mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+                if (now - mtime).total_seconds() > 86400:
+                    f.unlink()
+            except (FileNotFoundError, OSError):
+                pass
+
     async def _on_write(self) -> bytes:
         staged_entries = self._staged_log_entries
         existing_content = await self._client.read(self._executions_path) or b""
@@ -179,7 +227,7 @@ class FileSessionStore(SessionStore):
 
             self._update_in_memory_state(staged_entries)
             return existing_content + content_to_append.encode("utf-8")
-        else:  # json
+        else:
             all_entries: list[LogEntry] = []
             if existing_content:
                 try:
@@ -195,7 +243,7 @@ class FileSessionStore(SessionStore):
     async def _on_clear(self) -> None:
         self._staged_log_entries.clear()
 
-    def _update_in_memory_state(self, entries: list[LogEntry]):
+    def _update_in_memory_state(self, entries: list[LogEntry]) -> None:
         for entry in entries:
             key = self._callstack_to_key(entry["call_stack"])
             status = _EVENT_TYPE_TO_STATUS.get(entry["event_type"])
@@ -208,21 +256,19 @@ class FileSessionStore(SessionStore):
                 self._states[key] = ExecutionStatus.FAILED
                 self._errors[key] = entry["error"] or ""
 
-    async def _add_log_entry(self, entry: LogEntry):
+    async def _add_log_entry(self, entry: LogEntry) -> None:
         async with self._lock:
-            # If this is the first entry in the transaction, stage the write operation.
             if not self._staged_log_entries:
-                await self._client.stage_write(
+                await self._client.stage_overwrite(
                     self._executions_path,
                     self._on_write,
                     self._on_clear,
                 )
-
             self._staged_log_entries.append(entry)
 
     async def begin_transaction(self) -> Transaction:
         self._staged_log_entries.clear()
-        return _FileTransaction(self._client)
+        return _FileTransaction(self._client, self)
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         key = self._id_to_key(execution_id)
@@ -259,3 +305,24 @@ class FileSessionStore(SessionStore):
             error = self._errors.get(key)
 
         return ExecutionRecord(status=status, result=result, error=error)
+
+    def get_stream_items(
+        self, execution_id: ExecutionId, item_type: Any
+    ) -> AsyncIterator[Any]:
+        stream_path = self._id_to_stream_path(execution_id)
+        abs_path = self._client.resolve(stream_path)
+        return self._read_stream_file(abs_path, item_type)
+
+    async def _read_stream_file(
+        self, abs_path: Path, item_type: Any
+    ) -> AsyncIterator[Any]:
+        if not abs_path.exists():
+            return
+
+        def _read_lines() -> list[bytes]:
+            with open(abs_path, "rb") as f:
+                return [line for line in f if line.strip()]
+
+        lines = await asyncio.to_thread(_read_lines)
+        for line_bytes in lines:
+            yield self._serializer.deserialize(line_bytes, item_type)

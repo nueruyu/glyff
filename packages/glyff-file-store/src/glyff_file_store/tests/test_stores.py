@@ -57,3 +57,28 @@ async def test_rollback_discards_staged(store_factory, base_execution_id: Execut
     await execution.complete({"result": 1}, dict)
     await tx.rollback()
     assert await store.get_execution_record(base_execution_id, dict) is None
+
+
+async def test_commit_streaming_execution(
+    store_factory, base_execution_id: ExecutionId
+):
+    store: SessionStore = store_factory("test-stream-commit-file")
+    items_to_yield = [{"id": 1, "data": "a"}, {"id": 2, "data": "b"}]
+
+    tx = await store.begin_transaction()
+    execution = await store.start_execution(base_execution_id)
+    await execution.yield_item(items_to_yield[0], dict)
+    await execution.yield_item(items_to_yield[1], dict)
+    await execution.complete_stream()
+
+    assert await store.get_execution_record(base_execution_id, dict) is None
+    await tx.commit()
+
+    record = await store.get_execution_record(base_execution_id, dict)
+    assert record is not None
+    assert record.status == ExecutionStatus.COMPLETED
+
+    replayed_items = [
+        item async for item in store.get_stream_items(base_execution_id, dict)
+    ]
+    assert replayed_items == items_to_yield

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from typing import Any
 
 from ..interfaces import Execution, Serializer, SessionStore, Transaction
@@ -41,6 +42,22 @@ class _MemoryExecution(Execution):
             self._id_to_key(self._id, "status"), ExecutionStatus.FAILED
         )
         self._store._client.stage_write(self._id_to_key(self._id, "error"), error)
+
+    async def yield_item(self, item: Any, item_type: Any) -> None:
+        items_key = self._id_to_key(self._id, "items")
+        # Seed from committed data so resume accumulates correctly
+        existing_committed: list = self._store._client.data.get(items_key, [])
+        existing_items: list = self._store._client._staged_writes.get(
+            items_key, list(existing_committed)
+        )
+        serialized_item = self._store._serializer.serialize(item, item_type)
+        existing_items.append(serialized_item)
+        self._store._client.stage_write(items_key, existing_items)
+
+    async def complete_stream(self) -> None:
+        self._store._client.stage_write(
+            self._id_to_key(self._id, "status"), ExecutionStatus.COMPLETED
+        )
 
 
 class MemorySessionStore(SessionStore):
@@ -89,3 +106,12 @@ class MemorySessionStore(SessionStore):
             error = await self._client.read(self._id_to_key(execution_id, "error"))
 
         return ExecutionRecord(status=status, result=result, error=error)
+
+    async def get_stream_items(
+        self, execution_id: ExecutionId, item_type: Any
+    ) -> AsyncIterator[Any]:
+        items_key = self._id_to_key(execution_id, "items")
+        serialized_items: list | None = await self._client.read(items_key)
+        if serialized_items:
+            for s_item in serialized_items:
+                yield self._serializer.deserialize(s_item, item_type)
