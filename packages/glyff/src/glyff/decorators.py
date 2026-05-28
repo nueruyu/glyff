@@ -11,15 +11,9 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def engrave(func: Callable[P, R]) -> Callable[P, R]:
-    """
-    Decorator that makes an async method engraveable and resumable.
-    Its main responsibilities are ExecutionId creation and delegation to the
-    `executor` module.
-    """
-    sig = inspect.signature(func)
+def _analyze_return_type(func: Callable) -> ReturnTypeInfo:
+    """Analyzes the function's return annotation to create a ReturnTypeInfo."""
     task_name = getattr(func, "__qualname__", func.__name__)
-
     try:
         type_hints = inspect.get_annotations(func, eval_str=True)
         return_type = type_hints.get("return", Any)
@@ -32,18 +26,27 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
     is_streaming = get_origin(return_type) is AsyncIterator
     item_type = Any
     if is_streaming:
-        type_args = get_args(return_type)
-        if type_args:
-            item_type = type_args[0]
+        args = get_args(return_type)
+        if args:
+            item_type = args[0]
 
-    type_info = ReturnTypeInfo(
+    return ReturnTypeInfo(
         full_type=return_type, is_streaming=is_streaming, item_type=item_type
     )
 
+
+def engrave(func: Callable[P, R]) -> Callable[P, R]:
+    """
+    Decorator that makes an async method engraveable and resumable.
+    Its main responsibilities are ExecutionId creation and delegation to the
+    `executor` module.
+    """
+    sig = inspect.signature(func)
+    task_name = getattr(func, "__qualname__", func.__name__)
+    type_info = _analyze_return_type(func)
+
     if type_info.is_streaming:
-        # For streaming functions: return a sync wrapper that directly gives an
-        # AsyncIterator without needing `await`. This matches the declared return
-        # type (AsyncIterator[X]) and avoids Pylance "not awaitable" errors.
+        # Sync wrapper: directly returns AsyncIterator so callers need no `await`.
         @functools.wraps(func)
         def streaming_wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             async def _gen() -> AsyncIterator[Any]:
