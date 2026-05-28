@@ -6,6 +6,7 @@ import json
 from typing import Any, Callable
 
 from glyff.interfaces import ArgsHasher, Serializer
+from glyff.serialization import build_hashable_args
 from pydantic import BaseModel, TypeAdapter
 
 
@@ -45,15 +46,7 @@ class PydanticArgsHasher(ArgsHasher):
     def hash_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> str:
-        bound = sig.bind(*args, **kwargs)
-        bound.apply_defaults()
-        args_dict = {
-            name: value
-            for name, value in bound.arguments.items()
-            if sig.parameters[name].kind
-            not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-            and name not in ("self", "cls")
-        }
+        args_dict = build_hashable_args(func, sig, args, kwargs)
         stable_repr = _json_stable_dumps(args_dict)
         hasher = hashlib.sha256()
         hasher.update(stable_repr.encode("utf-8"))

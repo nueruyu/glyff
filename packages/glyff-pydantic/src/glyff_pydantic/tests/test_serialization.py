@@ -1,5 +1,6 @@
 import inspect
 
+import pytest
 from pydantic import BaseModel
 
 from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
@@ -12,6 +13,22 @@ class MyModel(BaseModel):
 
 def sample_func(a: int, b: str = "default"):
     pass
+
+
+class IdentityAware:
+    def __init__(self, id_val: str):
+        self._id = id_val
+
+    def __glyff_identity__(self) -> str:
+        return self._id
+
+    def method(self, m: MyModel):
+        pass
+
+
+class NoIdentity:
+    def method(self, m: MyModel):
+        pass
 
 
 s = PydanticSerializer()
@@ -66,3 +83,37 @@ def test_serialize_produces_stable_output():
     d1 = {"b": 2, "a": 1}
     d2 = {"a": 1, "b": 2}
     assert s.serialize(d1, dict) == s.serialize(d2, dict)
+
+
+def test_method_hash_differs_for_different_instances():
+    inst1 = IdentityAware("id1")
+    inst2 = IdentityAware("id2")
+    model = MyModel(x=1, y="a")
+    sig = inspect.signature(inst1.method)
+
+    h1 = h.hash_args(inst1.method, sig, (inst1, model), {})
+    h2 = h.hash_args(inst2.method, sig, (inst2, model), {})
+
+    assert h1 != h2
+
+
+def test_method_hash_is_same_for_same_instance():
+    inst = IdentityAware("id1")
+    model = MyModel(x=1, y="a")
+    sig = inspect.signature(inst.method)
+
+    h1 = h.hash_args(inst.method, sig, (inst, model), {})
+    h2 = h.hash_args(inst.method, sig, (inst, model), {})
+
+    assert h1 == h2
+
+
+def test_hash_method_on_class_without_identity_raises_type_error():
+    inst = NoIdentity()
+    model = MyModel(x=1, y="a")
+    sig = inspect.signature(inst.method)
+
+    with pytest.raises(
+        TypeError, match="does not implement a callable '__glyff_identity__' method"
+    ):
+        h.hash_args(inst.method, sig, (inst, model), {})
