@@ -157,12 +157,13 @@ async def test_stream_error_records_failure_and_raises_on_replay(
     assert _runs == []
 
 
-async def test_caller_exception_does_not_record_failure(
+async def test_caller_exception_during_consumption_does_not_poison_stream(
     store_factory: StoreFactory, hasher: ArgsHasher
 ):
-    # A caller-side exception during consumption must not mark the stream FAILED:
-    # the *same* call must remain runnable afterwards. (Uses matching args so the
-    # second consumption targets the same execution record.)
+    # A caller error inside the `async for` body aborts iteration. Mechanically
+    # this reaches the generator as GeneratorExit (a plain `raise` is NOT thrown
+    # *into* the generator — see test_executor for the `athrow` path), so nothing
+    # is recorded and the *same* call remains runnable afterwards.
     store = store_factory("stream-caller-error")
 
     with pytest.raises(ValueError, match="caller boom"):
@@ -175,4 +176,4 @@ async def test_caller_exception_does_not_record_failure(
     async with Session(id="stream-caller-error", store=store, hasher=hasher):
         full = [x async for x in stream_numbers(5)]
     assert full == [0, 1, 2, 3, 4]
-    assert _runs == [5]  # not poisoned by the caller error; re-runs and completes
+    assert _runs == [5]  # not poisoned; re-runs and completes
