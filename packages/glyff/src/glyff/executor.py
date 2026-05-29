@@ -1,24 +1,33 @@
 import inspect
 import traceback
 from collections.abc import AsyncIterator
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 
 from .context import Context
 from .exceptions import ExecutionFailedError, YieldException
-from .models import ExecutionId, ExecutionStatus
+from .models import ExecutionId, ExecutionRecord, ExecutionStatus
+
+# Sentinel returned by `_advance_stream` when the producer is exhausted. A unique
+# object so it never collides with a legitimately yielded value.
+_STREAM_EXHAUSTED: Any = object()
 
 
 def _format_error(e: Exception) -> str:
     return "".join(traceback.format_exception(type(e), e, e.__traceback__))
 
 
-async def _record_stream_failure(
-    ctx: Context, execution_id: ExecutionId, error: Exception
-) -> None:
-    """Durably records a streaming task's failure in its own terminal write."""
-    async with ctx.get_transaction_scope():
-        execution = await ctx.store.start_execution(execution_id)
-        await execution.fail(_format_error(error))
+def _task_failed_error(execution_id: ExecutionId, e: Exception) -> ExecutionFailedError:
+    return ExecutionFailedError(
+        f"Task {execution_id} failed: {type(e).__name__}({e})"
+    )
+
+
+def _raise_previously_failed(
+    execution_id: ExecutionId, record: ExecutionRecord
+) -> NoReturn:
+    raise ExecutionFailedError(
+        f"Task {execution_id} failed previously and cannot be re-executed."
+    ) from Exception(record.error or "Unknown previously failed error")
 
 
 async def execute(
@@ -43,12 +52,7 @@ async def execute(
         if record.status == ExecutionStatus.COMPLETED:
             return record.result
         if record.status == ExecutionStatus.FAILED:
-            original_error = Exception(
-                record.error or "Unknown previously failed error"
-            )
-            raise ExecutionFailedError(
-                f"Task {execution_id} failed previously and cannot be re-executed."
-            ) from original_error
+            _raise_previously_failed(execution_id, record)
 
     async with ctx.get_transaction_scope():
         # Reset child sequencers for deterministic re-execution.
@@ -67,11 +71,110 @@ async def execute(
             raise
         except Exception as e:
             await execution.fail(_format_error(e))
-            raise ExecutionFailedError(
-                f"Task {execution_id} failed: {type(e).__name__}({e})"
-            ) from e
+            raise _task_failed_error(execution_id, e) from e
         finally:
             tracer.end()
+
+
+async def _replay_stream(
+    ctx: Context, execution_id: ExecutionId, list_type: type
+) -> list[Any] | None:
+    """
+    Returns the stored item list for a completed stream, or ``None`` if the
+    stream should run (no record, or a re-runnable ``STARTED`` record). Raises
+    ``ExecutionFailedError`` if the stream previously failed.
+    """
+    record = await ctx.store.get_execution_record(execution_id, list_type)
+    if record is None:
+        return None
+    if record.status == ExecutionStatus.COMPLETED:
+        return record.result or []
+    if record.status == ExecutionStatus.FAILED:
+        _raise_previously_failed(execution_id, record)
+    return None  # STARTED → re-run from scratch
+
+
+async def _open_stream_iterator(
+    ctx: Context,
+    execution_id: ExecutionId,
+    func: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> AsyncIterator[Any]:
+    """
+    Calls ``func`` and normalises its result to a single async iterator. ``func``
+    may be an async generator function, or a coroutine returning an async
+    iterator. Errors raised while producing the iterator are recorded as
+    failures; ``YieldException`` propagates untouched.
+    """
+    tracer = ctx.tracer
+    try:
+        produced = func(*args, **kwargs)
+        if inspect.iscoroutine(produced):
+            tracer.start(execution_id)
+            try:
+                produced = await produced
+            finally:
+                tracer.end()
+        return aiter(produced)
+    except YieldException:
+        raise
+    except Exception as e:
+        await _record_stream_failure(ctx, execution_id, e)
+        raise _task_failed_error(execution_id, e) from e
+
+
+async def _advance_stream(
+    ctx: Context, execution_id: ExecutionId, iterator: AsyncIterator[Any]
+) -> Any:
+    """
+    Pulls the next item from the producer, returning ``_STREAM_EXHAUSTED`` when
+    it is done.
+
+    The tracer brackets only this advancement (never the caller's consumption),
+    so nested ``@engrave`` calls made inside the producer are parented to this
+    stream while the caller's calls between items are not. Producer errors are
+    recorded as failures; ``YieldException`` propagates untouched.
+    """
+    tracer = ctx.tracer
+    try:
+        tracer.start(execution_id)
+        try:
+            return await anext(iterator)
+        except StopAsyncIteration:
+            return _STREAM_EXHAUSTED
+        finally:
+            tracer.end()
+    except YieldException:
+        raise
+    except Exception as e:
+        await _record_stream_failure(ctx, execution_id, e)
+        raise _task_failed_error(execution_id, e) from e
+
+
+async def _record_stream_completion(
+    ctx: Context, execution_id: ExecutionId, collected: list[Any], list_type: type
+) -> None:
+    """Durably records the full stream as a single value in its terminal write."""
+    async with ctx.get_transaction_scope():
+        execution = await ctx.store.start_execution(execution_id)
+        await execution.complete(collected, list_type)
+
+
+async def _record_stream_failure(
+    ctx: Context, execution_id: ExecutionId, error: Exception
+) -> None:
+    """Durably records a streaming task's failure in its own terminal write."""
+    async with ctx.get_transaction_scope():
+        execution = await ctx.store.start_execution(execution_id)
+        await execution.fail(_format_error(error))
+
+
+async def _aclose_quietly(iterator: AsyncIterator[Any] | None) -> None:
+    """Closes the underlying iterator (if closeable) so its cleanup runs."""
+    aclose = getattr(iterator, "aclose", None)
+    if aclose is not None:
+        await aclose()
 
 
 async def execute_stream(
@@ -92,100 +195,31 @@ async def execute_stream(
     store without re-running ``func``; an unfinished stream (interruption, early
     break, crash) leaves no usable record and re-runs from scratch on the next
     invocation.
-
-    ``tracer.start``/``tracer.end`` bracket only the advancement of ``func``
-    (each ``__anext__``), never the ``yield`` back to the caller. This keeps the
-    shared call-stack balanced even when streams are consumed out of LIFO order,
-    and ensures nested ``@engrave`` calls made *inside* ``func`` are parented to
-    this stream while the caller's own calls between items are not.
     """
-    store = ctx.store
-    sequencer = ctx.sequencer
-    tracer = ctx.tracer
-
-    # The collected items are stored/replayed as a plain list of ``item_type``.
     list_type = list[item_type]
 
-    record = await store.get_execution_record(execution_id, list_type)
-
-    if record:
-        if record.status == ExecutionStatus.COMPLETED:
-            for item in record.result or []:
-                yield item
-            return
-        if record.status == ExecutionStatus.FAILED:
-            original_error = Exception(
-                record.error or "Unknown previously failed error"
-            )
-            raise ExecutionFailedError(
-                f"Task {execution_id} failed previously and cannot be re-executed."
-            ) from original_error
+    replay = await _replay_stream(ctx, execution_id, list_type)
+    if replay is not None:
+        for item in replay:
+            yield item
+        return
 
     # Reset child sequencers for deterministic re-execution of nested calls.
-    await sequencer.reset_for_call(execution_id)
+    await ctx.sequencer.reset_for_call(execution_id)
 
+    iterator = await _open_stream_iterator(ctx, execution_id, func, args, kwargs)
     collected: list[Any] = []
-    iterator: Any = None
     try:
-        # Build the iterator. ``func`` may be an async generator function, or a
-        # coroutine returning an async iterator. Errors here are producer errors.
-        try:
-            produced = func(*args, **kwargs)
-            if inspect.iscoroutine(produced):
-                tracer.start(execution_id)
-                try:
-                    produced = await produced
-                finally:
-                    tracer.end()
-            iterator = aiter(produced)
-        except YieldException:
-            raise
-        except Exception as e:
-            await _record_stream_failure(ctx, execution_id, e)
-            raise ExecutionFailedError(
-                f"Task {execution_id} failed: {type(e).__name__}({e})"
-            ) from e
-
         while True:
-            # Advance the producer. Producer errors are recorded as failures.
-            # The ``yield`` below is deliberately *outside* this guard, so an
-            # exception thrown in by the caller (e.g. via ``athrow``) propagates
-            # without marking the stream failed.
-            try:
-                tracer.start(execution_id)
-                try:
-                    item = await anext(iterator)
-                except StopAsyncIteration:
-                    break
-                finally:
-                    # Pop before yielding control so the caller's own calls
-                    # between items are not parented to this stream.
-                    tracer.end()
-            except YieldException:
-                # Interruption is a graceful exit; nothing is recorded, so the
-                # stream re-runs from scratch when the session is resumed.
-                raise
-            except Exception as e:
-                await _record_stream_failure(ctx, execution_id, e)
-                raise ExecutionFailedError(
-                    f"Task {execution_id} failed: {type(e).__name__}({e})"
-                ) from e
-
+            item = await _advance_stream(ctx, execution_id, iterator)
+            if item is _STREAM_EXHAUSTED:
+                break
             collected.append(item)
             yield item
 
-        # Natural completion: durably record the full result. The transaction
-        # scope is used only for this terminal write (never held across yields),
-        # so it never rolls back and never affects sibling executions.
-        async with ctx.get_transaction_scope():
-            execution = await store.start_execution(execution_id)
-            await execution.complete(collected, list_type)
+        await _record_stream_completion(ctx, execution_id, collected, list_type)
     finally:
-        # Interruption (YieldException), early break / aclose (GeneratorExit) and
-        # caller-thrown exceptions all fall through here without recording: the
-        # partial stream is simply discarded. Close the underlying iterator so
-        # its own cleanup runs.
-        if iterator is not None:
-            aclose = getattr(iterator, "aclose", None)
-            if aclose is not None:
-                await aclose()
+        # Interruption (YieldException), early break / aclose (GeneratorExit), and
+        # caller-thrown exceptions all leave without recording: the partial stream
+        # is discarded. Close the underlying iterator so its cleanup runs.
+        await _aclose_quietly(iterator)
