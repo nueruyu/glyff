@@ -80,6 +80,44 @@ of yielding again.
 - `YieldException` suspends execution at a function boundary; the session
   can be resumed later by entering it again with the same session id.
 
+## Streaming
+
+A marked function annotated to return an `AsyncIterator` (or `AsyncGenerator`)
+is treated as a stream: the wrapper transparently yields each item to the
+caller while recording the run.
+
+```python
+from collections.abc import AsyncIterator
+
+
+@glyff.engrave
+async def tokens(prompt: str) -> AsyncIterator[str]:
+    async for chunk in some_llm_stream(prompt):
+        yield chunk
+
+
+async for chunk in tokens("hello"):
+    print(chunk, end="")
+```
+
+- A stream is recorded as a single value (the list of all yielded items) and
+  only when it completes naturally. Once recorded, re-invoking the same call
+  replays the stored items without re-running the function.
+- An unfinished stream — interrupted by `YieldException`, broken out of early,
+  or lost to a crash — records nothing and re-runs from scratch on the next
+  invocation. Streams are never resumed mid-iteration.
+
+Because the full result is buffered in memory and persisted to the store,
+**do not return large or unbounded streams**. For heavy payloads, write the
+data to a file (or external store) inside the function and return only a
+reference, or split the work into cursor-addressable batches:
+
+```python
+@glyff.engrave
+async def batch(cursor: int) -> list[Item]:
+    ...  # each batch is recorded independently and replays on resume
+```
+
 ## Status
 
 Early development. APIs may change before v1.0.

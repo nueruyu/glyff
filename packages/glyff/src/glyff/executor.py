@@ -1,22 +1,28 @@
+import inspect
 import traceback
+from collections.abc import AsyncIterator
 from typing import Any, Callable
 
 from .context import Context
 from .exceptions import ExecutionFailedError, YieldException
-from .models import ExecutionStatus
+from .models import ExecutionId, ExecutionStatus
+
+
+def _format_error(e: Exception) -> str:
+    return "".join(traceback.format_exception(type(e), e, e.__traceback__))
 
 
 async def execute(
     ctx: Context,
-    execution_id: Any,
+    execution_id: ExecutionId,
     func: Callable[..., Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     return_type: type,
 ) -> Any:
     """
-    Orchestrates the execution of a task, including cache checks, transaction
-    management, state recording, and exception handling.
+    Orchestrates the execution of a regular (awaitable) task, including cache
+    checks, transaction management, state recording, and exception handling.
     """
     store = ctx.store
     sequencer = ctx.sequencer
@@ -51,10 +57,113 @@ async def execute(
             # The state remains STARTED, allowing for resumption.
             raise
         except Exception as e:
-            error_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            await execution.fail(error_str)
+            await execution.fail(_format_error(e))
             raise ExecutionFailedError(
                 f"Task {execution_id} failed: {type(e).__name__}({e})"
             ) from e
         finally:
             tracer.end()
+
+
+async def execute_stream(
+    ctx: Context,
+    execution_id: ExecutionId,
+    func: Callable[..., Any],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+    item_type: Any,
+) -> AsyncIterator[Any]:
+    """
+    Orchestrates the execution of a streaming task (one returning an
+    ``AsyncIterator``/``AsyncGenerator``).
+
+    The whole stream is treated as a single value: items are collected while
+    being transparently yielded to the caller, and only persisted as one list
+    once the stream completes naturally. A completed stream is replayed from the
+    store without re-running ``func``; an unfinished stream (interruption, early
+    break, crash) leaves no usable record and re-runs from scratch on the next
+    invocation.
+
+    ``tracer.start``/``tracer.end`` bracket only the advancement of ``func``
+    (each ``__anext__``), never the ``yield`` back to the caller. This keeps the
+    shared call-stack balanced even when streams are consumed out of LIFO order,
+    and ensures nested ``@engrave`` calls made *inside* ``func`` are parented to
+    this stream while the caller's own calls between items are not.
+    """
+    store = ctx.store
+    sequencer = ctx.sequencer
+    tracer = ctx.tracer
+
+    # The collected items are stored/replayed as a plain list of ``item_type``.
+    list_type = list[item_type]
+
+    record = await store.get_execution_record(execution_id, list_type)
+
+    if record:
+        if record.status == ExecutionStatus.COMPLETED:
+            for item in record.result or []:
+                yield item
+            return
+        if record.status == ExecutionStatus.FAILED:
+            original_error = Exception(
+                record.error or "Unknown previously failed error"
+            )
+            raise ExecutionFailedError(
+                f"Task {execution_id} failed previously and cannot be re-executed."
+            ) from original_error
+
+    # Reset child sequencers for deterministic re-execution of nested calls.
+    await sequencer.reset_for_call(execution_id)
+
+    collected: list[Any] = []
+    iterator: Any = None
+    try:
+        # ``func`` may be an async generator function, or a coroutine returning
+        # an async iterator. Normalise to a single async iterator.
+        produced = func(*args, **kwargs)
+        if inspect.iscoroutine(produced):
+            tracer.start(execution_id)
+            try:
+                produced = await produced
+            finally:
+                tracer.end()
+        iterator = aiter(produced)
+
+        while True:
+            tracer.start(execution_id)
+            try:
+                item = await anext(iterator)
+            except StopAsyncIteration:
+                break
+            finally:
+                # Pop before yielding control so the caller's own calls between
+                # items are not parented to this stream.
+                tracer.end()
+            collected.append(item)
+            yield item
+
+        # Natural completion: durably record the full result. The transaction
+        # scope is used only for this terminal write (never held across yields),
+        # so it never rolls back and never affects sibling executions.
+        async with ctx.get_transaction_scope():
+            execution = await store.start_execution(execution_id)
+            await execution.complete(collected, list_type)
+    except YieldException:
+        # Interruption is a graceful exit; nothing is recorded, so the stream
+        # re-runs from scratch when the session is resumed.
+        raise
+    except Exception as e:
+        async with ctx.get_transaction_scope():
+            execution = await store.start_execution(execution_id)
+            await execution.fail(_format_error(e))
+        raise ExecutionFailedError(
+            f"Task {execution_id} failed: {type(e).__name__}({e})"
+        ) from e
+    finally:
+        # GeneratorExit (caller broke early / aclose) falls through here without
+        # recording anything: the partial stream is simply discarded. Close the
+        # underlying iterator so its own cleanup runs.
+        if iterator is not None:
+            aclose = getattr(iterator, "aclose", None)
+            if aclose is not None:
+                await aclose()
