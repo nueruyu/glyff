@@ -12,6 +12,15 @@ def _format_error(e: Exception) -> str:
     return "".join(traceback.format_exception(type(e), e, e.__traceback__))
 
 
+async def _record_stream_failure(
+    ctx: Context, execution_id: ExecutionId, error: Exception
+) -> None:
+    """Durably records a streaming task's failure in its own terminal write."""
+    async with ctx.get_transaction_scope():
+        execution = await ctx.store.start_execution(execution_id)
+        await execution.fail(_format_error(error))
+
+
 async def execute(
     ctx: Context,
     execution_id: ExecutionId,
@@ -118,27 +127,50 @@ async def execute_stream(
     collected: list[Any] = []
     iterator: Any = None
     try:
-        # ``func`` may be an async generator function, or a coroutine returning
-        # an async iterator. Normalise to a single async iterator.
-        produced = func(*args, **kwargs)
-        if inspect.iscoroutine(produced):
-            tracer.start(execution_id)
-            try:
-                produced = await produced
-            finally:
-                tracer.end()
-        iterator = aiter(produced)
+        # Build the iterator. ``func`` may be an async generator function, or a
+        # coroutine returning an async iterator. Errors here are producer errors.
+        try:
+            produced = func(*args, **kwargs)
+            if inspect.iscoroutine(produced):
+                tracer.start(execution_id)
+                try:
+                    produced = await produced
+                finally:
+                    tracer.end()
+            iterator = aiter(produced)
+        except YieldException:
+            raise
+        except Exception as e:
+            await _record_stream_failure(ctx, execution_id, e)
+            raise ExecutionFailedError(
+                f"Task {execution_id} failed: {type(e).__name__}({e})"
+            ) from e
 
         while True:
-            tracer.start(execution_id)
+            # Advance the producer. Producer errors are recorded as failures.
+            # The ``yield`` below is deliberately *outside* this guard, so an
+            # exception thrown in by the caller (e.g. via ``athrow``) propagates
+            # without marking the stream failed.
             try:
-                item = await anext(iterator)
-            except StopAsyncIteration:
-                break
-            finally:
-                # Pop before yielding control so the caller's own calls between
-                # items are not parented to this stream.
-                tracer.end()
+                tracer.start(execution_id)
+                try:
+                    item = await anext(iterator)
+                except StopAsyncIteration:
+                    break
+                finally:
+                    # Pop before yielding control so the caller's own calls
+                    # between items are not parented to this stream.
+                    tracer.end()
+            except YieldException:
+                # Interruption is a graceful exit; nothing is recorded, so the
+                # stream re-runs from scratch when the session is resumed.
+                raise
+            except Exception as e:
+                await _record_stream_failure(ctx, execution_id, e)
+                raise ExecutionFailedError(
+                    f"Task {execution_id} failed: {type(e).__name__}({e})"
+                ) from e
+
             collected.append(item)
             yield item
 
@@ -148,21 +180,11 @@ async def execute_stream(
         async with ctx.get_transaction_scope():
             execution = await store.start_execution(execution_id)
             await execution.complete(collected, list_type)
-    except YieldException:
-        # Interruption is a graceful exit; nothing is recorded, so the stream
-        # re-runs from scratch when the session is resumed.
-        raise
-    except Exception as e:
-        async with ctx.get_transaction_scope():
-            execution = await store.start_execution(execution_id)
-            await execution.fail(_format_error(e))
-        raise ExecutionFailedError(
-            f"Task {execution_id} failed: {type(e).__name__}({e})"
-        ) from e
     finally:
-        # GeneratorExit (caller broke early / aclose) falls through here without
-        # recording anything: the partial stream is simply discarded. Close the
-        # underlying iterator so its own cleanup runs.
+        # Interruption (YieldException), early break / aclose (GeneratorExit) and
+        # caller-thrown exceptions all fall through here without recording: the
+        # partial stream is simply discarded. Close the underlying iterator so
+        # its own cleanup runs.
         if iterator is not None:
             aclose = getattr(iterator, "aclose", None)
             if aclose is not None:

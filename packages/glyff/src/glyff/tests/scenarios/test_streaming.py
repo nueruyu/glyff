@@ -155,3 +155,24 @@ async def test_stream_error_records_failure_and_raises_on_replay(
             async for _ in stream_explodes(5):
                 pass
     assert _runs == []
+
+
+async def test_caller_exception_does_not_record_failure(
+    store_factory: StoreFactory, hasher: ArgsHasher
+):
+    # A caller-side exception during consumption must not mark the stream FAILED:
+    # the *same* call must remain runnable afterwards. (Uses matching args so the
+    # second consumption targets the same execution record.)
+    store = store_factory("stream-caller-error")
+
+    with pytest.raises(ValueError, match="caller boom"):
+        async with Session(id="stream-caller-error", store=store, hasher=hasher):
+            async for x in stream_numbers(5):
+                if x == 1:
+                    raise ValueError("caller boom")
+
+    _runs.clear()
+    async with Session(id="stream-caller-error", store=store, hasher=hasher):
+        full = [x async for x in stream_numbers(5)]
+    assert full == [0, 1, 2, 3, 4]
+    assert _runs == [5]  # not poisoned by the caller error; re-runs and completes
