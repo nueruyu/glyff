@@ -71,10 +71,14 @@ class JsonFileSessionStore(BaseFileSessionStore):
         async with self._lock:
             all_entries.extend(self._staged_log_entries)
             new_content = json.dumps(all_entries, indent=2, sort_keys=True)
-            self._update_in_memory_state(self._staged_log_entries)
         return new_content.encode("utf-8")
 
-    async def _on_clear(self) -> None:
+    async def _on_transaction_commit(self) -> None:
+        async with self._lock:
+            self._update_in_memory_state(self._staged_log_entries)
+            self._staged_log_entries.clear()
+
+    async def _on_transaction_rollback(self) -> None:
         async with self._lock:
             self._staged_log_entries.clear()
 
@@ -97,7 +101,6 @@ class JsonFileSessionStore(BaseFileSessionStore):
                 await self._client.stage_write(
                     self._executions_path,
                     self._on_write,
-                    self._on_clear,
                 )
             self._staged_log_entries.append(entry)
 

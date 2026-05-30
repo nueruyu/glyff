@@ -75,28 +75,37 @@ class FileClient:
                     target_path = self.resolve(rel_path_str)
                     target_path.parent.mkdir(parents=True, exist_ok=True)
 
-                    # Create a temporary working file.
+                    # Resolve all content callbacks first (each may yield).
+                    # Any WRITE in the sequence discards the chunks that came
+                    # before it; APPENDs accumulate. Collapsing here lets us
+                    # write the final bytes with a single open() per file.
+                    final_chunks: list[bytes] = []
+                    for op in ops:
+                        content = await op.write()
+                        if op.mode == OpMode.WRITE:
+                            final_chunks = [content]
+                        else:  # OpMode.APPEND
+                            final_chunks.append(content)
+
+                    if not final_chunks:
+                        continue
+
                     temp_path = await asyncio.to_thread(
                         _write_temp_file_sync, b"", target_path.parent
                     )
                     temp_files_to_clean.append(temp_path)
 
-                    is_content_written = False
-                    for op in ops:
-                        content = await op.write()
-                        if op.mode == OpMode.WRITE:
-                            # Overwrite the temp file.
-                            with open(temp_path, "wb") as f:
-                                f.write(content)
-                        elif op.mode == OpMode.APPEND:
-                            # Append to the temp file.
-                            with open(temp_path, "ab") as f:
-                                f.write(content)
-                        is_content_written = True
+                    def _write_all(
+                        path: str = temp_path,
+                        chunks: list[bytes] = final_chunks,
+                    ) -> None:
+                        with open(path, "wb") as f:
+                            for buf in chunks:
+                                f.write(buf)
 
-                    if is_content_written:
-                        await asyncio.to_thread(os.replace, temp_path, str(target_path))
-                        temp_files_to_clean.remove(temp_path)
+                    await asyncio.to_thread(_write_all)
+                    await asyncio.to_thread(os.replace, temp_path, str(target_path))
+                    temp_files_to_clean.remove(temp_path)
 
             finally:
                 unlink_tasks = [

@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 from abc import ABC
 from datetime import datetime, timezone
-from typing import TypedDict
+from typing import Awaitable, Callable, TypedDict
 
 from glyff.interfaces import Execution, Serializer, SessionStore, Transaction
 from glyff.models import ExecutionId, ExecutionStatus
 
 from ..file_client import FileClient
+
+PostHook = Callable[[], Awaitable[None]]
 
 
 class LogEntry(TypedDict):
@@ -28,14 +30,25 @@ _EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
 
 
 class _FileTransaction(Transaction):
-    def __init__(self, client: FileClient):
+    def __init__(
+        self,
+        client: FileClient,
+        on_commit: PostHook | None = None,
+        on_rollback: PostHook | None = None,
+    ):
         self._client = client
+        self._on_commit = on_commit
+        self._on_rollback = on_rollback
 
     async def commit(self) -> None:
         await self._client.commit_staged()
+        if self._on_commit is not None:
+            await self._on_commit()
 
     async def rollback(self) -> None:
         await self._client.clear_staged()
+        if self._on_rollback is not None:
+            await self._on_rollback()
 
 
 class _FileExecution(Execution):
@@ -111,7 +124,19 @@ class BaseFileSessionStore(SessionStore, ABC):
         return "/".join(call_stack)
 
     async def begin_transaction(self) -> Transaction:
-        return _FileTransaction(self._client)
+        return _FileTransaction(
+            self._client,
+            on_commit=self._on_transaction_commit,
+            on_rollback=self._on_transaction_rollback,
+        )
+
+    async def _on_transaction_commit(self) -> None:
+        """Hook invoked after a successful commit. Override to apply
+        deferred in-memory state changes."""
+
+    async def _on_transaction_rollback(self) -> None:
+        """Hook invoked after a rollback. Override to discard deferred
+        in-memory state changes."""
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         record = await self.get_execution_record(execution_id, type(None))
