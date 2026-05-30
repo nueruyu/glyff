@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ from ._base import (
     BaseFileSessionStore,
     LogEntry,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class JsonFileSessionStore(BaseFileSessionStore):
@@ -44,8 +47,13 @@ class JsonFileSessionStore(BaseFileSessionStore):
             try:
                 entries = json.loads(content)
                 self._update_in_memory_state(entries)
-            except json.JSONDecodeError:
-                return  # Ignore corrupted file
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Could not parse executions log %s; ignoring corrupted file: %s",
+                    abs_path,
+                    e,
+                )
+                return
 
     async def _on_write(self) -> bytes:
         all_entries: list[LogEntry] = []
@@ -53,8 +61,13 @@ class JsonFileSessionStore(BaseFileSessionStore):
         if existing_content:
             try:
                 all_entries = json.loads(existing_content.decode("utf-8"))
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Could not parse existing executions log at %s on write; "
+                    "discarding prior entries: %s",
+                    self._executions_path,
+                    e,
+                )
         all_entries.extend(self._staged_log_entries)
         new_content = json.dumps(all_entries, indent=2, sort_keys=True)
         self._update_in_memory_state(self._staged_log_entries)

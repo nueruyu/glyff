@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import linecache
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,8 @@ from ._base import (
     BaseFileSessionStore,
     LogEntry,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class JsonLinesFileSessionStore(BaseFileSessionStore):
@@ -68,8 +71,13 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
                         self._errors[key] = entry["error"] or ""
                         self._results.pop(key, None)
 
-            except (json.JSONDecodeError, KeyError):
-                pass  # Ignore corrupted lines
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(
+                    "Skipping corrupted entry in %s at line %d: %s",
+                    self._executions_path,
+                    i + 1,
+                    e,
+                )
         linecache.clearcache()
 
     async def _add_log_entry(self, entry: LogEntry):
