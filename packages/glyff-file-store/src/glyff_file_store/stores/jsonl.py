@@ -72,63 +72,62 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
             await self._load_index_and_recover()
             self._is_loaded = True
 
-    async def _load_index_and_recover(self) -> None:
-        """Loads the index from disk and recovers from any previous crash.
-
-        Recovery uses direct disk writes (via ``asyncio.to_thread``) rather
-        than the FileClient staging queue, so the user's outer transaction
-        state is never observed or modified.
-        """
-        index_content = await self._client.read(self._index_path)
+    async def _load_index_from_file(self) -> int:
+        """Loads the index file into memory and returns the max offset found.
+        Returns -1 if the index file is empty or missing."""
         max_indexed_offset = -1
+        index_content = await self._client.read(self._index_path)
+        if not index_content:
+            return max_indexed_offset
 
-        if index_content:
-            for line in index_content.decode("utf-8").splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    idx_entry: IndexEntry = json.loads(line)
-                    key = idx_entry["k"]
-                    offset = idx_entry["o"]
-                    status_str = idx_entry["s"]
-                    status = _EVENT_TYPE_TO_STATUS[status_str]
-                    self._index[key] = (offset, status)
-                    if offset > max_indexed_offset:
-                        max_indexed_offset = offset
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(
-                        "Skipping corrupted entry in %s: %s",
-                        self._index_path,
-                        e,
-                    )
+        for line in index_content.decode("utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                idx_entry: IndexEntry = json.loads(line)
+                key = idx_entry["k"]
+                offset = idx_entry["o"]
+                status_str = idx_entry["s"]
+                status = _EVENT_TYPE_TO_STATUS[status_str]
+                self._index[key] = (offset, status)
+                if offset > max_indexed_offset:
+                    max_indexed_offset = offset
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(
+                    "Skipping corrupted entry in %s: %s",
+                    self._index_path,
+                    e,
+                )
+        return max_indexed_offset
 
-        log_content = await self._client.read(self._executions_path)
-        if not log_content:
-            self._log_size = 0
-            return
+    async def _rebuild_index_from_log(
+        self, log_offsets: list[int], log_entries: list[bytes]
+    ) -> None:
+        """Rebuild the entire index from the log file, overwriting the index
+        file on disk. Used when the index references offsets past the end of
+        the log (e.g. a crashed commit truncated the log)."""
+        logger.warning(
+            "Rebuilding index for %s from canonical log", self._executions_path
+        )
+        self._index.clear()
+        self._results_cache.clear()
+        self._errors.clear()
+        rebuilt: list[IndexEntry] = []
+        for offset, raw in zip(log_offsets, log_entries):
+            idx = self._parse_and_apply(raw, offset)
+            if idx is not None:
+                rebuilt.append(idx)
+        await self._write_index_file(rebuilt, append=False)
 
-        self._log_size = len(log_content)
-
-        # Walk the log to either (a) detect that the index references offsets
-        # past the end of the log (truncated log → rebuild) or (b) catch up
-        # the index with entries the log gained after the last index write.
-        log_offsets, log_entries = _scan_log_offsets(log_content)
-        max_valid_offset = log_offsets[-1] if log_offsets else -1
-
-        if max_indexed_offset > max_valid_offset:
-            # Index points past EOF: rebuild from the canonical log.
-            self._index.clear()
-            self._results_cache.clear()
-            self._errors.clear()
-            rebuilt: list[IndexEntry] = []
-            for offset, raw in zip(log_offsets, log_entries):
-                idx = self._parse_and_apply(raw, offset)
-                if idx is not None:
-                    rebuilt.append(idx)
-            await self._write_index_file(rebuilt, append=False)
-            return
-
-        # Append any un-indexed log entries to the index.
+    async def _catch_up_index_from_log(
+        self,
+        log_offsets: list[int],
+        log_entries: list[bytes],
+        max_indexed_offset: int,
+    ) -> None:
+        """Append any un-indexed entries from the log to the index file. Used
+        when a previous commit wrote the log but crashed before updating the
+        index."""
         recovered: list[IndexEntry] = []
         for offset, raw in zip(log_offsets, log_entries):
             if offset <= max_indexed_offset:
@@ -137,7 +136,37 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
             if idx is not None:
                 recovered.append(idx)
         if recovered:
+            logger.info(
+                "Recovered %d un-indexed entries for %s",
+                len(recovered),
+                self._executions_path,
+            )
             await self._write_index_file(recovered, append=True)
+
+    async def _load_index_and_recover(self) -> None:
+        """Loads the index from disk and recovers from any previous crash.
+
+        Recovery uses direct disk writes (via ``asyncio.to_thread``) rather
+        than the FileClient staging queue, so the user's outer transaction
+        state is never observed or modified.
+        """
+        max_indexed_offset = await self._load_index_from_file()
+
+        log_content = await self._client.read(self._executions_path)
+        if not log_content:
+            self._log_size = 0
+            return
+
+        self._log_size = len(log_content)
+        log_offsets, log_entries = _scan_log_offsets(log_content)
+        max_valid_offset = log_offsets[-1] if log_offsets else -1
+
+        if max_indexed_offset > max_valid_offset:
+            await self._rebuild_index_from_log(log_offsets, log_entries)
+        else:
+            await self._catch_up_index_from_log(
+                log_offsets, log_entries, max_indexed_offset
+            )
 
     def _parse_and_apply(
         self, raw_line: bytes, offset: int
@@ -279,6 +308,26 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
             )
             return None
 
+    async def _get_payload_from_log(
+        self,
+        key: str,
+        offset: int,
+        cache: dict[str, Any],
+        payload_field: str,
+    ) -> Any:
+        """Return the payload at ``payload_field`` of the log entry at
+        ``offset``, populating ``cache`` on first read. Returns None if the
+        entry is missing or has no payload."""
+        if key in cache:
+            return cache[key]
+        log_entry = await self._read_log_line_at(offset)
+        if log_entry is None:
+            return None
+        payload = log_entry.get(payload_field)
+        if payload is not None:
+            cache[key] = payload
+        return payload
+
     async def get_execution_record(
         self, execution_id: ExecutionId, return_type: type
     ) -> ExecutionRecord | None:
@@ -293,14 +342,9 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
         error: str | None = None
 
         if status == ExecutionStatus.COMPLETED:
-            if key in self._results_cache:
-                persistable_result = self._results_cache[key]
-            else:
-                log_entry = await self._read_log_line_at(offset)
-                persistable_result = log_entry.get("result") if log_entry else None
-                if persistable_result is not None:
-                    self._results_cache[key] = persistable_result
-
+            persistable_result = await self._get_payload_from_log(
+                key, offset, self._results_cache, "result"
+            )
             if persistable_result is not None:
                 serialized = json.dumps(persistable_result, sort_keys=True).encode(
                     "utf-8"
@@ -308,14 +352,9 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
                 result = self._serializer.deserialize(serialized, return_type)
 
         elif status == ExecutionStatus.FAILED:
-            if key in self._errors:
-                error = self._errors[key]
-            else:
-                log_entry = await self._read_log_line_at(offset)
-                if log_entry is not None:
-                    error = log_entry.get("error")
-                    if error:
-                        self._errors[key] = error
+            error = await self._get_payload_from_log(
+                key, offset, self._errors, "error"
+            )
 
         return ExecutionRecord(status=status, result=result, error=error)
 
@@ -330,15 +369,9 @@ def _scan_log_offsets(log_content: bytes) -> tuple[list[int], list[bytes]]:
     total = len(log_content)
     while pos < total:
         newline = log_content.find(b"\n", pos)
-        if newline == -1:
-            line = log_content[pos:]
-            if line:
-                offsets.append(pos)
-                lines.append(line)
-            break
-        line = log_content[pos:newline]
-        if line:
+        end = newline if newline != -1 else total
+        if end > pos:
             offsets.append(pos)
-            lines.append(line)
-        pos = newline + 1
+            lines.append(log_content[pos:end])
+        pos = end + 1
     return offsets, lines

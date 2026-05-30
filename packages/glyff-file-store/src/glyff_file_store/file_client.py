@@ -49,73 +49,65 @@ class FileClient:
         self._staged_ops.clear()
         self._staged_deletes.clear()
 
-    async def commit_staged(self) -> None:
-        def _write_temp_file_sync(content: bytes, target_dir: Path) -> str:
+    async def _resolve_staged_ops_to_bytes(
+        self, ops: list[StagedOperation]
+    ) -> list[bytes]:
+        """Resolve a sequence of staged operations into a final list of byte
+        chunks. A WRITE discards the chunks that came before it; APPENDs
+        accumulate. Collapsing here lets us write the final bytes with a
+        single open() per file."""
+        final_chunks: list[bytes] = []
+        for op in ops:
+            content = await op.write()
+            if op.mode == OpMode.WRITE:
+                final_chunks = [content]
+            else:  # OpMode.APPEND
+                final_chunks.append(content)
+        return final_chunks
+
+    async def _atomically_write_bytes(
+        self, target_path: Path, chunks: list[bytes]
+    ) -> None:
+        """Write byte chunks to ``target_path`` atomically via a temp file."""
+        if not chunks:
+            return
+
+        def _write_temp_sync(target_dir: Path) -> str:
             with tempfile.NamedTemporaryFile(
                 mode="wb", dir=target_dir, delete=False
             ) as f:
-                f.write(content)
+                for buf in chunks:
+                    f.write(buf)
                 return f.name
 
+        temp_path_str = await asyncio.to_thread(_write_temp_sync, target_path.parent)
+        try:
+            await asyncio.to_thread(os.replace, temp_path_str, str(target_path))
+        except BaseException:
+            await asyncio.to_thread(
+                lambda p=temp_path_str: Path(p).unlink(missing_ok=True)
+            )
+            raise
+
+    async def commit_staged(self) -> None:
         async with self._lock:
-            temp_files_to_clean: list[str] = []
-            try:
-                # Handle deletes first.
-                for rel_path_str in self._staged_deletes:
-                    target_path = self.resolve(rel_path_str)
-                    await asyncio.to_thread(
-                        lambda p=target_path: p.unlink(missing_ok=True)
-                    )
+            # Handle deletes first.
+            for rel_path_str in self._staged_deletes:
+                target_path = self.resolve(rel_path_str)
+                await asyncio.to_thread(
+                    lambda p=target_path: p.unlink(missing_ok=True)
+                )
 
-                # Process writes and appends in order.
-                for rel_path_str, ops in self._staged_ops.items():
-                    if not ops:
-                        continue
-
-                    target_path = self.resolve(rel_path_str)
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-
-                    # Resolve all content callbacks first (each may yield).
-                    # Any WRITE in the sequence discards the chunks that came
-                    # before it; APPENDs accumulate. Collapsing here lets us
-                    # write the final bytes with a single open() per file.
-                    final_chunks: list[bytes] = []
-                    for op in ops:
-                        content = await op.write()
-                        if op.mode == OpMode.WRITE:
-                            final_chunks = [content]
-                        else:  # OpMode.APPEND
-                            final_chunks.append(content)
-
-                    if not final_chunks:
-                        continue
-
-                    temp_path = await asyncio.to_thread(
-                        _write_temp_file_sync, b"", target_path.parent
-                    )
-                    temp_files_to_clean.append(temp_path)
-
-                    def _write_all(
-                        path: str = temp_path,
-                        chunks: list[bytes] = final_chunks,
-                    ) -> None:
-                        with open(path, "wb") as f:
-                            for buf in chunks:
-                                f.write(buf)
-
-                    await asyncio.to_thread(_write_all)
-                    await asyncio.to_thread(os.replace, temp_path, str(target_path))
-                    temp_files_to_clean.remove(temp_path)
-
-            finally:
-                unlink_tasks = [
-                    asyncio.to_thread(
-                        lambda p=temp_path: Path(p).unlink(missing_ok=True)
-                    )
-                    for temp_path in temp_files_to_clean
-                ]
-                if unlink_tasks:
-                    await asyncio.gather(*unlink_tasks)
+            # Process writes and appends in order.
+            for rel_path_str, ops in self._staged_ops.items():
+                if not ops:
+                    continue
+                final_chunks = await self._resolve_staged_ops_to_bytes(ops)
+                if not final_chunks:
+                    continue
+                target_path = self.resolve(rel_path_str)
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                await self._atomically_write_bytes(target_path, final_chunks)
 
         await self.clear_staged()
 
