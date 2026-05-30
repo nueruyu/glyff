@@ -1,5 +1,7 @@
 import inspect
 
+import pytest
+
 from glyff.serialization import JsonArgsHasher, JsonSerializer
 
 s = JsonSerializer()
@@ -8,6 +10,41 @@ h = JsonArgsHasher()
 
 def sample_func(a: int, b: str = "default"):
     pass
+
+
+class IdentityAware:
+    def __init__(self, id_val: str):
+        self._id = id_val
+
+    def get_identity(self) -> str:
+        return self._id
+
+    def method(self, x: int):
+        pass
+
+
+class AnotherIdentityAware:
+    _id = "class_id_456"
+
+    @classmethod
+    def get_identity(cls) -> str:
+        return cls._id
+
+    @classmethod
+    def class_method(cls, x: int):
+        pass
+
+
+class NoIdentity:
+    def method(self, x: int):
+        pass
+
+
+class NonCallableIdentity:
+    get_identity = "not_a_method"
+
+    def method(self, x: int):
+        pass
 
 
 def test_hash_args_positional_vs_keyword_are_equal():
@@ -54,7 +91,66 @@ def test_hash_non_serializable_raises_type_error():
         pass
 
     sig = inspect.signature(func_with_obj)
-    import pytest
 
     with pytest.raises(TypeError, match="could not be serialized to JSON"):
         h.hash_args(func_with_obj, sig, (object(),), {})
+
+
+def test_method_hash_differs_for_different_instances():
+    inst1 = IdentityAware("id1")
+    inst2 = IdentityAware("id2")
+    func = IdentityAware.method
+    sig = inspect.signature(func)
+
+    h1 = h.hash_args(func, sig, (inst1, 10), {})
+    h2 = h.hash_args(func, sig, (inst2, 10), {})
+
+    assert h1 != h2
+
+
+def test_method_hash_is_same_for_same_instance():
+    inst = IdentityAware("id1")
+    func = IdentityAware.method
+    sig = inspect.signature(func)
+
+    h1 = h.hash_args(func, sig, (inst, 10), {})
+    h2 = h.hash_args(func, sig, (inst, 10), {})
+
+    assert h1 == h2
+
+
+def test_class_method_hash_includes_class_identity():
+    func = AnotherIdentityAware.class_method.__func__
+    sig = inspect.signature(func)
+
+    h1 = h.hash_args(func, sig, (AnotherIdentityAware, 10), {})
+    h2 = h.hash_args(func, sig, (AnotherIdentityAware, 10), {})
+
+    assert h1 == h2
+
+
+def test_hash_method_on_class_without_identity_raises_type_error():
+    inst = NoIdentity()
+    func = NoIdentity.method
+    sig = inspect.signature(func)
+
+    with pytest.raises(TypeError, match="does not implement the Identifiable protocol"):
+        h.hash_args(func, sig, (inst, 10), {})
+
+
+def test_hash_method_on_class_with_non_callable_identity_raises_type_error():
+    inst = NonCallableIdentity()
+    func = NonCallableIdentity.method
+    sig = inspect.signature(func)
+
+    with pytest.raises(TypeError, match="does not implement the Identifiable protocol"):
+        h.hash_args(func, sig, (inst, 10), {})
+
+
+def test_regular_function_with_self_parameter_does_not_raise():
+    def regular_func(self, x: int):
+        pass
+
+    sig = inspect.signature(regular_func)
+    result = h.hash_args(regular_func, sig, ("not_an_instance", 10), {})
+    assert result is not None
