@@ -37,7 +37,8 @@ class FileClient:
     def resolve(self, path: str | Path) -> Path:
         return self._session_path / path
 
-    async def clear_staged(self) -> None:
+    async def _clear_staged_under_lock(self) -> None:
+        """Clear all staged ops and deletes. Caller must hold ``self._lock``."""
         clear_tasks = []
         for ops in self._staged_ops.values():
             for op in ops:
@@ -48,6 +49,10 @@ class FileClient:
 
         self._staged_ops.clear()
         self._staged_deletes.clear()
+
+    async def clear_staged(self) -> None:
+        async with self._lock:
+            await self._clear_staged_under_lock()
 
     async def _resolve_staged_ops_to_bytes(
         self, rel_path_str: str, ops: list[StagedOperation]
@@ -81,12 +86,23 @@ class FileClient:
             return
 
         def _write_temp_sync(target_dir: Path) -> str:
-            with tempfile.NamedTemporaryFile(
+            f = tempfile.NamedTemporaryFile(
                 mode="wb", dir=target_dir, delete=False
-            ) as f:
+            )
+            try:
                 for buf in chunks:
                     f.write(buf)
+                f.close()
                 return f.name
+            except BaseException:
+                # Make sure we don't leak the temp file if the write itself
+                # fails (e.g. disk full) before we return the path.
+                f.close()
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
+                raise
 
         temp_path_str = await asyncio.to_thread(_write_temp_sync, target_path.parent)
         try:
@@ -119,7 +135,9 @@ class FileClient:
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 await self._atomically_write_bytes(target_path, final_chunks)
 
-        await self.clear_staged()
+            # Clear under the same lock so a concurrent stage_* between
+            # disk writes and clear cannot have its work silently discarded.
+            await self._clear_staged_under_lock()
 
     async def read(self, path: str | Path) -> bytes | None:
         try:
@@ -141,9 +159,10 @@ class FileClient:
         op = StagedOperation(mode=mode, write=callback, clear=clear_callback)
 
         rel_str = str(path)
-        self._staged_ops[rel_str].append(op)
-        if rel_str in self._staged_deletes:
-            self._staged_deletes.remove(rel_str)
+        async with self._lock:
+            self._staged_ops[rel_str].append(op)
+            if rel_str in self._staged_deletes:
+                self._staged_deletes.remove(rel_str)
 
     async def stage_write(
         self,
@@ -163,10 +182,11 @@ class FileClient:
 
     async def stage_delete(self, path: str | Path) -> None:
         rel_str = str(path)
-        self._staged_deletes.add(rel_str)
-        if rel_str in self._staged_ops:
-            # Run clear callbacks for the cancelled operations.
-            ops_to_clear = self._staged_ops.pop(rel_str)
-            clear_tasks = [op.clear() for op in ops_to_clear if op.clear]
-            if clear_tasks:
-                await asyncio.gather(*clear_tasks)
+        async with self._lock:
+            self._staged_deletes.add(rel_str)
+            ops_to_clear = self._staged_ops.pop(rel_str, [])
+        # Run clear callbacks outside the lock so a callback that re-enters
+        # FileClient (e.g., via stage_*) cannot deadlock.
+        clear_tasks = [op.clear() for op in ops_to_clear if op.clear]
+        if clear_tasks:
+            await asyncio.gather(*clear_tasks)

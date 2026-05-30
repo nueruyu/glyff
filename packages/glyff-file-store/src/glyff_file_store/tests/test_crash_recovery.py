@@ -37,13 +37,17 @@ async def test_started_task_is_rerun_on_next_session(
         await crash_func()
     assert _call_count == 1
 
-    with open(log_file, "r", encoding="utf-8") as f:
-        lines = f.readlines()
+    # Read/write in binary mode so we don't perturb the byte layout the
+    # store committed (text mode on Windows would translate \n → \r\n).
+    with open(log_file, "rb") as f:
+        raw_lines = f.read().splitlines(keepends=True)
 
-    start_lines = [line for line in lines if json.loads(line)["event_type"] == "start"]
+    start_lines = [
+        line for line in raw_lines if json.loads(line)["event_type"] == "start"
+    ]
 
-    with open(log_file, "w", encoding="utf-8") as f:
-        f.writelines(start_lines)
+    with open(log_file, "wb") as f:
+        f.write(b"".join(start_lines))
 
     _call_count = 0
     client_after_crash = FileClient(base_dir=tmp_path, session_id=session_id)

@@ -18,6 +18,10 @@ from ._base import (
 
 logger = logging.getLogger(__name__)
 
+# Sentinel for "this key has not been cached yet" — lets us distinguish a
+# legitimately cached None from an absent entry without re-reading the log.
+_MISSING: Any = object()
+
 
 class IndexEntry(TypedDict):
     k: str  # call-stack key
@@ -146,27 +150,79 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
     async def _load_index_and_recover(self) -> None:
         """Loads the index from disk and recovers from any previous crash.
 
+        Avoids reading the whole log file in the happy path: ``stat()`` gives
+        us ``_log_size``, and on catch-up we read only the tail past
+        ``max_indexed_offset``. The full log is read only when the index
+        references offsets past EOF (truncated log → rebuild).
+
         Recovery uses direct disk writes (via ``asyncio.to_thread``) rather
         than the FileClient staging queue, so the user's outer transaction
         state is never observed or modified.
         """
         max_indexed_offset = await self._load_index_from_file()
+        abs_log_path = self._client.resolve(self._executions_path)
 
-        log_content = await self._client.read(self._executions_path)
-        if not log_content:
+        def _stat_size() -> int | None:
+            try:
+                return abs_log_path.stat().st_size
+            except FileNotFoundError:
+                return None
+
+        file_size = await asyncio.to_thread(_stat_size)
+        if file_size is None or file_size == 0:
             self._log_size = 0
             return
 
-        self._log_size = len(log_content)
-        log_offsets, log_entries = _scan_log_offsets(log_content)
-        max_valid_offset = log_offsets[-1] if log_offsets else -1
+        self._log_size = file_size
 
-        if max_indexed_offset > max_valid_offset:
+        needs_rebuild = max_indexed_offset >= file_size
+        if not needs_rebuild and max_indexed_offset >= 0:
+            # Cheap sanity check: the line at max_indexed_offset must still
+            # parse. If not, the log has been corrupted or truncated and the
+            # index can no longer be trusted.
+            verification = await self._read_log_line_at(max_indexed_offset)
+            if verification is None:
+                needs_rebuild = True
+
+        if needs_rebuild:
+            # Rebuild from the canonical log. This is the only path that
+            # reads the whole file, and it only happens after a crashed
+            # commit or external corruption.
+            log_content = await self._client.read(self._executions_path) or b""
+            log_offsets, log_entries = _scan_log_offsets(log_content)
             await self._rebuild_index_from_log(log_offsets, log_entries)
-        else:
-            await self._catch_up_index_from_log(
-                log_offsets, log_entries, max_indexed_offset
-            )
+            return
+
+        # Catch-up: read only the tail of the log starting at the last
+        # indexed entry (or the whole log if the index is empty).
+        start = max(max_indexed_offset, 0)
+
+        def _read_tail() -> bytes:
+            with open(abs_log_path, "rb") as f:
+                f.seek(start)
+                return f.read()
+
+        tail = await asyncio.to_thread(_read_tail)
+
+        if max_indexed_offset == -1:
+            log_offsets, log_entries = _scan_log_offsets(tail)
+            await self._catch_up_index_from_log(log_offsets, log_entries, -1)
+            return
+
+        # Skip past the already-indexed line; everything after its newline
+        # is potentially new.
+        first_nl = tail.find(b"\n")
+        if first_nl == -1:
+            return  # Last indexed line has no terminator; nothing past it.
+        new_start = max_indexed_offset + first_nl + 1
+        new_content = tail[first_nl + 1 :]
+        if not new_content:
+            return
+        rel_offsets, rel_entries = _scan_log_offsets(new_content)
+        log_offsets = [new_start + o for o in rel_offsets]
+        await self._catch_up_index_from_log(
+            log_offsets, rel_entries, max_indexed_offset
+        )
 
     def _parse_and_apply(
         self, raw_line: bytes, offset: int
@@ -316,16 +372,17 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
         payload_field: str,
     ) -> Any:
         """Return the payload at ``payload_field`` of the log entry at
-        ``offset``, populating ``cache`` on first read. Returns None if the
-        entry is missing or has no payload."""
-        if key in cache:
-            return cache[key]
+        ``offset``, populating ``cache`` on first read. A cached ``None`` is
+        distinguishable from a missing entry via the ``_MISSING`` sentinel,
+        so legitimate ``None`` results don't force a re-read on every call."""
+        cached = cache.get(key, _MISSING)
+        if cached is not _MISSING:
+            return cached
         log_entry = await self._read_log_line_at(offset)
         if log_entry is None:
             return None
         payload = log_entry.get(payload_field)
-        if payload is not None:
-            cache[key] = payload
+        cache[key] = payload
         return payload
 
     async def get_execution_record(
