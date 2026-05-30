@@ -3,7 +3,7 @@ import json
 from glyff import Session, engrave
 from glyff.interfaces import ArgsHasher, Serializer
 
-from glyff_file_store import FileClient, FileSessionStore
+from glyff_file_store import FileClient, JsonLinesFileSessionStore
 
 _call_count = 0
 
@@ -30,8 +30,8 @@ async def test_started_task_is_rerun_on_next_session(
 
     session_id = "crash-recovery"
     client = FileClient(base_dir=tmp_path, session_id=session_id)
-    store = FileSessionStore(client=client, serializer=serializer, format="jsonl")
-    log_file = client.resolve(store.executions_path)
+    store = JsonLinesFileSessionStore(client=client, serializer=serializer)
+    log_file = client.resolve("executions.jsonl")
 
     async with Session(id=session_id, store=store, hasher=hasher):
         await crash_func()
@@ -47,8 +47,8 @@ async def test_started_task_is_rerun_on_next_session(
 
     _call_count = 0
     client_after_crash = FileClient(base_dir=tmp_path, session_id=session_id)
-    store_after_crash = FileSessionStore(
-        client=client_after_crash, serializer=serializer, format="jsonl"
+    store_after_crash = JsonLinesFileSessionStore(
+        client=client_after_crash, serializer=serializer
     )
     async with Session(id=session_id, store=store_after_crash, hasher=hasher):
         result = await crash_func()

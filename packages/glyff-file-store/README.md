@@ -17,10 +17,11 @@ This package depends on `glyff>=0.1.0`.
 
 ## Public API
 
-| Name               | Description                                           |
-| ------------------ | ----------------------------------------------------- |
-| `FileClient`       | Low-level file I/O for a session directory.           |
-| `FileSessionStore` | `SessionStore` implementation backed by `FileClient`. |
+| Name                        | Description                                                                |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `FileClient`                | Low-level file I/O for a session directory.                                |
+| `JsonFileSessionStore`      | `SessionStore` writing a pretty-printed JSON log. Intended for debugging.  |
+| `JsonLinesFileSessionStore` | `SessionStore` writing a JSON-Lines log with an in-memory index. Scalable. |
 
 ## Format
 

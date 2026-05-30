@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from glyff import Session, engrave
 from glyff.interfaces import ArgsHasher, Serializer
 
-from glyff_file_store import FileClient, FileSessionStore
+from glyff_file_store import FileClient, JsonLinesFileSessionStore
 
 _runs: list[int] = []
 
@@ -29,7 +29,7 @@ async def test_completed_stream_is_replayed_across_store_instances(
     session_id = "fs-stream-replay"
 
     client = FileClient(base_dir=tmp_path, session_id=session_id)
-    store = FileSessionStore(client=client, serializer=serializer, format="jsonl")
+    store = JsonLinesFileSessionStore(client=client, serializer=serializer)
     async with Session(id=session_id, store=store, hasher=hasher):
         first = [x async for x in fs_stream(4)]
     assert first == [0, 1, 2, 3]
@@ -38,7 +38,7 @@ async def test_completed_stream_is_replayed_across_store_instances(
     # Fresh store instance reading the same on-disk log.
     reset_runs()
     client2 = FileClient(base_dir=tmp_path, session_id=session_id)
-    store2 = FileSessionStore(client=client2, serializer=serializer, format="jsonl")
+    store2 = JsonLinesFileSessionStore(client=client2, serializer=serializer)
     async with Session(id=session_id, store=store2, hasher=hasher):
         second = [x async for x in fs_stream(4)]
     assert second == [0, 1, 2, 3]
@@ -54,7 +54,7 @@ async def test_interrupted_stream_reruns_on_fresh_instance(
     session_id = "fs-stream-break"
 
     client = FileClient(base_dir=tmp_path, session_id=session_id)
-    store = FileSessionStore(client=client, serializer=serializer, format="jsonl")
+    store = JsonLinesFileSessionStore(client=client, serializer=serializer)
     async with Session(id=session_id, store=store, hasher=hasher):
         async for x in fs_stream(5):
             if x == 1:
@@ -63,7 +63,7 @@ async def test_interrupted_stream_reruns_on_fresh_instance(
 
     reset_runs()
     client2 = FileClient(base_dir=tmp_path, session_id=session_id)
-    store2 = FileSessionStore(client=client2, serializer=serializer, format="jsonl")
+    store2 = JsonLinesFileSessionStore(client=client2, serializer=serializer)
     async with Session(id=session_id, store=store2, hasher=hasher):
         full = [x async for x in fs_stream(5)]
     assert full == [0, 1, 2, 3, 4]

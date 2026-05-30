@@ -3,14 +3,23 @@ from __future__ import annotations
 import asyncio
 import os
 import tempfile
+from collections import defaultdict
+from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Coroutine, NamedTuple
+from typing import Any, Awaitable, Callable, Coroutine, NamedTuple, Union
 
 WriteCallback = Callable[[], Awaitable[bytes]]
 ClearCallback = Callable[[], Coroutine[Any, Any, None]]
+Content = Union[bytes, WriteCallback]
 
 
-class StagedWrite(NamedTuple):
+class OpMode(Enum):
+    WRITE = auto()
+    APPEND = auto()
+
+
+class StagedOperation(NamedTuple):
+    mode: OpMode
     write: WriteCallback
     clear: ClearCallback | None
 
@@ -21,7 +30,7 @@ class FileClient:
     def __init__(self, base_dir: str | Path, session_id: str):
         self._session_path = Path(base_dir) / session_id
         self._session_path.mkdir(parents=True, exist_ok=True)
-        self._staged_writes: dict[str, StagedWrite] = {}
+        self._staged_ops: dict[str, list[StagedOperation]] = defaultdict(list)
         self._staged_deletes: set[str] = set()
         self._lock = asyncio.Lock()
 
@@ -29,17 +38,19 @@ class FileClient:
         return self._session_path / path
 
     async def clear_staged(self) -> None:
-        clear_tasks = [
-            staged.clear() for staged in self._staged_writes.values() if staged.clear
-        ]
+        clear_tasks = []
+        for ops in self._staged_ops.values():
+            for op in ops:
+                if op.clear:
+                    clear_tasks.append(op.clear())
         if clear_tasks:
             await asyncio.gather(*clear_tasks)
 
-        self._staged_writes.clear()
+        self._staged_ops.clear()
         self._staged_deletes.clear()
 
     async def commit_staged(self) -> None:
-        def _write_temp_file(content: bytes, target_dir: Path) -> str:
+        def _write_temp_file_sync(content: bytes, target_dir: Path) -> str:
             with tempfile.NamedTemporaryFile(
                 mode="wb", dir=target_dir, delete=False
             ) as f:
@@ -47,29 +58,50 @@ class FileClient:
                 return f.name
 
         async with self._lock:
-            temp_paths: dict[str, str] = {}
+            temp_files_to_clean: list[str] = []
             try:
-                for rel_path_str, staged_write in self._staged_writes.items():
-                    target_path = self.resolve(rel_path_str)
-                    target_path.parent.mkdir(parents=True, exist_ok=True)
-                    content = await staged_write.write()
-                    temp_paths[rel_path_str] = await asyncio.to_thread(
-                        _write_temp_file, content, target_path.parent
-                    )
-
-                for rel_path_str, temp_path in temp_paths.items():
-                    target_path = self.resolve(rel_path_str)
-                    await asyncio.to_thread(os.replace, temp_path, str(target_path))
-
+                # Handle deletes first.
                 for rel_path_str in self._staged_deletes:
                     target_path = self.resolve(rel_path_str)
                     await asyncio.to_thread(
                         lambda p=target_path: p.unlink(missing_ok=True)
                     )
+
+                # Process writes and appends in order.
+                for rel_path_str, ops in self._staged_ops.items():
+                    if not ops:
+                        continue
+
+                    target_path = self.resolve(rel_path_str)
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    # Create a temporary working file.
+                    temp_path = await asyncio.to_thread(
+                        _write_temp_file_sync, b"", target_path.parent
+                    )
+                    temp_files_to_clean.append(temp_path)
+
+                    is_content_written = False
+                    for op in ops:
+                        content = await op.write()
+                        if op.mode == OpMode.WRITE:
+                            # Overwrite the temp file.
+                            with open(temp_path, "wb") as f:
+                                f.write(content)
+                        elif op.mode == OpMode.APPEND:
+                            # Append to the temp file.
+                            with open(temp_path, "ab") as f:
+                                f.write(content)
+                        is_content_written = True
+
+                    if is_content_written:
+                        await asyncio.to_thread(os.replace, temp_path, str(target_path))
+                        temp_files_to_clean.remove(temp_path)
+
             finally:
                 unlink_tasks = [
                     asyncio.to_thread(os.unlink, temp_path)
-                    for temp_path in temp_paths.values()
+                    for temp_path in temp_files_to_clean
                     if os.path.exists(temp_path)
                 ]
                 if unlink_tasks:
@@ -83,21 +115,46 @@ class FileClient:
         except FileNotFoundError:
             return None
 
+    async def _stage_op(
+        self,
+        mode: OpMode,
+        path: str | Path,
+        content: Content,
+        clear_callback: ClearCallback | None = None,
+    ) -> None:
+        async def bytes_writer() -> bytes:
+            return content if isinstance(content, bytes) else b""
+
+        callback = content if callable(content) else bytes_writer
+        op = StagedOperation(mode=mode, write=callback, clear=clear_callback)
+
+        rel_str = str(path)
+        self._staged_ops[rel_str].append(op)
+        if rel_str in self._staged_deletes:
+            self._staged_deletes.remove(rel_str)
+
     async def stage_write(
         self,
         path: str | Path,
-        write_callback: WriteCallback,
+        content: Content,
         clear_callback: ClearCallback | None = None,
     ) -> None:
-        rel_str = str(path)
-        self._staged_writes[rel_str] = StagedWrite(
-            write=write_callback, clear=clear_callback
-        )
-        if rel_str in self._staged_deletes:
-            self._staged_deletes.remove(rel_str)
+        await self._stage_op(OpMode.WRITE, path, content, clear_callback)
+
+    async def stage_append(
+        self,
+        path: str | Path,
+        content: Content,
+        clear_callback: ClearCallback | None = None,
+    ) -> None:
+        await self._stage_op(OpMode.APPEND, path, content, clear_callback)
 
     async def stage_delete(self, path: str | Path) -> None:
         rel_str = str(path)
         self._staged_deletes.add(rel_str)
-        if rel_str in self._staged_writes:
-            del self._staged_writes[rel_str]
+        if rel_str in self._staged_ops:
+            # Run clear callbacks for the cancelled operations.
+            ops_to_clear = self._staged_ops.pop(rel_str)
+            clear_tasks = [op.clear() for op in ops_to_clear if op.clear]
+            if clear_tasks:
+                await asyncio.gather(*clear_tasks)
