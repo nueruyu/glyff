@@ -122,9 +122,7 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
             async def rebuilt_writer(
                 entries: list[IndexEntry] = rebuilt_index_entries,
             ) -> bytes:
-                return b"".join(
-                    (json.dumps(e) + "\n").encode("utf-8") for e in entries
-                )
+                return b"".join((json.dumps(e) + "\n").encode("utf-8") for e in entries)
 
             await self._client.stage_write(self._index_path, rebuilt_writer)
             await self._client.commit_staged()
@@ -206,9 +204,7 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
                         line_num = self._next_log_line
                         self._next_log_line += 1
                         chunks.append(
-                            (json.dumps(staged, sort_keys=True) + "\n").encode(
-                                "utf-8"
-                            )
+                            (json.dumps(staged, sort_keys=True) + "\n").encode("utf-8")
                         )
                         idx = self._apply_entry_to_state(staged, line_num)
                         if idx is not None:
