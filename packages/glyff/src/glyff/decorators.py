@@ -1,13 +1,38 @@
 import functools
 import inspect
-from typing import Any, Callable, ParamSpec, TypeVar, cast
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from typing import Any, Callable, ParamSpec, TypeVar, cast, get_args, get_origin
 
-from .context import get_context
-from .executor import execute
+from .context import Context, get_context
+from .executor import execute, execute_stream
 from .models import ExecutionId
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+# Single source of truth for streaming return-type detection. A function is
+# treated as streaming iff its return annotation (or its generic origin) is one
+# of these. Custom subclasses are intentionally not picked up: replay reuses the
+# generic ``list[item_type]`` for (de)serialization, and only the standard
+# annotations let us extract a reliable ``item_type``.
+_STREAMING_TYPES: tuple[type, ...] = (AsyncIterator, AsyncGenerator, AsyncIterable)
+
+
+async def _resolve_execution_id(
+    ctx: Context,
+    func: Callable[..., Any],
+    sig: inspect.Signature,
+    task_name: str,
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> ExecutionId:
+    """Builds the deterministic ExecutionId for a single call."""
+    parent_id = ctx.current_execution_id
+    seq = await ctx.sequencer.next(parent_id, task_name)
+    args_hash = ctx.hasher.hash_args(func, sig, args, kwargs)
+    return ExecutionId(
+        parent_id=parent_id, name=task_name, sequence=seq, args_hash=args_hash
+    )
 
 
 def engrave(func: Callable[P, R]) -> Callable[P, R]:
@@ -15,6 +40,11 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
     Decorator that makes an async method engraveable and resumable.
     Its main responsibilities are ExecutionId creation and delegation to the
     `executor` module.
+
+    Functions whose return annotation is one of the streaming types (see
+    ``_STREAMING_TYPES``) are treated as streaming: the wrapper itself becomes
+    an async generator that transparently yields items while the executor
+    records the full stream.
     """
     sig = inspect.signature(func)
     task_name = getattr(func, "__qualname__", func.__name__)
@@ -28,24 +58,54 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
             f"Please ensure all types are correctly defined and imported. Error: {e}"
         ) from e
 
-    @functools.wraps(func)
-    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        ctx = get_context()
-        parent_id = ctx.current_execution_id
-        seq = await ctx.sequencer.next(parent_id, task_name)
-        args_hash = ctx.hasher.hash_args(func, sig, args, kwargs)
-        execution_id = ExecutionId(
-            parent_id=parent_id, name=task_name, sequence=seq, args_hash=args_hash
-        )
+    # `get_origin` unwraps subscripted generics (e.g. `AsyncIterator[T]` ->
+    # `collections.abc.AsyncIterator`); bare annotations have no origin, so we
+    # fall back to `return_type` itself.
+    target = get_origin(return_type) or return_type
+    is_streaming = target in _STREAMING_TYPES
 
-        result = await execute(
-            ctx=ctx,
-            execution_id=execution_id,
-            func=func,
-            args=args,
-            kwargs=kwargs,
-            return_type=return_type,
-        )
-        return cast(R, result)
+    if is_streaming:
+        item_type: Any = Any
+        type_args = get_args(return_type)
+        if type_args:
+            item_type = type_args[0]
 
-    return cast(Callable[P, R], wrapper)
+        @functools.wraps(func)
+        async def streaming_wrapper(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> AsyncIterator[Any]:
+            ctx = get_context()
+            execution_id = await _resolve_execution_id(
+                ctx, func, sig, task_name, args, kwargs
+            )
+            async for item in execute_stream(
+                ctx=ctx,
+                execution_id=execution_id,
+                func=func,
+                args=args,
+                kwargs=kwargs,
+                item_type=item_type,
+            ):
+                yield item
+
+        return cast(Callable[P, R], streaming_wrapper)
+
+    else:
+
+        @functools.wraps(func)
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            ctx = get_context()
+            execution_id = await _resolve_execution_id(
+                ctx, func, sig, task_name, args, kwargs
+            )
+            result = await execute(
+                ctx=ctx,
+                execution_id=execution_id,
+                func=func,
+                args=args,
+                kwargs=kwargs,
+                return_type=return_type,
+            )
+            return cast(R, result)
+
+        return cast(Callable[P, R], wrapper)

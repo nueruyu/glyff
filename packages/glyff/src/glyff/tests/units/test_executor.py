@@ -4,7 +4,7 @@ import pytest
 
 from glyff.context import Context, TransactionScope, reset_context, set_context
 from glyff.exceptions import ExecutionFailedError, YieldException
-from glyff.executor import execute
+from glyff.executor import execute, execute_stream
 from glyff.interfaces import Serializer
 from glyff.models import ExecutionId, ExecutionStatus
 from glyff.tests.stubs.store import StubSessionStore
@@ -176,6 +176,96 @@ async def test_general_exception_stages_failure(
 
     assert len(mock_store.get_calls("commit")) == 1
     assert not mock_store.get_calls("rollback")
+
+
+async def test_stream_natural_completion_stages_complete(
+    mock_store: StubSessionStore,
+    base_execution_id: ExecutionId,
+    test_context: Context,
+):
+    async def producer():
+        for i in range(3):
+            yield i
+
+    items = [
+        x
+        async for x in execute_stream(
+            ctx=test_context,
+            execution_id=base_execution_id,
+            func=producer,
+            args=(),
+            kwargs={},
+            item_type=int,
+        )
+    ]
+
+    assert items == [0, 1, 2]
+    assert not test_context.tracer.call_stack
+
+    complete_calls = mock_store.get_calls("complete")
+    assert len(complete_calls) == 1
+    # The whole stream is recorded as one list[int] value.
+    assert complete_calls[0].args == (base_execution_id, [0, 1, 2], list[int])
+    assert not mock_store.get_calls("fail")
+    assert len(mock_store.get_calls("commit")) == 1
+
+
+async def test_stream_producer_error_stages_failure(
+    mock_store: StubSessionStore,
+    base_execution_id: ExecutionId,
+    test_context: Context,
+):
+    async def producer():
+        yield 0
+        raise ValueError("producer boom")
+
+    with pytest.raises(ExecutionFailedError):
+        async for _ in execute_stream(
+            ctx=test_context,
+            execution_id=base_execution_id,
+            func=producer,
+            args=(),
+            kwargs={},
+            item_type=int,
+        ):
+            pass
+
+    assert not test_context.tracer.call_stack
+    fail_calls = mock_store.get_calls("fail")
+    assert len(fail_calls) == 1
+    assert "ValueError" in fail_calls[0].args[1]
+    assert not mock_store.get_calls("complete")
+    assert len(mock_store.get_calls("commit")) == 1
+
+
+async def test_stream_caller_thrown_exception_does_not_stage_failure(
+    mock_store: StubSessionStore,
+    base_execution_id: ExecutionId,
+    test_context: Context,
+):
+    # An exception thrown *into* the stream by the caller (e.g. a timeout or a
+    # processing error during iteration) must propagate without marking the
+    # stream FAILED — only producer errors are failures.
+    async def producer():
+        for i in range(3):
+            yield i
+
+    gen = execute_stream(
+        ctx=test_context,
+        execution_id=base_execution_id,
+        func=producer,
+        args=(),
+        kwargs={},
+        item_type=int,
+    )
+    assert await gen.__anext__() == 0
+    with pytest.raises(ValueError, match="caller boom"):
+        await gen.athrow(ValueError("caller boom"))
+    await gen.aclose()
+
+    assert not mock_store.get_calls("fail")
+    assert not mock_store.get_calls("complete")
+    assert not test_context.tracer.call_stack
 
 
 async def test_base_exception_triggers_rollback(
