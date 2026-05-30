@@ -1,8 +1,22 @@
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Any, Callable, Final, Protocol, runtime_checkable
 
 from .models import ExecutionId, ExecutionRecord
+
+
+@runtime_checkable
+class Identifiable(Protocol):
+    """A protocol for objects whose identity contributes to argument hashing.
+
+    Implement on a class to make its instances (or the class itself, for
+    classmethods) usable as the receiver of a hashed method call.
+    """
+
+    def get_identity(self) -> Any: ...
+
+
+IDENTITY_METHOD: Final[str] = Identifiable.get_identity.__name__
 
 
 class Transaction(ABC):
