@@ -123,3 +123,58 @@ async def test_commit_applies_ops_across_multiple_files(client: FileClient):
 
     assert await client.read(path1) == b"ab"
     assert await client.read(path2) == b"xy"
+
+
+async def test_stage_accepts_async_callback_as_content(client: FileClient):
+    """The Content union accepts either bytes or a WriteCallback. This test
+    exercises the callback path that all session stores rely on."""
+    path = "test.txt"
+    call_count = 0
+
+    async def writer() -> bytes:
+        nonlocal call_count
+        call_count += 1
+        return b"from callback"
+
+    await client.stage_write(path, writer)
+    assert call_count == 0  # callback only fires at commit time
+    await client.commit_staged()
+    assert call_count == 1
+    assert await client.read(path) == b"from callback"
+
+
+async def test_append_across_separate_commits_preserves_prior_content(
+    client: FileClient,
+):
+    """Each stage_append + commit_staged cycle must preserve content written
+    by previous commits. Regression test for a multi-commit append bug where
+    the atomic temp-file write discarded the existing on-disk content."""
+    path = "log.txt"
+
+    await client.stage_append(path, b"first\n")
+    await client.commit_staged()
+    assert await client.read(path) == b"first\n"
+
+    await client.stage_append(path, b"second\n")
+    await client.commit_staged()
+    assert await client.read(path) == b"first\nsecond\n"
+
+    await client.stage_append(path, b"third\n")
+    await client.commit_staged()
+    assert await client.read(path) == b"first\nsecond\nthird\n"
+
+
+async def test_stage_write_after_stage_delete_writes(client: FileClient):
+    """A delete followed by a write on the same path should land as a write
+    (the pending delete is cancelled by the subsequent write)."""
+    path = "test.txt"
+    # Pre-populate the file.
+    (client.resolve(path).parent).mkdir(exist_ok=True)
+    with open(client.resolve(path), "wb") as f:
+        f.write(b"initial")
+
+    await client.stage_delete(path)
+    await client.stage_write(path, b"new content")
+    await client.commit_staged()
+
+    assert await client.read(path) == b"new content"

@@ -50,18 +50,26 @@ class FileClient:
         self._staged_deletes.clear()
 
     async def _resolve_staged_ops_to_bytes(
-        self, ops: list[StagedOperation]
+        self, rel_path_str: str, ops: list[StagedOperation]
     ) -> list[bytes]:
         """Resolve a sequence of staged operations into a final list of byte
-        chunks. A WRITE discards the chunks that came before it; APPENDs
-        accumulate. Collapsing here lets us write the final bytes with a
-        single open() per file."""
+        chunks. A WRITE discards everything before it (including existing
+        on-disk content); APPENDs accumulate. If the sequence begins with
+        APPENDs (no prior WRITE), the existing on-disk content is read once
+        and prepended so that the atomic temp-file write preserves it."""
         final_chunks: list[bytes] = []
+        existing_loaded = False
         for op in ops:
             content = await op.write()
             if op.mode == OpMode.WRITE:
                 final_chunks = [content]
+                existing_loaded = True
             else:  # OpMode.APPEND
+                if not existing_loaded:
+                    existing = await self.read(rel_path_str) or b""
+                    if existing:
+                        final_chunks.append(existing)
+                    existing_loaded = True
                 final_chunks.append(content)
         return final_chunks
 
@@ -102,7 +110,9 @@ class FileClient:
             for rel_path_str, ops in self._staged_ops.items():
                 if not ops:
                     continue
-                final_chunks = await self._resolve_staged_ops_to_bytes(ops)
+                final_chunks = await self._resolve_staged_ops_to_bytes(
+                    rel_path_str, ops
+                )
                 if not final_chunks:
                     continue
                 target_path = self.resolve(rel_path_str)
