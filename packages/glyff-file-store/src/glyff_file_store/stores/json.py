@@ -68,13 +68,15 @@ class JsonFileSessionStore(BaseFileSessionStore):
                     self._executions_path,
                     e,
                 )
-        all_entries.extend(self._staged_log_entries)
-        new_content = json.dumps(all_entries, indent=2, sort_keys=True)
-        self._update_in_memory_state(self._staged_log_entries)
+        async with self._lock:
+            all_entries.extend(self._staged_log_entries)
+            new_content = json.dumps(all_entries, indent=2, sort_keys=True)
+            self._update_in_memory_state(self._staged_log_entries)
         return new_content.encode("utf-8")
 
     async def _on_clear(self) -> None:
-        self._staged_log_entries.clear()
+        async with self._lock:
+            self._staged_log_entries.clear()
 
     def _update_in_memory_state(self, entries: list[LogEntry]):
         for entry in entries:

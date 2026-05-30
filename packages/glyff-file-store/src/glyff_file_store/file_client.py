@@ -100,9 +100,10 @@ class FileClient:
 
             finally:
                 unlink_tasks = [
-                    asyncio.to_thread(os.unlink, temp_path)
+                    asyncio.to_thread(
+                        lambda p=temp_path: Path(p).unlink(missing_ok=True)
+                    )
                     for temp_path in temp_files_to_clean
-                    if os.path.exists(temp_path)
                 ]
                 if unlink_tasks:
                     await asyncio.gather(*unlink_tasks)
