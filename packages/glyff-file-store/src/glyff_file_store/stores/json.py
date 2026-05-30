@@ -91,18 +91,26 @@ class JsonFileSessionStore(BaseFileSessionStore):
             elif status is ExecutionStatus.COMPLETED:
                 self._states[key] = ExecutionStatus.COMPLETED
                 self._results[key] = entry["result"]
+                self._errors.pop(key, None)
             elif status is ExecutionStatus.FAILED:
                 self._states[key] = ExecutionStatus.FAILED
                 self._errors[key] = entry["error"] or ""
+                self._results.pop(key, None)
 
     async def _add_log_entry(self, entry: LogEntry):
+        # Append under the store lock, then call stage_write outside the
+        # store lock. Holding the store lock while acquiring FileClient's
+        # lock would risk a lock-ordering inversion against _on_write, which
+        # takes the store lock during commit_staged.
         async with self._lock:
-            if not self._staged_log_entries:
-                await self._client.stage_write(
-                    self._executions_path,
-                    self._on_write,
-                )
+            must_stage = not self._staged_log_entries
             self._staged_log_entries.append(entry)
+
+        if must_stage:
+            await self._client.stage_write(
+                self._executions_path,
+                self._on_write,
+            )
 
     async def get_execution_record(
         self, execution_id: ExecutionId, return_type: type

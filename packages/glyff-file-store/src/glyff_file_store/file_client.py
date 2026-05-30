@@ -37,22 +37,24 @@ class FileClient:
     def resolve(self, path: str | Path) -> Path:
         return self._session_path / path
 
-    async def _clear_staged_under_lock(self) -> None:
-        """Clear all staged ops and deletes. Caller must hold ``self._lock``."""
-        clear_tasks = []
+    def _clear_staged_under_lock(self) -> list[Coroutine[Any, Any, None]]:
+        """Clear all staged ops and deletes; return the clear callbacks so
+        the caller can await them outside the lock. Caller must hold
+        ``self._lock``."""
+        clear_tasks: list[Coroutine[Any, Any, None]] = []
         for ops in self._staged_ops.values():
             for op in ops:
                 if op.clear:
                     clear_tasks.append(op.clear())
-        if clear_tasks:
-            await asyncio.gather(*clear_tasks)
-
         self._staged_ops.clear()
         self._staged_deletes.clear()
+        return clear_tasks
 
     async def clear_staged(self) -> None:
         async with self._lock:
-            await self._clear_staged_under_lock()
+            clear_tasks = self._clear_staged_under_lock()
+        if clear_tasks:
+            await asyncio.gather(*clear_tasks)
 
     async def _resolve_staged_ops_to_bytes(
         self, rel_path_str: str, ops: list[StagedOperation]
@@ -137,7 +139,11 @@ class FileClient:
 
             # Clear under the same lock so a concurrent stage_* between
             # disk writes and clear cannot have its work silently discarded.
-            await self._clear_staged_under_lock()
+            # Clear callbacks themselves are awaited outside the lock so a
+            # callback that re-enters FileClient cannot deadlock.
+            clear_tasks = self._clear_staged_under_lock()
+        if clear_tasks:
+            await asyncio.gather(*clear_tasks)
 
     async def read(self, path: str | Path) -> bytes | None:
         try:

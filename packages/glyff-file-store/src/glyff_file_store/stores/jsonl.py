@@ -284,42 +284,42 @@ class JsonLinesFileSessionStore(BaseFileSessionStore):
     # ------------------------------------------------------------------
 
     async def _add_log_entry(self, entry: LogEntry) -> None:
+        # Append under the store lock and decide whether this entry is the
+        # first of a new transaction. stage_append is called OUTSIDE the
+        # store lock to avoid a lock-ordering inversion against FileClient's
+        # lock (which writers acquire indirectly when reading store state).
         async with self._lock:
-            if not self._staged_log_entries:
-                # Stage writers on the first entry of the transaction. Each
-                # writer reads `_staged_log_entries` and `_log_size` at commit
-                # time and produces bytes; neither mutates store state, so
-                # commit failures cannot leave the store in a partial state.
-                async def log_writer() -> bytes:
-                    return b"".join(
-                        _serialize_log_entry(e)
-                        for e in self._staged_log_entries
-                    )
-
-                async def index_writer() -> bytes:
-                    offset = self._log_size
-                    chunks: list[bytes] = []
-                    for e in self._staged_log_entries:
-                        line = _serialize_log_entry(e)
-                        status_str = e["event_type"]
-                        if status_str in _EVENT_TYPE_TO_STATUS:
-                            key = self._callstack_to_key(e["call_stack"])
-                            chunks.append(
-                                _serialize_index_entry(
-                                    IndexEntry(k=key, o=offset, s=status_str)
-                                )
-                            )
-                        offset += len(line)
-                    return b"".join(chunks)
-
-                await self._client.stage_append(
-                    self._executions_path, log_writer
-                )
-                await self._client.stage_append(
-                    self._index_path, index_writer
-                )
-
+            must_stage = not self._staged_log_entries
             self._staged_log_entries.append(entry)
+
+        if not must_stage:
+            return
+
+        async def log_writer() -> bytes:
+            async with self._lock:
+                entries = list(self._staged_log_entries)
+            return b"".join(_serialize_log_entry(e) for e in entries)
+
+        async def index_writer() -> bytes:
+            async with self._lock:
+                entries = list(self._staged_log_entries)
+                offset = self._log_size
+            chunks: list[bytes] = []
+            for e in entries:
+                line = _serialize_log_entry(e)
+                status_str = e["event_type"]
+                if status_str in _EVENT_TYPE_TO_STATUS:
+                    key = self._callstack_to_key(e["call_stack"])
+                    chunks.append(
+                        _serialize_index_entry(
+                            IndexEntry(k=key, o=offset, s=status_str)
+                        )
+                    )
+                offset += len(line)
+            return b"".join(chunks)
+
+        await self._client.stage_append(self._executions_path, log_writer)
+        await self._client.stage_append(self._index_path, index_writer)
 
     async def _on_transaction_commit(self) -> None:
         async with self._lock:
