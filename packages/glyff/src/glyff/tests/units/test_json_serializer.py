@@ -149,3 +149,12 @@ def test_hash_method_on_class_with_non_callable_identity_raises_type_error():
         TypeError, match="does not implement a callable '__glyff_identity__' method"
     ):
         h.hash_args(func, sig, (inst, 10), {})
+
+
+def test_regular_function_with_self_parameter_does_not_raise():
+    def regular_func(self, x: int):
+        pass
+
+    sig = inspect.signature(regular_func)
+    result = h.hash_args(regular_func, sig, ("not_an_instance", 10), {})
+    assert result is not None

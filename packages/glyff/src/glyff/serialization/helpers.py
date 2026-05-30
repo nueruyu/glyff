@@ -2,13 +2,15 @@ import inspect
 from typing import Any, Callable
 
 
+def _is_method(func: Callable) -> bool:
+    qualname = getattr(func, "__qualname__", "")
+    parts = qualname.split(".")
+    return len(parts) >= 2 and parts[-2] != "<locals>"
+
+
 def build_hashable_args(
     func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
 ) -> dict[str, Any]:
-    """
-    Binds arguments to a signature and builds a dictionary of hashable arguments,
-    including a special '__glyff_identity__' for methods.
-    """
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
 
@@ -22,18 +24,23 @@ def build_hashable_args(
         ):
             continue
 
-        if name in ("self", "cls"):
+        if name in ("self", "cls") and _is_method(func):
             identity_provider = value
             identity_method = getattr(identity_provider, "__glyff_identity__", None)
 
             if not callable(identity_method):
+                provider_name = (
+                    identity_provider.__name__
+                    if isinstance(identity_provider, type)
+                    else type(identity_provider).__name__
+                )
                 raise TypeError(
                     f"Method '{func.__qualname__}' is an instance or class method, but "
-                    f"the '{type(identity_provider).__name__}' instance/class does not "
+                    f"the '{provider_name}' instance/class does not "
                     "implement a callable '__glyff_identity__' method."
                 )
 
-            args_dict["__glyff_identity__"] = identity_method()
+            args_dict[name] = identity_method()
         else:
             args_dict[name] = value
 
