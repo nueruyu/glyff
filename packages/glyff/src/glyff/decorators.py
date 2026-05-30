@@ -1,6 +1,6 @@
 import functools
 import inspect
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from typing import Any, Callable, ParamSpec, TypeVar, cast, get_args, get_origin
 
 from .context import Context, get_context
@@ -9,6 +9,13 @@ from .models import ExecutionId
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
+# Single source of truth for streaming return-type detection. A function is
+# treated as streaming iff its return annotation (or its generic origin) is one
+# of these. Custom subclasses are intentionally not picked up: replay reuses the
+# generic ``list[item_type]`` for (de)serialization, and only the standard
+# annotations let us extract a reliable ``item_type``.
+_STREAMING_TYPES: tuple[type, ...] = (AsyncIterator, AsyncGenerator, AsyncIterable)
 
 
 async def _resolve_execution_id(
@@ -34,9 +41,10 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
     Its main responsibilities are ExecutionId creation and delegation to the
     `executor` module.
 
-    Functions annotated to return an ``AsyncIterator``/``AsyncGenerator`` are
-    treated as streaming: the wrapper itself becomes an async generator that
-    transparently yields items while the executor records the full stream.
+    Functions whose return annotation is one of the streaming types (see
+    ``_STREAMING_TYPES``) are treated as streaming: the wrapper itself becomes
+    an async generator that transparently yields items while the executor
+    records the full stream.
     """
     sig = inspect.signature(func)
     task_name = getattr(func, "__qualname__", func.__name__)
@@ -50,15 +58,11 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
             f"Please ensure all types are correctly defined and imported. Error: {e}"
         ) from e
 
-    # Detect streaming return types. Note `get_origin(AsyncGenerator[T, None])`
-    # is `collections.abc.AsyncGenerator`, distinct from `AsyncIterator`, so both
-    # origins must be checked. A bare (unsubscripted) annotation has no origin,
-    # so it is matched directly.
-    origin = get_origin(return_type)
-    is_streaming = origin in (AsyncIterator, AsyncGenerator) or return_type in (
-        AsyncIterator,
-        AsyncGenerator,
-    )
+    # `get_origin` unwraps subscripted generics (e.g. `AsyncIterator[T]` ->
+    # `collections.abc.AsyncIterator`); bare annotations have no origin, so we
+    # fall back to `return_type` itself.
+    target = get_origin(return_type) or return_type
+    is_streaming = target in _STREAMING_TYPES
 
     if is_streaming:
         item_type: Any = Any
@@ -86,20 +90,22 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
 
         return cast(Callable[P, R], streaming_wrapper)
 
-    @functools.wraps(func)
-    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        ctx = get_context()
-        execution_id = await _resolve_execution_id(
-            ctx, func, sig, task_name, args, kwargs
-        )
-        result = await execute(
-            ctx=ctx,
-            execution_id=execution_id,
-            func=func,
-            args=args,
-            kwargs=kwargs,
-            return_type=return_type,
-        )
-        return cast(R, result)
+    else:
 
-    return cast(Callable[P, R], wrapper)
+        @functools.wraps(func)
+        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            ctx = get_context()
+            execution_id = await _resolve_execution_id(
+                ctx, func, sig, task_name, args, kwargs
+            )
+            result = await execute(
+                ctx=ctx,
+                execution_id=execution_id,
+                func=func,
+                args=args,
+                kwargs=kwargs,
+                return_type=return_type,
+            )
+            return cast(R, result)
+
+        return cast(Callable[P, R], wrapper)

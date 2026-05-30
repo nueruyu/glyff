@@ -1,6 +1,6 @@
 import inspect
 import traceback
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any, Callable, NoReturn
 
 from .context import Context
@@ -83,7 +83,7 @@ async def _drive_producer(
     func: Callable[..., Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-) -> AsyncIterator[Any]:
+) -> AsyncGenerator[Any, None]:
     """
     Yields items from ``func`` (an async generator function, or a coroutine
     returning an async iterator), handling the bits that must wrap the producer
@@ -136,7 +136,7 @@ async def execute_stream(
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
     item_type: Any,
-) -> AsyncIterator[Any]:
+) -> AsyncGenerator[Any, None]:
     """
     Orchestrates the execution of a streaming task (one returning an
     ``AsyncIterator``/``AsyncGenerator``).

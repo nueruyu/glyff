@@ -1,4 +1,4 @@
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 
 import pytest
 
@@ -30,6 +30,13 @@ async def stream_numbers(n: int) -> AsyncIterator[int]:
 
 @engrave
 async def stream_numbers_ag(n: int) -> AsyncGenerator[int, None]:
+    _runs.append(n)
+    for i in range(n):
+        yield i
+
+
+@engrave
+async def stream_numbers_ai(n: int) -> AsyncIterable[int]:
     _runs.append(n)
     for i in range(n):
         yield i
@@ -90,6 +97,24 @@ async def test_async_generator_annotation_is_detected_as_streaming(
     _runs.clear()
     async with Session(id="stream-ag", store=store, hasher=hasher):
         second = [x async for x in stream_numbers_ag(3)]
+    assert second == [0, 1, 2]
+    assert _runs == []
+
+
+async def test_async_iterable_annotation_is_detected_as_streaming(
+    store_factory: StoreFactory, hasher: ArgsHasher
+):
+    # `AsyncIterable` is the most general of the supported streaming annotations.
+    # Same contract: transparent yielding on first run, no producer body re-run
+    # on replay.
+    store = store_factory("stream-ai")
+    async with Session(id="stream-ai", store=store, hasher=hasher):
+        first = [x async for x in stream_numbers_ai(3)]
+    assert first == [0, 1, 2]
+
+    _runs.clear()
+    async with Session(id="stream-ai", store=store, hasher=hasher):
+        second = [x async for x in stream_numbers_ai(3)]
     assert second == [0, 1, 2]
     assert _runs == []
 
