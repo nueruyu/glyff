@@ -1,39 +1,147 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable, TypedDict
 
-from glyff.interfaces import Serializer
+from glyff.interfaces import Execution, Serializer, SessionStore, Transaction
 from glyff.models import ExecutionId, ExecutionRecord, ExecutionStatus
 
 from ..file_client import FileClient
-from ._base import (
-    _EVENT_TYPE_TO_STATUS,
-    BaseFileSessionStore,
-    LogEntry,
-)
 
 logger = logging.getLogger(__name__)
 
+PostHook = Callable[[], Awaitable[None]]
 
-class JsonFileSessionStore(BaseFileSessionStore):
+
+class LogEntry(TypedDict):
+    timestamp: str
+    event_type: str  # "start", "complete", "fail"
+    call_stack: list[str]
+    result: object | None
+    error: str | None
+
+
+_STATUS_TO_EVENT_TYPE = {
+    ExecutionStatus.STARTED: "start",
+    ExecutionStatus.COMPLETED: "complete",
+    ExecutionStatus.FAILED: "fail",
+}
+_EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
+
+
+class _FileTransaction(Transaction):
+    def __init__(
+        self,
+        client: FileClient,
+        on_commit: PostHook | None = None,
+        on_rollback: PostHook | None = None,
+    ):
+        self._client = client
+        self._on_commit = on_commit
+        self._on_rollback = on_rollback
+
+    async def commit(self) -> None:
+        await self._client.commit_staged()
+        if self._on_commit is not None:
+            await self._on_commit()
+
+    async def rollback(self) -> None:
+        await self._client.clear_staged()
+        if self._on_rollback is not None:
+            await self._on_rollback()
+
+
+class _FileExecution(Execution):
+    def __init__(
+        self,
+        store: JsonFileSessionStore,
+        execution_id: ExecutionId,
+        serializer: Serializer,
+    ):
+        self._store = store
+        self._id = execution_id
+        self._serializer = serializer
+
+    def _create_log_entry(
+        self,
+        status: ExecutionStatus,
+        result: object | None = None,
+        error: str | None = None,
+    ) -> LogEntry:
+        return LogEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            event_type=_STATUS_TO_EVENT_TYPE[status],
+            call_stack=self._store._id_to_callstack(self._id),
+            result=result,
+            error=error,
+        )
+
+    async def complete(self, value: object, return_type: type) -> None:
+        serialized_bytes = self._serializer.serialize(value, return_type)
+        persistable_result = json.loads(serialized_bytes)
+        entry = self._create_log_entry(
+            ExecutionStatus.COMPLETED, result=persistable_result
+        )
+        await self._store._add_log_entry(entry)
+
+    async def fail(self, error: str) -> None:
+        entry = self._create_log_entry(ExecutionStatus.FAILED, error=error)
+        await self._store._add_log_entry(entry)
+
+
+class JsonFileSessionStore(SessionStore):
     """
     A file-based SessionStore that logs events to a pretty-printed JSON file.
-    Note: This store reads the entire session state into memory on load and is
-    intended primarily for debugging small-scale sessions. For performance and
-    scalability, use JsonLinesFileSessionStore.
+    The entire log is loaded into memory at construction time and rewritten
+    atomically on each commit. Suitable for sessions whose log fits in memory;
+    for very large or high-throughput sessions prefer a database-backed store.
     """
 
     def __init__(self, client: FileClient, serializer: Serializer):
-        super().__init__(client, serializer)
+        self._client = client
+        self._serializer = serializer
+        self._lock = asyncio.Lock()
         self._executions_path = Path("executions.json")
         self._states: dict[str, ExecutionStatus] = {}
         self._results: dict[str, Any] = {}
         self._errors: dict[str, str] = {}
         self._staged_log_entries: list[LogEntry] = []
         self._load_executions()
+
+    # ------------------------------------------------------------------
+    # Id / call-stack helpers
+    # ------------------------------------------------------------------
+
+    def _id_to_callstack(self, execution_id: ExecutionId) -> list[str]:
+        """Convert an ExecutionId to a call stack list (outermost → innermost)."""
+        frames: list[str] = []
+        current: ExecutionId | None = execution_id
+        while current is not None:
+            frames.append(f"{current.name}#{current.sequence}:{current.args_hash}")
+            current = current.parent_id
+        frames.reverse()
+        return frames
+
+    def _id_to_key(self, execution_id: ExecutionId) -> str:
+        """Convert an ExecutionId to a stable, unique string key."""
+        parent_path = (
+            f"{self._id_to_key(execution_id.parent_id)}/"
+            if execution_id.parent_id
+            else ""
+        )
+        return f"{parent_path}{execution_id.name}#{execution_id.sequence}:{execution_id.args_hash}"
+
+    @staticmethod
+    def _callstack_to_key(call_stack: list[str]) -> str:
+        return "/".join(call_stack)
+
+    # ------------------------------------------------------------------
+    # Loading and in-memory state
+    # ------------------------------------------------------------------
 
     def _load_executions(self) -> None:
         abs_path = self._client.resolve(self._executions_path)
@@ -54,6 +162,25 @@ class JsonFileSessionStore(BaseFileSessionStore):
                     e,
                 )
                 return
+
+    def _update_in_memory_state(self, entries: list[LogEntry]):
+        for entry in entries:
+            key = self._callstack_to_key(entry["call_stack"])
+            status = _EVENT_TYPE_TO_STATUS.get(entry["event_type"])
+            if status is ExecutionStatus.STARTED:
+                self._states[key] = ExecutionStatus.STARTED
+            elif status is ExecutionStatus.COMPLETED:
+                self._states[key] = ExecutionStatus.COMPLETED
+                self._results[key] = entry["result"]
+                self._errors.pop(key, None)
+            elif status is ExecutionStatus.FAILED:
+                self._states[key] = ExecutionStatus.FAILED
+                self._errors[key] = entry["error"] or ""
+                self._results.pop(key, None)
+
+    # ------------------------------------------------------------------
+    # Staging and commit
+    # ------------------------------------------------------------------
 
     async def _on_write(self) -> bytes:
         all_entries: list[LogEntry] = []
@@ -82,35 +209,42 @@ class JsonFileSessionStore(BaseFileSessionStore):
         async with self._lock:
             self._staged_log_entries.clear()
 
-    def _update_in_memory_state(self, entries: list[LogEntry]):
-        for entry in entries:
-            key = self._callstack_to_key(entry["call_stack"])
-            status = _EVENT_TYPE_TO_STATUS.get(entry["event_type"])
-            if status is ExecutionStatus.STARTED:
-                self._states[key] = ExecutionStatus.STARTED
-            elif status is ExecutionStatus.COMPLETED:
-                self._states[key] = ExecutionStatus.COMPLETED
-                self._results[key] = entry["result"]
-                self._errors.pop(key, None)
-            elif status is ExecutionStatus.FAILED:
-                self._states[key] = ExecutionStatus.FAILED
-                self._errors[key] = entry["error"] or ""
-                self._results.pop(key, None)
-
     async def _add_log_entry(self, entry: LogEntry):
         # Append under the store lock, then call stage_write outside the
-        # store lock. Holding the store lock while acquiring FileClient's
-        # lock would risk a lock-ordering inversion against _on_write, which
-        # takes the store lock during commit_staged.
+        # store lock to avoid a lock-ordering inversion against _on_write
+        # (which acquires the store lock during commit_staged).
         async with self._lock:
             must_stage = not self._staged_log_entries
             self._staged_log_entries.append(entry)
 
         if must_stage:
             await self._client.stage_write(
-                self._executions_path,
-                self._on_write,
+                self._executions_path, self._on_write
             )
+
+    # ------------------------------------------------------------------
+    # SessionStore interface
+    # ------------------------------------------------------------------
+
+    async def begin_transaction(self) -> Transaction:
+        return _FileTransaction(
+            self._client,
+            on_commit=self._on_transaction_commit,
+            on_rollback=self._on_transaction_rollback,
+        )
+
+    async def start_execution(self, execution_id: ExecutionId) -> Execution:
+        record = await self.get_execution_record(execution_id, type(None))
+        if record is None:
+            entry = LogEntry(
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                event_type=_STATUS_TO_EVENT_TYPE[ExecutionStatus.STARTED],
+                call_stack=self._id_to_callstack(execution_id),
+                result=None,
+                error=None,
+            )
+            await self._add_log_entry(entry)
+        return _FileExecution(self, execution_id, self._serializer)
 
     async def get_execution_record(
         self, execution_id: ExecutionId, return_type: type
