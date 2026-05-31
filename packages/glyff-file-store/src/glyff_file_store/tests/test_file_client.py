@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from glyff_file_store import FileClient
+from glyff_file_store.file_client import _BACKUP_SUFFIX, _TEMP_PREFIX
 
 
 @pytest.fixture
@@ -156,6 +157,136 @@ async def test_callback_can_implement_append_semantics(client: FileClient):
     await client.stage_write(path, await make_appender(b"third\n"))
     await client.commit_staged()
     assert await client.read(path) == b"first\nsecond\nthird\n"
+
+
+async def test_partial_commit_failure_leaves_disk_unchanged(client: FileClient):
+    """If one writer raises mid-commit, the directory-level swap is never
+    performed and no staged op lands on disk. The staged ops also remain
+    in place so the caller can retry."""
+    # Pre-populate two files.
+    (client.resolve("a.txt").parent).mkdir(exist_ok=True)
+    client.resolve("a.txt").write_bytes(b"a-original")
+    client.resolve("b.txt").write_bytes(b"b-original")
+
+    async def good_writer() -> bytes:
+        return b"a-new"
+
+    async def bad_writer() -> bytes:
+        raise RuntimeError("simulated writer failure")
+
+    await client.stage_write("a.txt", good_writer)
+    await client.stage_write("b.txt", bad_writer)
+
+    with pytest.raises(RuntimeError, match="simulated writer failure"):
+        await client.commit_staged()
+
+    # Neither file changed on disk.
+    assert await client.read("a.txt") == b"a-original"
+    assert await client.read("b.txt") == b"b-original"
+
+
+async def test_partial_commit_failure_can_be_retried(client: FileClient):
+    """After a failed commit, fixing the failing writer and retrying lands
+    every staged op together (because the staged state was preserved)."""
+    (client.resolve("a.txt").parent).mkdir(exist_ok=True)
+    client.resolve("a.txt").write_bytes(b"a-original")
+
+    fail = True
+
+    async def b_writer() -> bytes:
+        if fail:
+            raise RuntimeError("once")
+        return b"b-new"
+
+    await client.stage_write("a.txt", b"a-new")
+    await client.stage_write("b.txt", b_writer)
+
+    with pytest.raises(RuntimeError, match="once"):
+        await client.commit_staged()
+
+    # Now let b_writer succeed; the same staged ops are still there.
+    fail = False
+    await client.commit_staged()
+    assert await client.read("a.txt") == b"a-new"
+    assert await client.read("b.txt") == b"b-new"
+
+
+async def test_commit_leaves_no_orphan_temp_directories(
+    client: FileClient, tmp_path: Path
+):
+    """A successful commit cleans up its temp directory and any backup."""
+    await client.stage_write("file.txt", b"content")
+    await client.commit_staged()
+
+    siblings = list(tmp_path.iterdir())
+    # Only the session directory should remain — no .commit-* or .bak.
+    session_name = client.resolve(".").resolve().name
+    assert [s.name for s in siblings] == [session_name]
+
+
+async def test_failed_commit_leaves_no_orphan_temp_directories(
+    client: FileClient, tmp_path: Path
+):
+    """Even if a writer raises, the temp directory is cleaned up."""
+
+    async def bad_writer() -> bytes:
+        raise RuntimeError("nope")
+
+    await client.stage_write("file.txt", bad_writer)
+    with pytest.raises(RuntimeError):
+        await client.commit_staged()
+
+    session_name = client.resolve(".").resolve().name
+    siblings = [s.name for s in tmp_path.iterdir()]
+    assert all(
+        name == session_name or not name.startswith(session_name + _TEMP_PREFIX)
+        for name in siblings
+    )
+    # No backup either.
+    assert not (tmp_path / (session_name + _BACKUP_SUFFIX)).exists()
+
+
+async def test_recovery_restores_session_from_orphan_backup(tmp_path: Path):
+    """A .bak sibling with no live session directory (simulating a crash
+    between rename-to-backup and rename-from-temp) is restored on init."""
+    session_id = "recoverable"
+    (tmp_path / (session_id + _BACKUP_SUFFIX)).mkdir()
+    (tmp_path / (session_id + _BACKUP_SUFFIX) / "saved.txt").write_bytes(b"saved")
+
+    client = FileClient(base_dir=tmp_path, session_id=session_id)
+    assert await client.read("saved.txt") == b"saved"
+    assert not (tmp_path / (session_id + _BACKUP_SUFFIX)).exists()
+
+
+async def test_recovery_drops_orphan_backup_when_session_present(tmp_path: Path):
+    """A .bak sibling alongside a live session (simulating a crash after
+    rename-from-temp but before rmtree-backup) is dropped on init."""
+    session_id = "with-stale-bak"
+    (tmp_path / session_id).mkdir()
+    (tmp_path / session_id / "live.txt").write_bytes(b"live")
+    (tmp_path / (session_id + _BACKUP_SUFFIX)).mkdir()
+    (tmp_path / (session_id + _BACKUP_SUFFIX) / "stale.txt").write_bytes(b"stale")
+
+    client = FileClient(base_dir=tmp_path, session_id=session_id)
+    assert await client.read("live.txt") == b"live"
+    assert not (tmp_path / (session_id + _BACKUP_SUFFIX)).exists()
+
+
+async def test_recovery_cleans_orphan_temp_directories(tmp_path: Path):
+    """Orphan .commit-* directories from prior crashed commits are deleted
+    on init."""
+    session_id = "with-orphan-temps"
+    (tmp_path / session_id).mkdir()
+    (tmp_path / (session_id + _TEMP_PREFIX + "abc123")).mkdir()
+    (tmp_path / (session_id + _TEMP_PREFIX + "abc123") / "junk.txt").write_bytes(
+        b""
+    )
+    (tmp_path / (session_id + _TEMP_PREFIX + "def456")).mkdir()
+
+    FileClient(base_dir=tmp_path, session_id=session_id)
+
+    siblings = {s.name for s in tmp_path.iterdir()}
+    assert siblings == {session_id}
 
 
 async def test_stage_write_after_stage_delete_writes(client: FileClient):
