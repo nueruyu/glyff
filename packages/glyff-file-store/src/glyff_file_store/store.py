@@ -215,9 +215,7 @@ class JsonFileSessionStore(SessionStore):
             self._staged_log_entries.append(entry)
 
         if must_stage:
-            await self._client.stage_write(
-                self._executions_path, self._on_write
-            )
+            await self._client.stage_write(self._executions_path, self._on_write)
 
     # ------------------------------------------------------------------
     # SessionStore interface

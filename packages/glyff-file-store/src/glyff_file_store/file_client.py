@@ -54,9 +54,7 @@ class FileClient:
         """Clean up orphan ``.bak`` / ``.commit-*`` siblings from a prior
         crashed commit, restoring the session from a backup if the swap
         was interrupted between the two renames."""
-        backup = self._session_path.with_name(
-            self._session_path.name + _BACKUP_SUFFIX
-        )
+        backup = self._session_path.with_name(self._session_path.name + _BACKUP_SUFFIX)
         if backup.exists():
             if not self._session_path.exists():
                 # Crashed between rename-to-backup and rename-from-temp.
@@ -187,9 +185,7 @@ class FileClient:
         parent = self._session_path.parent
         parent.mkdir(parents=True, exist_ok=True)
         temp_dir = Path(
-            tempfile.mkdtemp(
-                dir=parent, prefix=self._session_path.name + _TEMP_PREFIX
-            )
+            tempfile.mkdtemp(dir=parent, prefix=self._session_path.name + _TEMP_PREFIX)
         )
         try:
             self._populate_temp_dir_sync(temp_dir, resolved_writes, staged_deletes)
@@ -204,31 +200,9 @@ class FileClient:
         resolved_writes: dict[str, bytes],
         staged_deletes: set[str],
     ) -> None:
-        # Mirror the existing session into temp_dir. Hardlink where the FS
-        # supports it so unchanged blobs aren't copied byte-by-byte.
+        # Mirror the existing session into temp_dir.
         if self._session_path.exists():
-            try:
-                shutil.copytree(
-                    self._session_path,
-                    temp_dir,
-                    copy_function=os.link,
-                    dirs_exist_ok=True,
-                )
-            except OSError:
-                # Hardlinking failed (cross-volume, FS doesn't support, etc).
-                # Wipe whatever we managed to create and fall back to a real
-                # byte copy.
-                for child in temp_dir.iterdir():
-                    if child.is_dir():
-                        shutil.rmtree(child)
-                    else:
-                        child.unlink()
-                shutil.copytree(
-                    self._session_path,
-                    temp_dir,
-                    copy_function=shutil.copy2,
-                    dirs_exist_ok=True,
-                )
+            shutil.copytree(self._session_path, temp_dir, dirs_exist_ok=True)
 
         for rel_path in staged_deletes:
             target = temp_dir / rel_path
@@ -239,17 +213,10 @@ class FileClient:
         for rel_path, content in resolved_writes.items():
             target = temp_dir / rel_path
             target.parent.mkdir(parents=True, exist_ok=True)
-            # Unlink the hardlinked old version first; otherwise opening
-            # the file with O_TRUNC would truncate the inode shared with
-            # the live session file.
-            if target.exists():
-                target.unlink()
             target.write_bytes(content)
 
     def _swap_temp_into_place_sync(self, temp_dir: Path) -> None:
-        backup = self._session_path.with_name(
-            self._session_path.name + _BACKUP_SUFFIX
-        )
+        backup = self._session_path.with_name(self._session_path.name + _BACKUP_SUFFIX)
         if backup.exists():
             # Defensive: drop any stale backup from a prior crash.
             if backup.is_dir():
