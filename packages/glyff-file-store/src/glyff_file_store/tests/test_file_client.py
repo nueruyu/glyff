@@ -21,113 +21,102 @@ async def test_commit_single_write(client: FileClient):
     assert await client.read(path) == b"world"
 
 
-async def test_commit_appends(client: FileClient):
+async def test_staging_same_path_last_write_wins(client: FileClient):
+    """When stage_write is called twice on the same path in one transaction,
+    the later op replaces the earlier one."""
     path = "test.txt"
-    await client.stage_append(path, b"hello")
-    await client.stage_append(path, b" world")
+    await client.stage_write(path, b"first")
+    await client.stage_write(path, b"second")
     await client.commit_staged()
-    assert await client.read(path) == b"hello world"
+    assert await client.read(path) == b"second"
 
 
-async def test_commit_interleaved_write_append(client: FileClient):
+async def test_delete_cancels_staged_write(client: FileClient):
     path = "test.txt"
-    await client.stage_write(path, b"a")  # Content: a
-    await client.stage_append(path, b"b")  # Content: ab
-    await client.stage_write(path, b"c")  # Content: c
-    await client.stage_append(path, b"d")  # Content: cd
-    await client.commit_staged()
-    assert await client.read(path) == b"cd"
-
-
-async def test_delete_cancels_staged_ops(client: FileClient):
-    path = "test.txt"
-    # Pre-populate the file
+    # Pre-populate the file.
     (client.resolve(path).parent).mkdir(exist_ok=True)
     with open(client.resolve(path), "wb") as f:
         f.write(b"initial")
 
-    await client.stage_write(path, b"a")
-    await client.stage_append(path, b"b")
+    await client.stage_write(path, b"new")
     await client.stage_delete(path)
     await client.commit_staged()
 
     assert await client.read(path) is None
 
 
-async def test_rollback_clears_all_staged_ops(client: FileClient):
+async def test_rollback_clears_staged_write(client: FileClient):
     path = "test.txt"
     await client.stage_write(path, b"a")
-    await client.stage_append(path, b"b")
     await client.clear_staged()
     await client.commit_staged()
 
     assert await client.read(path) is None
 
 
-async def test_clear_callbacks_are_run_on_delete(client: FileClient):
+async def test_clear_callback_runs_on_delete(client: FileClient):
     path = "test.txt"
-    cleared_ops: list[str] = []
+    cleared: list[str] = []
 
-    async def clear_cb_a():
-        cleared_ops.append("a")
+    async def clear_cb():
+        cleared.append("cancelled")
 
-    async def clear_cb_b():
-        cleared_ops.append("b")
+    await client.stage_write(path, b"data", clear_cb)
+    assert cleared == []
 
-    await client.stage_write(path, b"op_a", clear_cb_a)
-    await client.stage_append(path, b"op_b", clear_cb_b)
-
-    assert not cleared_ops
     await client.stage_delete(path)
-    assert sorted(cleared_ops) == ["a", "b"]
+    assert cleared == ["cancelled"]
 
-    # Ensure callbacks are not run again on commit
-    cleared_ops.clear()
+    # Not run again on commit.
     await client.commit_staged()
-    assert not cleared_ops
+    assert cleared == ["cancelled"]
 
 
-async def test_clear_callbacks_are_run_on_rollback(client: FileClient):
+async def test_clear_callback_runs_on_rollback(client: FileClient):
     path = "test.txt"
-    cleared_ops: list[str] = []
+    cleared: list[str] = []
 
-    async def clear_cb_a():
-        cleared_ops.append("a")
+    async def clear_cb():
+        cleared.append("rolled_back")
 
-    async def clear_cb_b():
-        cleared_ops.append("b")
+    await client.stage_write(path, b"data", clear_cb)
+    assert cleared == []
 
-    await client.stage_write(path, b"op_a", clear_cb_a)
-    await client.stage_append(path, b"op_b", clear_cb_b)
-
-    assert not cleared_ops
     await client.clear_staged()
-    assert sorted(cleared_ops) == ["a", "b"]
+    assert cleared == ["rolled_back"]
 
-    # Ensure callbacks are not run again on commit
-    cleared_ops.clear()
+    # Not run again on commit.
     await client.commit_staged()
-    assert not cleared_ops
+    assert cleared == ["rolled_back"]
 
 
-async def test_commit_applies_ops_across_multiple_files(client: FileClient):
-    path1 = "file1.txt"
-    path2 = "file2.txt"
+async def test_clear_callback_runs_after_successful_commit(client: FileClient):
+    """commit_staged runs each op's clear callback after the disk write
+    succeeds, so callers can use it to release resources tied to staging."""
+    path = "test.txt"
+    cleared: list[str] = []
 
-    await client.stage_write(path1, b"a")
-    await client.stage_append(path2, b"x")
-    await client.stage_append(path1, b"b")
-    await client.stage_append(path2, b"y")
+    async def clear_cb():
+        cleared.append("committed")
 
+    await client.stage_write(path, b"data", clear_cb)
+    await client.commit_staged()
+    assert cleared == ["committed"]
+    assert await client.read(path) == b"data"
+
+
+async def test_commit_applies_writes_across_multiple_files(client: FileClient):
+    await client.stage_write("file1.txt", b"first-content")
+    await client.stage_write("file2.txt", b"second-content")
     await client.commit_staged()
 
-    assert await client.read(path1) == b"ab"
-    assert await client.read(path2) == b"xy"
+    assert await client.read("file1.txt") == b"first-content"
+    assert await client.read("file2.txt") == b"second-content"
 
 
 async def test_stage_accepts_async_callback_as_content(client: FileClient):
-    """The Content union accepts either bytes or a WriteCallback. This test
-    exercises the callback path that all session stores rely on."""
+    """The Content union accepts either bytes or a WriteCallback. The
+    callback fires at commit time, not stage time."""
     path = "test.txt"
     call_count = 0
 
@@ -137,29 +126,34 @@ async def test_stage_accepts_async_callback_as_content(client: FileClient):
         return b"from callback"
 
     await client.stage_write(path, writer)
-    assert call_count == 0  # callback only fires at commit time
+    assert call_count == 0
     await client.commit_staged()
     assert call_count == 1
     assert await client.read(path) == b"from callback"
 
 
-async def test_append_across_separate_commits_preserves_prior_content(
-    client: FileClient,
-):
-    """Each stage_append + commit_staged cycle must preserve content written
-    by previous commits. Regression test for a multi-commit append bug where
-    the atomic temp-file write discarded the existing on-disk content."""
+async def test_callback_can_implement_append_semantics(client: FileClient):
+    """Users who want 'append' semantics can implement them in a callback
+    that reads existing content and concatenates the new bytes. Verified
+    across multiple commits to confirm prior content is preserved."""
     path = "log.txt"
 
-    await client.stage_append(path, b"first\n")
+    async def make_appender(suffix: bytes):
+        async def writer() -> bytes:
+            existing = await client.read(path) or b""
+            return existing + suffix
+
+        return writer
+
+    await client.stage_write(path, await make_appender(b"first\n"))
     await client.commit_staged()
     assert await client.read(path) == b"first\n"
 
-    await client.stage_append(path, b"second\n")
+    await client.stage_write(path, await make_appender(b"second\n"))
     await client.commit_staged()
     assert await client.read(path) == b"first\nsecond\n"
 
-    await client.stage_append(path, b"third\n")
+    await client.stage_write(path, await make_appender(b"third\n"))
     await client.commit_staged()
     assert await client.read(path) == b"first\nsecond\nthird\n"
 
