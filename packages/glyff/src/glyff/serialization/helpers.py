@@ -1,7 +1,9 @@
 import inspect
 from typing import Any, Callable
 
-from ..interfaces import IDENTITY_METHOD, Identifiable
+from ..interfaces import IDENTITY_ATTR, Identifiable
+
+_MISSING = object()
 
 
 def _is_method(func: Callable) -> bool:
@@ -28,9 +30,9 @@ def build_hashable_args(
 
         if name in ("self", "cls") and _is_method(func):
             identity_provider = value
-            identity_method = getattr(identity_provider, IDENTITY_METHOD, None)
+            identity = getattr(identity_provider, IDENTITY_ATTR, _MISSING)
 
-            if not callable(identity_method):
+            if identity is _MISSING:
                 provider_name = (
                     identity_provider.__name__
                     if isinstance(identity_provider, type)
@@ -39,10 +41,10 @@ def build_hashable_args(
                 raise TypeError(
                     f"Method '{func.__qualname__}' is an instance or class method, but "
                     f"'{provider_name}' does not implement the {Identifiable.__name__} protocol "
-                    f"(missing callable '{IDENTITY_METHOD}' method)."
+                    f"(missing attribute '{IDENTITY_ATTR}')."
                 )
 
-            args_dict[name] = identity_method()
+            args_dict[name] = identity
         else:
             args_dict[name] = value
 
