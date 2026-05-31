@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypedDict
@@ -32,21 +31,6 @@ _STATUS_TO_EVENT_TYPE = {
     ExecutionStatus.FAILED: "fail",
 }
 _EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
-
-
-@dataclass
-class _ExecutionState:
-    """In-memory decomposed view of the latest event for a call-stack key.
-
-    ``persistable_result`` is the JSON-loaded form of the result (i.e. the
-    output of ``json.loads`` on the serializer's bytes), so callers can
-    re-serialize it for ``Serializer.deserialize`` with their own
-    ``return_type``.
-    """
-
-    status: ExecutionStatus
-    persistable_result: Any | None = field(default=None)
-    error: str | None = field(default=None)
 
 
 class _FileTransaction(Transaction):
@@ -123,11 +107,14 @@ class JsonFileSessionStore(SessionStore):
         self._lock = asyncio.Lock()
         self._executions_path = Path("executions.json")
         # Canonical, ordered list of committed log entries — the in-memory
-        # mirror of executions.json. Source of truth for serialization.
+        # mirror of executions.json. Source of truth for both serialization
+        # and per-key lookup; ``_latest_index`` is a positional pointer into
+        # this list.
         self._log_entries: list[LogEntry] = []
-        # Decomposed per-key view rebuilt from `_log_entries`. Source of
-        # truth for fast lookup by ExecutionId.
-        self._executions: dict[str, _ExecutionState] = {}
+        # key → index of the latest log entry that defines the current
+        # state for that key. Indices are stable because we only append
+        # to ``_log_entries``, never remove.
+        self._latest_index: dict[str, int] = {}
         # Entries staged by the current transaction, not yet committed.
         self._staged_log_entries: list[LogEntry] = []
         self._load_executions()
@@ -183,26 +170,19 @@ class JsonFileSessionStore(SessionStore):
             return
 
         self._log_entries = entries
-        self._index_entries(entries)
+        self._index_new_entries(start_index=0)
 
-    def _index_entries(self, entries: list[LogEntry]) -> None:
-        """Apply ``entries`` to the per-key decomposed view (``_executions``).
-        Each entry replaces any prior state for its key, so a single status
-        transition can't leave behind stale result/error data."""
-        for entry in entries:
-            key = self._callstack_to_key(entry["call_stack"])
-            status = _EVENT_TYPE_TO_STATUS.get(entry["event_type"])
-            if status is None:
+    def _index_new_entries(self, start_index: int) -> None:
+        """Update ``_latest_index`` for log entries at positions
+        ``[start_index, len(_log_entries))``. Each known event type
+        replaces any prior index for its key; entries with unrecognized
+        event types are ignored."""
+        for i in range(start_index, len(self._log_entries)):
+            entry = self._log_entries[i]
+            if entry["event_type"] not in _EVENT_TYPE_TO_STATUS:
                 continue
-            self._executions[key] = _ExecutionState(
-                status=status,
-                persistable_result=(
-                    entry["result"] if status is ExecutionStatus.COMPLETED else None
-                ),
-                error=(
-                    (entry["error"] or "") if status is ExecutionStatus.FAILED else None
-                ),
-            )
+            key = self._callstack_to_key(entry["call_stack"])
+            self._latest_index[key] = i
 
     # ------------------------------------------------------------------
     # Staging and commit
@@ -217,8 +197,9 @@ class JsonFileSessionStore(SessionStore):
 
     async def _on_transaction_commit(self) -> None:
         async with self._lock:
+            start_index = len(self._log_entries)
             self._log_entries.extend(self._staged_log_entries)
-            self._index_entries(self._staged_log_entries)
+            self._index_new_entries(start_index=start_index)
             self._staged_log_entries.clear()
 
     async def _on_transaction_rollback(self) -> None:
@@ -266,18 +247,21 @@ class JsonFileSessionStore(SessionStore):
         self, execution_id: ExecutionId, return_type: type
     ) -> ExecutionRecord | None:
         key = self._id_to_key(execution_id)
-        state = self._executions.get(key)
-        if state is None:
+        idx = self._latest_index.get(key)
+        if idx is None:
             return None
 
+        entry = self._log_entries[idx]
+        status = _EVENT_TYPE_TO_STATUS[entry["event_type"]]
         result: Any | None = None
         error: str | None = None
-        if state.status == ExecutionStatus.COMPLETED:
-            if state.persistable_result is not None:
+        if status == ExecutionStatus.COMPLETED:
+            persistable_result = entry["result"]
+            if persistable_result is not None:
                 serialized_bytes = json.dumps(
-                    state.persistable_result, sort_keys=True
+                    persistable_result, sort_keys=True
                 ).encode("utf-8")
                 result = self._serializer.deserialize(serialized_bytes, return_type)
-        elif state.status == ExecutionStatus.FAILED:
-            error = state.error
-        return ExecutionRecord(status=state.status, result=result, error=error)
+        elif status == ExecutionStatus.FAILED:
+            error = entry["error"] or ""
+        return ExecutionRecord(status=status, result=result, error=error)
