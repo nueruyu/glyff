@@ -35,10 +35,9 @@ async def main(session_id: str, answer: str | None = None):
         base_dir=".sessions",
         session_id=session_id,
     )
-    store = glyff_file_store.FileSessionStore(
+    store = glyff_file_store.JsonFileSessionStore(
         client=client,
         serializer=serializer,
-        format="json",
     )
 
     session = glyff.Session(

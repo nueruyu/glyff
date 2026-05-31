@@ -1,3 +1,4 @@
+import pytest
 from glyff import ExecutionId
 from glyff.interfaces import SessionStore
 from glyff.models import ExecutionStatus
@@ -56,4 +57,34 @@ async def test_rollback_discards_staged(store_factory, base_execution_id: Execut
     execution = await store.start_execution(base_execution_id)
     await execution.complete({"result": 1}, dict)
     await tx.rollback()
+    assert await store.get_execution_record(base_execution_id, dict) is None
+
+
+async def test_failed_commit_does_not_advance_state(
+    store_factory, base_execution_id: ExecutionId
+):
+    """If the underlying client write fails, the transaction's post-commit
+    hook must not run — so the in-memory state stays where it was before the
+    commit attempt."""
+    store: SessionStore = store_factory("test-atomicity")
+    tx = await store.begin_transaction()
+    execution = await store.start_execution(base_execution_id)
+    await execution.complete({"value": 42}, dict)
+
+    # Sanity check: state is not visible before commit.
+    assert await store.get_execution_record(base_execution_id, dict) is None
+
+    # Force the client commit to fail.
+    async def boom() -> None:
+        raise RuntimeError("simulated disk failure")
+
+    original_commit = store._client.commit_staged  # type: ignore[attr-defined]
+    store._client.commit_staged = boom  # type: ignore[attr-defined]
+    try:
+        with pytest.raises(RuntimeError, match="simulated disk failure"):
+            await tx.commit()
+    finally:
+        store._client.commit_staged = original_commit  # type: ignore[attr-defined]
+
+    # In-memory state must not have advanced.
     assert await store.get_execution_record(base_execution_id, dict) is None

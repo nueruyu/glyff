@@ -1,4 +1,4 @@
-from .file import FileSessionStore
 from .file_client import FileClient
+from .store import JsonFileSessionStore
 
-__all__ = ["FileClient", "FileSessionStore"]
+__all__ = ["FileClient", "JsonFileSessionStore"]
