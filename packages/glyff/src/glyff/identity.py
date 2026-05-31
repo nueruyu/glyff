@@ -1,51 +1,53 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Type, overload
+from typing import Any, Callable, TypeVar, overload
 
 from .interfaces import IDENTITY_ATTR
 
-
-@overload
-def identify(identity: str) -> Callable[[Type[Any]], Type[Any]]: ...
+T = TypeVar("T")
 
 
 @overload
-def identify(instance: object, identity: str) -> None: ...
+def identify(identity: str) -> Callable[[type[T]], type[T]]: ...
 
 
-def identify(arg1: str | object, arg2: str | None = None) -> Any:
+@overload
+def identify(identity: str, instance: object) -> None: ...
+
+
+def identify(identity: str, instance: object | None = None) -> Any:
     """Attach a stable identity to an object for argument hashing.
 
     The identity is stored in the ``__glyff_identity__`` attribute, satisfying
     the :class:`~glyff.interfaces.Identifiable` protocol.
 
-    As a decorator (one static identity shared by every instance of a class)::
+    As a decorator -- one static identity shared by every instance of a class::
 
-        @identify("my-static-id")
+        @identify("my-agent")
         class MyAgent:
             ...
 
-    As a function (an identity for a single instance)::
+    As a function -- an identity for a single instance::
 
         agent = MyAgent()
-        identify(agent, "instance-specific-id")
-    """
-    # Decorator usage: @identify("some-id")
-    if isinstance(arg1, str) and arg2 is None:
-        identity_value = arg1
+        identify("my-agent", agent)
 
-        def decorator(cls: Type[Any]) -> Type[Any]:
-            setattr(cls, IDENTITY_ATTR, identity_value)
+    The identity is the leading argument in both forms so the two overloads
+    differ only by arity, keeping them unambiguous for type checkers.
+    """
+    if not isinstance(identity, str):
+        raise TypeError(
+            "identify() takes the identity string first: "
+            "use @identify('id') or identify('id', instance)."
+        )
+
+    if instance is None:
+
+        def decorator(cls: type[T]) -> type[T]:
+            setattr(cls, IDENTITY_ATTR, identity)
             return cls
 
         return decorator
 
-    # Function usage: identify(instance, "some-id")
-    if not isinstance(arg1, str) and isinstance(arg2, str):
-        setattr(arg1, IDENTITY_ATTR, arg2)
-        return None
-
-    raise TypeError(
-        "Invalid arguments for identify(). Use it as a decorator -- "
-        "@identify('id') -- or as a function -- identify(instance, 'id')."
-    )
+    setattr(instance, IDENTITY_ATTR, identity)
+    return None

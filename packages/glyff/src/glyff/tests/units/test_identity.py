@@ -27,13 +27,18 @@ def test_identify_decorator_sets_attribute():
 def test_identify_function_sets_attribute():
     instance = Undecorated()
     assert not hasattr(instance, "__glyff_identity__")
-    identify(instance, "dynamic-instance-id")
+    identify("dynamic-instance-id", instance)
     assert instance.__glyff_identity__ == "dynamic-instance-id"
 
 
-def test_identify_invalid_arguments_raises():
+def test_identify_rejects_non_string_identity():
+    # Guards against a bare ``@identify`` (parens forgotten) or swapped
+    # arguments, which would otherwise silently mangle the target.
     with pytest.raises(TypeError):
-        identify(123)  # type: ignore[arg-type]
+
+        @identify  # type: ignore[arg-type]
+        class Bare:
+            pass
 
 
 def test_identify_affects_hash():
@@ -42,9 +47,9 @@ def test_identify_affects_hash():
 
     inst1 = Decorated()
     inst2 = Undecorated()
-    identify(inst2, "static-class-id")  # same id as the decorated class
+    identify("static-class-id", inst2)  # same id as the decorated class
     inst3 = Undecorated()
-    identify(inst3, "different-id")
+    identify("different-id", inst3)
 
     hash1 = h.hash_args(func, sig, (inst1, 1), {})
     hash2 = h.hash_args(func, sig, (inst2, 1), {})

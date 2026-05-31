@@ -1,4 +1,4 @@
-from .decorators import engrave
+from .engrave import engrave
 from .identity import identify
 from .interfaces import ArgsHasher, Identifiable, Serializer, SessionStore
 from .models import ExecutionId, ExecutionRecord, ExecutionStatus
