@@ -16,7 +16,8 @@ class IdentityAware:
     def __init__(self, id_val: str):
         self._id = id_val
 
-    def get_identity(self) -> str:
+    @property
+    def __glyff_identity__(self) -> str:
         return self._id
 
     def method(self, x: int):
@@ -24,11 +25,7 @@ class IdentityAware:
 
 
 class AnotherIdentityAware:
-    _id = "class_id_456"
-
-    @classmethod
-    def get_identity(cls) -> str:
-        return cls._id
+    __glyff_identity__ = "class_id_456"
 
     @classmethod
     def class_method(cls, x: int):
@@ -36,13 +33,6 @@ class AnotherIdentityAware:
 
 
 class NoIdentity:
-    def method(self, x: int):
-        pass
-
-
-class NonCallableIdentity:
-    get_identity = "not_a_method"
-
     def method(self, x: int):
         pass
 
@@ -132,15 +122,6 @@ def test_class_method_hash_includes_class_identity():
 def test_hash_method_on_class_without_identity_raises_type_error():
     inst = NoIdentity()
     func = NoIdentity.method
-    sig = inspect.signature(func)
-
-    with pytest.raises(TypeError, match="does not implement the Identifiable protocol"):
-        h.hash_args(func, sig, (inst, 10), {})
-
-
-def test_hash_method_on_class_with_non_callable_identity_raises_type_error():
-    inst = NonCallableIdentity()
-    func = NonCallableIdentity.method
     sig = inspect.signature(func)
 
     with pytest.raises(TypeError, match="does not implement the Identifiable protocol"):

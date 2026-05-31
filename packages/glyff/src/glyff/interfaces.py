@@ -9,14 +9,17 @@ from .models import ExecutionId, ExecutionRecord
 class Identifiable(Protocol):
     """A protocol for objects whose identity contributes to argument hashing.
 
-    Implement on a class to make its instances (or the class itself, for
-    classmethods) usable as the receiver of a hashed method call.
+    Implement by exposing a ``__glyff_identity__`` attribute on a class to make
+    its instances (or the class itself, for classmethods) usable as the receiver
+    of a hashed method call. The attribute may be a plain value for a static
+    identity, or a ``property`` for one computed from instance state. Use
+    :func:`glyff.identify` to attach one without writing it by hand.
     """
 
-    def get_identity(self) -> Any: ...
+    __glyff_identity__: Any
 
 
-IDENTITY_METHOD: Final[str] = Identifiable.get_identity.__name__
+IDENTITY_ATTR: Final[str] = "__glyff_identity__"
 
 
 class Transaction(ABC):

@@ -19,7 +19,8 @@ class IdentityAware:
     def __init__(self, id_val: str):
         self._id = id_val
 
-    def get_identity(self) -> str:
+    @property
+    def __glyff_identity__(self) -> str:
         return self._id
 
     def method(self, m: MyModel):

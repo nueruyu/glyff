@@ -3,7 +3,7 @@ import inspect
 import json
 from typing import Any, Callable
 
-from ..interfaces import IDENTITY_METHOD, ArgsHasher, Serializer
+from ..interfaces import IDENTITY_ATTR, ArgsHasher, Serializer
 from .helpers import build_hashable_args
 
 
@@ -33,7 +33,7 @@ class JsonArgsHasher(ArgsHasher):
         except TypeError as e:
             raise TypeError(
                 f"Arguments to '{func.__qualname__}' could not be serialized to JSON. "
-                f"Ensure all arguments and the value from '{IDENTITY_METHOD}' "
+                f"Ensure all arguments and the value of '{IDENTITY_ATTR}' "
                 f"are JSON-serializable. Original error: {e}"
             ) from e
         hasher = hashlib.sha256()
