@@ -115,10 +115,14 @@ class FileClient:
         earlier op; the displaced op's ``clear_callback`` is not invoked.
         """
 
-        async def bytes_writer() -> bytes:
-            return content if isinstance(content, bytes) else b""
-
-        callback = content if callable(content) else bytes_writer
+        if isinstance(content, bytes):
+            async def bytes_writer() -> bytes:
+                return content
+            callback = bytes_writer
+        elif callable(content):
+            callback = content
+        else:
+            raise TypeError("content must be bytes or a callable")
         op = StagedOperation(write=callback, clear=clear_callback)
 
         rel_str = str(path)
