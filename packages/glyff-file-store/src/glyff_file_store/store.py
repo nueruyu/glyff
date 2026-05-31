@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypedDict
@@ -31,6 +32,21 @@ _STATUS_TO_EVENT_TYPE = {
     ExecutionStatus.FAILED: "fail",
 }
 _EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
+
+
+@dataclass
+class _ExecutionState:
+    """In-memory decomposed view of the latest event for a call-stack key.
+
+    ``persistable_result`` is the JSON-loaded form of the result (i.e. the
+    output of ``json.loads`` on the serializer's bytes), so callers can
+    re-serialize it for ``Serializer.deserialize`` with their own
+    ``return_type``.
+    """
+
+    status: ExecutionStatus
+    persistable_result: Any | None = field(default=None)
+    error: str | None = field(default=None)
 
 
 class _FileTransaction(Transaction):
@@ -106,9 +122,13 @@ class JsonFileSessionStore(SessionStore):
         self._serializer = serializer
         self._lock = asyncio.Lock()
         self._executions_path = Path("executions.json")
-        self._states: dict[str, ExecutionStatus] = {}
-        self._results: dict[str, Any] = {}
-        self._errors: dict[str, str] = {}
+        # Canonical, ordered list of committed log entries — the in-memory
+        # mirror of executions.json. Source of truth for serialization.
+        self._log_entries: list[LogEntry] = []
+        # Decomposed per-key view rebuilt from `_log_entries`. Source of
+        # truth for fast lookup by ExecutionId.
+        self._executions: dict[str, _ExecutionState] = {}
+        # Entries staged by the current transaction, not yet committed.
         self._staged_log_entries: list[LogEntry] = []
         self._load_executions()
 
@@ -150,59 +170,55 @@ class JsonFileSessionStore(SessionStore):
 
         with open(abs_path, "r", encoding="utf-8") as f:
             content = f.read()
-            if not content.strip():
-                return
-            try:
-                entries = json.loads(content)
-                self._update_in_memory_state(entries)
-            except json.JSONDecodeError as e:
-                logger.warning(
-                    "Could not parse executions log %s; ignoring corrupted file: %s",
-                    abs_path,
-                    e,
-                )
-                return
+        if not content.strip():
+            return
+        try:
+            entries: list[LogEntry] = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "Could not parse executions log %s; ignoring corrupted file: %s",
+                abs_path,
+                e,
+            )
+            return
 
-    def _update_in_memory_state(self, entries: list[LogEntry]):
+        self._log_entries = entries
+        self._index_entries(entries)
+
+    def _index_entries(self, entries: list[LogEntry]) -> None:
+        """Apply ``entries`` to the per-key decomposed view (``_executions``).
+        Each entry replaces any prior state for its key, so a single status
+        transition can't leave behind stale result/error data."""
         for entry in entries:
             key = self._callstack_to_key(entry["call_stack"])
             status = _EVENT_TYPE_TO_STATUS.get(entry["event_type"])
-            if status is ExecutionStatus.STARTED:
-                self._states[key] = ExecutionStatus.STARTED
-            elif status is ExecutionStatus.COMPLETED:
-                self._states[key] = ExecutionStatus.COMPLETED
-                self._results[key] = entry["result"]
-                self._errors.pop(key, None)
-            elif status is ExecutionStatus.FAILED:
-                self._states[key] = ExecutionStatus.FAILED
-                self._errors[key] = entry["error"] or ""
-                self._results.pop(key, None)
+            if status is None:
+                continue
+            self._executions[key] = _ExecutionState(
+                status=status,
+                persistable_result=(
+                    entry["result"] if status is ExecutionStatus.COMPLETED else None
+                ),
+                error=(
+                    (entry["error"] or "") if status is ExecutionStatus.FAILED else None
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Staging and commit
     # ------------------------------------------------------------------
 
     async def _on_write(self) -> bytes:
-        all_entries: list[LogEntry] = []
-        existing_content = await self._client.read(self._executions_path) or b""
-        if existing_content:
-            try:
-                all_entries = json.loads(existing_content.decode("utf-8"))
-            except json.JSONDecodeError as e:
-                logger.warning(
-                    "Could not parse existing executions log at %s on write; "
-                    "discarding prior entries: %s",
-                    self._executions_path,
-                    e,
-                )
+        """Produce the new on-disk content from in-memory state. Called by
+        FileClient at commit time."""
         async with self._lock:
-            all_entries.extend(self._staged_log_entries)
-            new_content = json.dumps(all_entries, indent=2, sort_keys=True)
-        return new_content.encode("utf-8")
+            all_entries = self._log_entries + self._staged_log_entries
+        return json.dumps(all_entries, indent=2, sort_keys=True).encode("utf-8")
 
     async def _on_transaction_commit(self) -> None:
         async with self._lock:
-            self._update_in_memory_state(self._staged_log_entries)
+            self._log_entries.extend(self._staged_log_entries)
+            self._index_entries(self._staged_log_entries)
             self._staged_log_entries.clear()
 
     async def _on_transaction_rollback(self) -> None:
@@ -250,19 +266,18 @@ class JsonFileSessionStore(SessionStore):
         self, execution_id: ExecutionId, return_type: type
     ) -> ExecutionRecord | None:
         key = self._id_to_key(execution_id)
-        status = self._states.get(key)
-        if not status:
+        state = self._executions.get(key)
+        if state is None:
             return None
 
         result: Any | None = None
         error: str | None = None
-        if status == ExecutionStatus.COMPLETED:
-            persistable_result = self._results.get(key)
-            if persistable_result is not None:
+        if state.status == ExecutionStatus.COMPLETED:
+            if state.persistable_result is not None:
                 serialized_bytes = json.dumps(
-                    persistable_result, sort_keys=True
+                    state.persistable_result, sort_keys=True
                 ).encode("utf-8")
                 result = self._serializer.deserialize(serialized_bytes, return_type)
-        elif status == ExecutionStatus.FAILED:
-            error = self._errors.get(key)
-        return ExecutionRecord(status=status, result=result, error=error)
+        elif state.status == ExecutionStatus.FAILED:
+            error = state.error
+        return ExecutionRecord(status=state.status, result=result, error=error)
