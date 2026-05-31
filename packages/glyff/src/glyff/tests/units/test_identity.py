@@ -21,14 +21,14 @@ class Undecorated:
 
 def test_identify_decorator_sets_attribute():
     instance = Decorated()
-    assert instance.__glyff_identity__ == "static-class-id"
+    assert getattr(instance, "__glyff_identity__") == "static-class-id"
 
 
 def test_identify_function_sets_attribute():
     instance = Undecorated()
     assert not hasattr(instance, "__glyff_identity__")
     identify("dynamic-instance-id", instance)
-    assert instance.__glyff_identity__ == "dynamic-instance-id"
+    assert getattr(instance, "__glyff_identity__") == "dynamic-instance-id"
 
 
 def test_identify_rejects_non_string_identity():
