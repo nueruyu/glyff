@@ -278,9 +278,7 @@ async def test_recovery_cleans_orphan_temp_directories(tmp_path: Path):
     session_id = "with-orphan-temps"
     (tmp_path / session_id).mkdir()
     (tmp_path / (session_id + _TEMP_PREFIX + "abc123")).mkdir()
-    (tmp_path / (session_id + _TEMP_PREFIX + "abc123") / "junk.txt").write_bytes(
-        b""
-    )
+    (tmp_path / (session_id + _TEMP_PREFIX + "abc123") / "junk.txt").write_bytes(b"")
     (tmp_path / (session_id + _TEMP_PREFIX + "def456")).mkdir()
 
     FileClient(base_dir=tmp_path, session_id=session_id)

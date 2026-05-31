@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine, NamedTuple, Union
+
+logger = logging.getLogger(__name__)
 
 WriteCallback = Callable[[], Awaitable[bytes]]
 ClearCallback = Callable[[], Coroutine[Any, Any, None]]
@@ -68,8 +71,12 @@ class FileClient:
                 else:
                     try:
                         backup.unlink()
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        logger.warning(
+                            "Could not remove stale backup file %s: %s",
+                            backup,
+                            e,
+                        )
 
         parent = self._session_path.parent
         if parent.exists():
