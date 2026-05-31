@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable, TypedDict
 from glyff.interfaces import Execution, Serializer, SessionStore, Transaction
 from glyff.models import ExecutionId, ExecutionRecord, ExecutionStatus
 
-from ..file_client import FileClient
+from .file_client import FileClient
 
 logger = logging.getLogger(__name__)
 
