@@ -3,6 +3,7 @@ from glyff.exceptions import (
     ExecutionFailedError,
     GlyffError,
     GlyffException,
+    MissingTypeHintError,
     SerializationError,
     TypeHintResolutionError,
     UnserializableArgumentError,
@@ -14,6 +15,7 @@ def test_glyff_errors_share_base_error_class():
     error_types = [
         ContextNotSetError,
         ExecutionFailedError,
+        MissingTypeHintError,
         SerializationError,
         TypeHintResolutionError,
         UnserializableArgumentError,
