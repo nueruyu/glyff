@@ -1,4 +1,20 @@
-class YieldException(Exception):
+class GlyffException(Exception):
+    """
+    Base class for all glyff-specific exceptions and control signals.
+    """
+
+    pass
+
+
+class GlyffError(GlyffException):
+    """
+    Base class for glyff errors.
+    """
+
+    pass
+
+
+class YieldException(GlyffException):
     """
     A special exception to signal that the session should be interrupted gracefully.
     This is not an error, but a signal to stop processing and engrave the state.
@@ -7,7 +23,7 @@ class YieldException(Exception):
     pass
 
 
-class ExecutionFailedError(Exception):
+class ExecutionFailedError(GlyffError):
     """
     Raised when attempting to execute a task that has previously failed
     and its failure state is engraved.
@@ -16,7 +32,7 @@ class ExecutionFailedError(Exception):
     pass
 
 
-class TypeHintResolutionError(TypeError):
+class TypeHintResolutionError(GlyffError):
     """
     Raised when type hints for an engraved function cannot be resolved.
     """
@@ -24,7 +40,7 @@ class TypeHintResolutionError(TypeError):
     pass
 
 
-class ContextNotSetError(RuntimeError):
+class ContextNotSetError(GlyffError):
     """
     Raised when a workflow context is required but has not been configured.
     """
@@ -32,7 +48,7 @@ class ContextNotSetError(RuntimeError):
     pass
 
 
-class SerializationError(TypeError):
+class SerializationError(GlyffError):
     """
     Raised when a serializer cannot convert a value to its wire representation.
     """
@@ -40,7 +56,7 @@ class SerializationError(TypeError):
     pass
 
 
-class UnserializableArgumentError(TypeError):
+class UnserializableArgumentError(SerializationError):
     """
     Raised when an argument to an engraved function cannot be deterministically
     serialized for hashing.

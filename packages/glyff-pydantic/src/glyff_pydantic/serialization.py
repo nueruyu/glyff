@@ -26,9 +26,16 @@ def _json_default(obj: Any) -> Any:
 
 
 def _json_stable_dumps(data: Any) -> str:
-    return json.dumps(
-        data, sort_keys=True, default=_json_default, separators=(",", ":")
-    )
+    try:
+        return json.dumps(
+            data, sort_keys=True, default=_json_default, separators=(",", ":")
+        )
+    except SerializationError:
+        raise
+    except TypeError as e:
+        raise SerializationError(
+            f"Value could not be serialized to JSON. Original error: {e}"
+        ) from e
 
 
 class PydanticSerializer(Serializer):
@@ -69,7 +76,7 @@ class PydanticArgsHasher(ArgsHasher):
         )
         try:
             stable_repr = _json_stable_dumps(args_dict)
-        except TypeError as e:
+        except SerializationError as e:
             raise UnserializableArgumentError(
                 f"Arguments to '{func_name}' could not be serialized to JSON. "
                 f"Ensure all arguments are JSON-serializable or handled by a custom "
