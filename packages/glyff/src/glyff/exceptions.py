@@ -16,6 +16,30 @@ class ExecutionFailedError(Exception):
     pass
 
 
+class TypeHintResolutionError(TypeError):
+    """
+    Raised when type hints for an engraved function cannot be resolved.
+    """
+
+    pass
+
+
+class ContextNotSetError(RuntimeError):
+    """
+    Raised when a workflow context is required but has not been configured.
+    """
+
+    pass
+
+
+class SerializationError(TypeError):
+    """
+    Raised when a serializer cannot convert a value to its wire representation.
+    """
+
+    pass
+
+
 class UnserializableArgumentError(TypeError):
     """
     Raised when an argument to an engraved function cannot be deterministically

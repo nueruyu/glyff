@@ -1,6 +1,7 @@
 import pytest
 
 from glyff import engrave
+from glyff.exceptions import TypeHintResolutionError
 
 
 class _MyClass:
@@ -9,8 +10,9 @@ class _MyClass:
 
 def test_engrave_raises_for_unresolvable_string_annotation():
     # Without __future__ annotations, quoted type hints are still evaluated
-    # lazily by get_annotations(eval_str=True), so an undefined name raises TypeError.
-    with pytest.raises(TypeError, match="Could not resolve type hints"):
+    # lazily by get_annotations(eval_str=True), so an undefined name raises a
+    # custom type-hint resolution error.
+    with pytest.raises(TypeHintResolutionError, match="Could not resolve type hints"):
 
         @engrave
         async def func() -> "UndefinedClass":  # type: ignore[name-defined]  # noqa: F821

@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from glyff import engrave
+from glyff.exceptions import TypeHintResolutionError
 
 
 class _MyClass:
@@ -10,7 +11,7 @@ class _MyClass:
 
 
 def test_engrave_raises_for_unresolvable_type_hint():
-    with pytest.raises(TypeError, match="Could not resolve type hints"):
+    with pytest.raises(TypeHintResolutionError, match="Could not resolve type hints"):
 
         @engrave
         async def func() -> UndefinedType:  # type: ignore[name-defined]  # noqa: F821
@@ -18,7 +19,7 @@ def test_engrave_raises_for_unresolvable_type_hint():
 
 
 def test_engrave_raises_for_unresolvable_type_hint_in_args():
-    with pytest.raises(TypeError, match="Could not resolve type hints"):
+    with pytest.raises(TypeHintResolutionError, match="Could not resolve type hints"):
 
         @engrave
         async def func(arg: SomeClass) -> AnotherClass:  # type: ignore[name-defined]  # noqa: F821

@@ -4,7 +4,7 @@ import contextvars
 from collections.abc import Iterator, Sequence
 from typing import Callable, overload
 
-from .exceptions import ExecutionFailedError, YieldException
+from .exceptions import ContextNotSetError, ExecutionFailedError, YieldException
 from .interfaces import ArgsHasher, SessionStore, Transaction
 from .models import ExecutionId
 from .sequencer import Sequencer
@@ -159,7 +159,7 @@ def get_context() -> Context:
     try:
         return _context_var.get()
     except LookupError:
-        raise RuntimeError(
+        raise ContextNotSetError(
             "Workflow context is not set. Are you running outside a Session?"
         )
 

@@ -1,7 +1,7 @@
 import inspect
 
 import pytest
-from glyff.exceptions import UnserializableArgumentError
+from glyff.exceptions import SerializationError, UnserializableArgumentError
 from pydantic import BaseModel
 
 from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
@@ -71,6 +71,11 @@ def test_serialize_produces_stable_output():
     d1 = {"b": 2, "a": 1}
     d2 = {"a": 1, "b": 2}
     assert s.serialize(d1, dict) == s.serialize(d2, dict)
+
+
+def test_serialize_non_serializable_raises_custom_error():
+    with pytest.raises(SerializationError, match="could not be serialized"):
+        s.serialize(object(), object)
 
 
 def test_hash_non_serializable_raises_custom_error():
