@@ -5,6 +5,7 @@ import inspect
 import json
 from typing import Any, Callable
 
+from glyff.exceptions import UnserializableArgumentError
 from glyff.interfaces import ArgsHasher, Serializer
 from glyff.serialization.helpers import (
     build_hashable_args,
@@ -54,10 +55,18 @@ class PydanticArgsHasher(ArgsHasher):
     def hash_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> str:
+        func_name = getattr(func, "__qualname__", func.__name__)
         args_dict = build_hashable_args(
             func, sig, args, kwargs, transformer=self._to_hashable
         )
-        stable_repr = _json_stable_dumps(args_dict)
+        try:
+            stable_repr = _json_stable_dumps(args_dict)
+        except TypeError as e:
+            raise UnserializableArgumentError(
+                f"Arguments to '{func_name}' could not be serialized to JSON. "
+                f"Ensure all arguments are JSON-serializable or handled by a custom "
+                f"argument transformer. Original error: {e}"
+            ) from e
         hasher = hashlib.sha256()
         hasher.update(stable_repr.encode("utf-8"))
         return hasher.hexdigest()

@@ -1,5 +1,7 @@
 import inspect
 
+import pytest
+from glyff.exceptions import UnserializableArgumentError
 from pydantic import BaseModel
 
 from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
@@ -69,6 +71,18 @@ def test_serialize_produces_stable_output():
     d1 = {"b": 2, "a": 1}
     d2 = {"a": 1, "b": 2}
     assert s.serialize(d1, dict) == s.serialize(d2, dict)
+
+
+def test_hash_non_serializable_raises_custom_error():
+    def func_with_obj(a: object):
+        pass
+
+    sig = inspect.signature(func_with_obj)
+
+    with pytest.raises(
+        UnserializableArgumentError, match="could not be serialized to JSON"
+    ):
+        h.hash_args(func_with_obj, sig, (object(),), {})
 
 
 def test_method_hash_differs_for_different_pydantic_instances():
