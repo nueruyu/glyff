@@ -7,13 +7,27 @@ from typing import Any, Callable
 from ..exceptions import UnserializableArgumentError
 
 
+def _qualified_name(obj: Any) -> str:
+    return f"{obj.__module__}.{obj.__qualname__}"
+
+
 def default_to_hashable(obj: Any) -> Any:
     """Converts common non-JSON-native objects to a serializable representation."""
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         return dataclasses.asdict(obj)
     if isinstance(obj, type):
-        return f"{obj.__module__}.{obj.__qualname__}"
+        return _qualified_name(obj)
+    if callable(obj) and hasattr(obj, "__module__") and hasattr(obj, "__qualname__"):
+        return _qualified_name(obj)
     return obj
+
+
+def default_to_jsonable(obj: Any) -> Any:
+    """Converts nested objects encountered by json.dumps to serializable values."""
+    converted = default_to_hashable(obj)
+    if converted is not obj:
+        return converted
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
 def build_hashable_args(
@@ -44,7 +58,9 @@ def build_hashable_args(
 def hash_from_dict(d: dict, func_name: str) -> str:
     """Creates a stable SHA256 hash from a dictionary."""
     try:
-        stable_repr = json.dumps(d, sort_keys=True, separators=(",", ":"))
+        stable_repr = json.dumps(
+            d, sort_keys=True, default=default_to_jsonable, separators=(",", ":")
+        )
     except TypeError as e:
         raise UnserializableArgumentError(
             f"Arguments to '{func_name}' could not be serialized to JSON. "

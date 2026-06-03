@@ -37,6 +37,14 @@ class AnotherClass:
         pass
 
 
+def helper_func():
+    pass
+
+
+def another_helper_func():
+    pass
+
+
 def test_hash_args_positional_vs_keyword_are_equal():
     sig = inspect.signature(sample_func)
     h1 = h.hash_args(sample_func, sig, (1,), {"b": "test"})
@@ -91,6 +99,45 @@ def test_hash_non_serializable_raises_custom_error():
         UnserializableArgumentError, match="could not be serialized to JSON"
     ):
         h.hash_args(func_with_obj, sig, (object(),), {})
+
+
+def test_hash_nested_dataclass_and_type_values():
+    @dataclasses.dataclass(frozen=True)
+    class Container:
+        data: MyDataClass
+        cls: type
+
+    def func(container: Container):
+        pass
+
+    sig = inspect.signature(func)
+    first = h.hash_args(
+        func,
+        sig,
+        (Container(data=MyDataClass(id="id1", value=100), cls=AnotherClass),),
+        {},
+    )
+    second = h.hash_args(
+        func,
+        sig,
+        (Container(data=MyDataClass(id="id1", value=100), cls=AnotherClass),),
+        {},
+    )
+
+    assert first == second
+
+
+def test_hash_callable_values_by_qualified_name():
+    def func(callback):
+        pass
+
+    sig = inspect.signature(func)
+    first = h.hash_args(func, sig, (helper_func,), {})
+    second = h.hash_args(func, sig, (helper_func,), {})
+    different = h.hash_args(func, sig, (another_helper_func,), {})
+
+    assert first == second
+    assert first != different
 
 
 def test_method_hash_differs_for_different_dataclass_instances():

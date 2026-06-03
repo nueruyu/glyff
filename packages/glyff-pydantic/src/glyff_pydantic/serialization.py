@@ -10,6 +10,7 @@ from glyff.interfaces import ArgsHasher, Serializer
 from glyff.serialization.helpers import (
     build_hashable_args,
     default_to_hashable,
+    default_to_jsonable,
 )
 from pydantic import BaseModel, TypeAdapter
 
@@ -18,7 +19,7 @@ def _json_default(obj: Any) -> Any:
     if isinstance(obj, BaseModel):
         return obj.model_dump(mode="json")
     try:
-        return json.JSONEncoder().default(obj)
+        return default_to_jsonable(obj)
     except TypeError:
         raise SerializationError(
             f"Object of type {obj.__class__.__name__} is not JSON serializable"
@@ -41,9 +42,22 @@ def _json_stable_dumps(data: Any) -> str:
 class PydanticSerializer(Serializer):
     """A serializer implementation using Pydantic and JSON."""
 
+    def __init__(self) -> None:
+        self._adapters: dict[Any, TypeAdapter] = {}
+
+    def _get_adapter(self, type_hint: type) -> TypeAdapter:
+        try:
+            adapter = self._adapters.get(type_hint)
+        except TypeError:
+            return TypeAdapter(type_hint)
+        if adapter is None:
+            adapter = TypeAdapter(type_hint)
+            self._adapters[type_hint] = adapter
+        return adapter
+
     def serialize(self, value: Any, type_hint: type) -> bytes:
         try:
-            adapter = TypeAdapter(type_hint)
+            adapter = self._get_adapter(type_hint)
             json_compatible = adapter.dump_python(value, mode="json")
             return _json_stable_dumps(json_compatible).encode("utf-8")
         except SerializationError:
@@ -55,7 +69,7 @@ class PydanticSerializer(Serializer):
             ) from e
 
     def deserialize(self, data: bytes, type_hint: type) -> Any:
-        adapter = TypeAdapter(type_hint)
+        adapter = self._get_adapter(type_hint)
         return adapter.validate_json(data)
 
 
