@@ -6,7 +6,10 @@ import json
 from typing import Any, Callable
 
 from glyff.interfaces import ArgsHasher, Serializer
-from glyff.serialization import build_hashable_args
+from glyff.serialization.helpers import (
+    build_hashable_args,
+    default_to_hashable,
+)
 from pydantic import BaseModel, TypeAdapter
 
 
@@ -43,10 +46,17 @@ class PydanticSerializer(Serializer):
 class PydanticArgsHasher(ArgsHasher):
     """An ArgsHasher implementation that uses Pydantic-aware JSON serialization."""
 
+    def _to_hashable(self, obj: Any) -> Any:
+        if isinstance(obj, BaseModel):
+            return obj.model_dump(mode="json")
+        return default_to_hashable(obj)
+
     def hash_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> str:
-        args_dict = build_hashable_args(func, sig, args, kwargs)
+        args_dict = build_hashable_args(
+            func, sig, args, kwargs, transformer=self._to_hashable
+        )
         stable_repr = _json_stable_dumps(args_dict)
         hasher = hashlib.sha256()
         hasher.update(stable_repr.encode("utf-8"))

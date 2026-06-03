@@ -14,3 +14,12 @@ class ExecutionFailedError(Exception):
     """
 
     pass
+
+
+class UnserializableArgumentError(TypeError):
+    """
+    Raised when an argument to an engraved function cannot be deterministically
+    serialized for hashing.
+    """
+
+    pass

@@ -1,25 +1,8 @@
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Final, Protocol, runtime_checkable
+from typing import Any, Callable
 
 from .models import ExecutionId, ExecutionRecord
-
-
-@runtime_checkable
-class Identifiable(Protocol):
-    """A protocol for objects whose identity contributes to argument hashing.
-
-    Implement by exposing a ``__glyff_identity__`` attribute on a class to make
-    its instances (or the class itself, for classmethods) usable as the receiver
-    of a hashed method call. The attribute may be a plain value for a static
-    identity, or a ``property`` for one computed from instance state. Use
-    :func:`glyff.identify` to attach one without writing it by hand.
-    """
-
-    __glyff_identity__: Any
-
-
-IDENTITY_ATTR: Final[str] = "__glyff_identity__"
 
 
 class Transaction(ABC):

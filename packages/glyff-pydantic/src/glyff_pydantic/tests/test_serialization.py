@@ -1,6 +1,5 @@
 import inspect
 
-import pytest
 from pydantic import BaseModel
 
 from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
@@ -10,26 +9,12 @@ class MyModel(BaseModel):
     x: int
     y: str
 
+    def method(self, z: int):
+        pass
+
 
 def sample_func(a: int, b: str = "default"):
     pass
-
-
-class IdentityAware:
-    def __init__(self, id_val: str):
-        self._id = id_val
-
-    @property
-    def __glyff_identity__(self) -> str:
-        return self._id
-
-    def method(self, m: MyModel):
-        pass
-
-
-class NoIdentity:
-    def method(self, m: MyModel):
-        pass
 
 
 s = PydanticSerializer()
@@ -86,36 +71,25 @@ def test_serialize_produces_stable_output():
     assert s.serialize(d1, dict) == s.serialize(d2, dict)
 
 
-def test_method_hash_differs_for_different_instances():
-    inst1 = IdentityAware("id1")
-    inst2 = IdentityAware("id2")
-    model = MyModel(x=1, y="a")
-    func = IdentityAware.method
+def test_method_hash_differs_for_different_pydantic_instances():
+    inst1 = MyModel(x=1, y="a")
+    inst2 = MyModel(x=2, y="a")
+    func = MyModel.method
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (inst1, model), {})
-    h2 = h.hash_args(func, sig, (inst2, model), {})
+    h1 = h.hash_args(func, sig, (inst1, 10), {})
+    h2 = h.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 != h2
 
 
-def test_method_hash_is_same_for_same_instance():
-    inst = IdentityAware("id1")
-    model = MyModel(x=1, y="a")
-    func = IdentityAware.method
+def test_method_hash_is_same_for_identical_pydantic_instances():
+    inst1 = MyModel(x=1, y="a")
+    inst2 = MyModel(x=1, y="a")
+    func = MyModel.method
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (inst, model), {})
-    h2 = h.hash_args(func, sig, (inst, model), {})
+    h1 = h.hash_args(func, sig, (inst1, 10), {})
+    h2 = h.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 == h2
-
-
-def test_hash_method_on_class_without_identity_raises_type_error():
-    inst = NoIdentity()
-    model = MyModel(x=1, y="a")
-    func = NoIdentity.method
-    sig = inspect.signature(func)
-
-    with pytest.raises(TypeError, match="does not implement the Identifiable protocol"):
-        h.hash_args(func, sig, (inst, model), {})

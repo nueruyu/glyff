@@ -1,7 +1,9 @@
+import dataclasses
 import inspect
 
 import pytest
 
+from glyff.exceptions import UnserializableArgumentError
 from glyff.serialization import JsonArgsHasher, JsonSerializer
 
 s = JsonSerializer()
@@ -12,28 +14,26 @@ def sample_func(a: int, b: str = "default"):
     pass
 
 
-class IdentityAware:
-    def __init__(self, id_val: str):
-        self._id = id_val
-
-    @property
-    def __glyff_identity__(self) -> str:
-        return self._id
+@dataclasses.dataclass(frozen=True)
+class MyDataClass:
+    id: str
+    value: int
 
     def method(self, x: int):
         pass
 
 
-class AnotherIdentityAware:
-    __glyff_identity__ = "class_id_456"
+class MyPlainClass:
+    def __init__(self, id_val: str):
+        self.id = id_val
 
+    def method(self, x: int):
+        pass
+
+
+class AnotherClass:
     @classmethod
     def class_method(cls, x: int):
-        pass
-
-
-class NoIdentity:
-    def method(self, x: int):
         pass
 
 
@@ -76,20 +76,22 @@ def test_serialize_produces_stable_output():
     assert s.serialize(d1, dict) == s.serialize(d2, dict)
 
 
-def test_hash_non_serializable_raises_type_error():
+def test_hash_non_serializable_raises_custom_error():
     def func_with_obj(a: object):
         pass
 
     sig = inspect.signature(func_with_obj)
 
-    with pytest.raises(TypeError, match="could not be serialized to JSON"):
+    with pytest.raises(
+        UnserializableArgumentError, match="could not be serialized to JSON"
+    ):
         h.hash_args(func_with_obj, sig, (object(),), {})
 
 
-def test_method_hash_differs_for_different_instances():
-    inst1 = IdentityAware("id1")
-    inst2 = IdentityAware("id2")
-    func = IdentityAware.method
+def test_method_hash_differs_for_different_dataclass_instances():
+    inst1 = MyDataClass(id="id1", value=100)
+    inst2 = MyDataClass(id="id2", value=100)
+    func = MyDataClass.method
     sig = inspect.signature(func)
 
     h1 = h.hash_args(func, sig, (inst1, 10), {})
@@ -98,40 +100,41 @@ def test_method_hash_differs_for_different_instances():
     assert h1 != h2
 
 
-def test_method_hash_is_same_for_same_instance():
-    inst = IdentityAware("id1")
-    func = IdentityAware.method
+def test_method_hash_is_same_for_identical_dataclass_instances():
+    inst1 = MyDataClass(id="id1", value=100)
+    inst2 = MyDataClass(id="id1", value=100)
+    func = MyDataClass.method
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (inst, 10), {})
-    h2 = h.hash_args(func, sig, (inst, 10), {})
+    h1 = h.hash_args(func, sig, (inst1, 10), {})
+    h2 = h.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 == h2
 
 
-def test_class_method_hash_includes_class_identity():
-    func = AnotherIdentityAware.class_method.__func__
+def test_class_method_hash_is_stable():
+    func = AnotherClass.class_method.__func__
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (AnotherIdentityAware, 10), {})
-    h2 = h.hash_args(func, sig, (AnotherIdentityAware, 10), {})
+    h1 = h.hash_args(func, sig, (AnotherClass, 10), {})
+    h2 = h.hash_args(func, sig, (AnotherClass, 10), {})
 
     assert h1 == h2
 
 
-def test_hash_method_on_class_without_identity_raises_type_error():
-    inst = NoIdentity()
-    func = NoIdentity.method
+def test_hash_method_on_unserializable_class_raises_error():
+    inst = MyPlainClass("id1")
+    func = MyPlainClass.method
     sig = inspect.signature(func)
 
-    with pytest.raises(TypeError, match="does not implement the Identifiable protocol"):
+    with pytest.raises(UnserializableArgumentError):
         h.hash_args(func, sig, (inst, 10), {})
 
 
-def test_regular_function_with_self_parameter_does_not_raise():
-    def regular_func(self, x: int):
+def test_regular_function_with_self_parameter_is_hashed_normally():
+    def regular_func(self: str, x: int):
         pass
 
     sig = inspect.signature(regular_func)
-    result = h.hash_args(regular_func, sig, ("not_an_instance", 10), {})
+    result = h.hash_args(regular_func, sig, ("a serializable string", 10), {})
     assert result is not None

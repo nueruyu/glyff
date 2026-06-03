@@ -1,10 +1,9 @@
-import hashlib
 import inspect
 import json
 from typing import Any, Callable
 
-from ..interfaces import IDENTITY_ATTR, ArgsHasher, Serializer
-from .helpers import build_hashable_args
+from ..interfaces import ArgsHasher, Serializer
+from .helpers import build_hashable_args, default_to_hashable, hash_from_dict
 
 
 def _json_stable_dumps(data: Any) -> str:
@@ -27,15 +26,8 @@ class JsonArgsHasher(ArgsHasher):
     def hash_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> str:
-        args_dict = build_hashable_args(func, sig, args, kwargs)
-        try:
-            stable_repr = _json_stable_dumps(args_dict)
-        except TypeError as e:
-            raise TypeError(
-                f"Arguments to '{func.__qualname__}' could not be serialized to JSON. "
-                f"Ensure all arguments and the value of '{IDENTITY_ATTR}' "
-                f"are JSON-serializable. Original error: {e}"
-            ) from e
-        hasher = hashlib.sha256()
-        hasher.update(stable_repr.encode("utf-8"))
-        return hasher.hexdigest()
+        func_name = getattr(func, "__qualname__", func.__name__)
+        args_dict = build_hashable_args(
+            func, sig, args, kwargs, transformer=default_to_hashable
+        )
+        return hash_from_dict(args_dict, func_name)
