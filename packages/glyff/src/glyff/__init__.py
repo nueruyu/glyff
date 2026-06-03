@@ -1,6 +1,5 @@
 from .engrave import engrave
-from .identity import identify
-from .interfaces import ArgsHasher, Identifiable, Serializer, SessionStore
+from .interfaces import ArgsHasher, Serializer, SessionStore
 from .models import ExecutionId, ExecutionRecord, ExecutionStatus
 from .session import Session
 
@@ -11,8 +10,6 @@ __all__ = [
     "ExecutionRecord",
     "ExecutionStatus",
     "ArgsHasher",
-    "Identifiable",
     "Serializer",
     "SessionStore",
-    "identify",
 ]

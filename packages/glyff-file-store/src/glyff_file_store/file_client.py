@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine, NamedTuple, Union
 
+from .exceptions import InvalidStagedContentError
+
 logger = logging.getLogger(__name__)
 
 WriteCallback = Callable[[], Awaitable[bytes]]
@@ -116,13 +118,15 @@ class FileClient:
         """
 
         if isinstance(content, bytes):
+
             async def bytes_writer() -> bytes:
                 return content
+
             callback = bytes_writer
         elif callable(content):
             callback = content
         else:
-            raise TypeError("content must be bytes or a callable")
+            raise InvalidStagedContentError("content must be bytes or a callable")
         op = StagedOperation(write=callback, clear=clear_callback)
 
         rel_str = str(path)

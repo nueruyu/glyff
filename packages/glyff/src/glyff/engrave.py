@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from typing import Any, Callable, ParamSpec, TypeVar, cast, get_args, get_origin
 
 from .context import Context, get_context
+from .exceptions import TypeHintResolutionError
 from .executor import execute, execute_stream
 from .models import ExecutionId
 
@@ -53,7 +54,7 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
         type_hints = inspect.get_annotations(func, eval_str=True)
         return_type = type_hints.get("return", Any)
     except Exception as e:
-        raise TypeError(
+        raise TypeHintResolutionError(
             f"Could not resolve type hints for {task_name}. "
             f"Please ensure all types are correctly defined and imported. Error: {e}"
         ) from e
