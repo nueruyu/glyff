@@ -71,6 +71,15 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
     sig = inspect.signature(func)
     task_name = getattr(func, "__qualname__", func.__name__)
 
+    unevaluated_type_hints = inspect.get_annotations(func, eval_str=False)
+    missing_type_hints = _missing_required_type_hints(sig, unevaluated_type_hints)
+    if missing_type_hints:
+        missing = ", ".join(missing_type_hints)
+        raise MissingTypeHintError(
+            f"Engraved function '{task_name}' is missing required type hints: "
+            f"{missing}."
+        )
+
     try:
         type_hints = inspect.get_annotations(func, eval_str=True)
     except Exception as e:
@@ -78,14 +87,6 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
             f"Could not resolve type hints for {task_name}. "
             f"Please ensure all types are correctly defined and imported. Error: {e}"
         ) from e
-
-    missing_type_hints = _missing_required_type_hints(sig, type_hints)
-    if missing_type_hints:
-        missing = ", ".join(missing_type_hints)
-        raise MissingTypeHintError(
-            f"Engraved function '{task_name}' is missing required type hints: "
-            f"{missing}."
-        )
 
     return_type = type_hints["return"]
 

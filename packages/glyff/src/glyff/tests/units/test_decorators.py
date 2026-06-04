@@ -42,6 +42,14 @@ def test_engrave_raises_for_missing_argument_type_hint():
             return "hello"
 
 
+def test_engrave_reports_missing_type_hint_before_resolution_error():
+    with pytest.raises(MissingTypeHintError, match="arg"):
+
+        @engrave
+        async def func(arg) -> UndefinedType:  # type: ignore[name-defined]  # noqa: F821
+            return "hello"
+
+
 def test_engrave_allows_unannotated_self_parameter():
     class Service:
         @engrave
@@ -59,6 +67,14 @@ def test_engrave_allows_unannotated_cls_parameter():
             return str(arg)
 
     assert Service.method is not None
+
+
+def test_engrave_allows_unannotated_var_args_and_kwargs():
+    @engrave
+    async def func(*args, **kwargs) -> str:
+        return "hello"
+
+    assert func is not None
 
 
 def test_engrave_succeeds_when_return_type_is_resolvable():
