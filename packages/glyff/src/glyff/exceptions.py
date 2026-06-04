@@ -40,6 +40,14 @@ class TypeHintResolutionError(GlyffError):
     pass
 
 
+class MissingTypeHintError(GlyffError):
+    """
+    Raised when an engraved function is missing required type hints.
+    """
+
+    pass
+
+
 class ContextNotSetError(GlyffError):
     """
     Raised when a workflow context is required but has not been configured.

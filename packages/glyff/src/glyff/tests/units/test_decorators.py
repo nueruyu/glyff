@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from glyff import engrave
-from glyff.exceptions import TypeHintResolutionError
+from glyff.exceptions import MissingTypeHintError, TypeHintResolutionError
 
 
 class _MyClass:
@@ -24,6 +24,57 @@ def test_engrave_raises_for_unresolvable_type_hint_in_args():
         @engrave
         async def func(arg: SomeClass) -> AnotherClass:  # type: ignore[name-defined]  # noqa: F821
             pass
+
+
+def test_engrave_raises_for_missing_return_type_hint():
+    with pytest.raises(MissingTypeHintError, match="return"):
+
+        @engrave
+        async def func(arg: int):
+            pass
+
+
+def test_engrave_raises_for_missing_argument_type_hint():
+    with pytest.raises(MissingTypeHintError, match="arg"):
+
+        @engrave
+        async def func(arg) -> str:
+            return "hello"
+
+
+def test_engrave_reports_missing_type_hint_before_resolution_error():
+    with pytest.raises(MissingTypeHintError, match="arg"):
+
+        @engrave
+        async def func(arg) -> UndefinedType:  # type: ignore[name-defined]  # noqa: F821
+            return "hello"
+
+
+def test_engrave_allows_unannotated_self_parameter():
+    class Service:
+        @engrave
+        async def method(self, arg: int) -> str:
+            return str(arg)
+
+    assert Service().method is not None
+
+
+def test_engrave_allows_unannotated_cls_parameter():
+    class Service:
+        @classmethod
+        @engrave
+        async def method(cls, arg: int) -> str:
+            return str(arg)
+
+    assert Service.method is not None
+
+
+def test_engrave_allows_unannotated_var_args_and_kwargs():
+    @engrave
+    async def func(*args, **kwargs) -> str:
+        return "hello"
+
+    assert func is not None
 
 
 def test_engrave_succeeds_when_return_type_is_resolvable():
