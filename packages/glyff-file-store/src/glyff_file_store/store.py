@@ -3,10 +3,18 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypedDict
 
+from glyff.identity import (
+    execution_id_to_descendant_prefix,
+    execution_id_to_frames,
+    execution_id_to_path,
+    frames_to_execution_id,
+    frames_to_path,
+)
 from glyff.interfaces import Execution, Serializer, SessionStore, Transaction
 from glyff.models import ExecutionId, ExecutionRecord, ExecutionStatus
 
@@ -125,51 +133,26 @@ class JsonFileSessionStore(SessionStore):
     # Id / call-stack helpers
     # ------------------------------------------------------------------
 
+    # A persisted ``call_stack`` is exactly the frame list of ``identity``: the
+    # ExecutionId chain encoded outermost → innermost. These thin wrappers keep
+    # the store's call sites readable while the encoding lives in one module.
+
     def _id_to_callstack(self, execution_id: ExecutionId) -> list[str]:
         """Convert an ExecutionId to a call stack list (outermost → innermost)."""
-        frames: list[str] = []
-        current: ExecutionId | None = execution_id
-        while current is not None:
-            frames.append(f"{current.name}#{current.sequence}:{current.args_hash}")
-            current = current.parent_id
-        frames.reverse()
-        return frames
+        return execution_id_to_frames(execution_id)
 
     def _id_to_key(self, execution_id: ExecutionId) -> str:
         """Convert an ExecutionId to a stable, unique string key."""
-        parent_path = (
-            f"{self._id_to_key(execution_id.parent_id)}/"
-            if execution_id.parent_id
-            else ""
-        )
-        return f"{parent_path}{execution_id.name}#{execution_id.sequence}:{execution_id.args_hash}"
+        return execution_id_to_path(execution_id)
 
     @staticmethod
     def _callstack_to_key(call_stack: list[str]) -> str:
-        return "/".join(call_stack)
+        return frames_to_path(call_stack)
 
     @staticmethod
     def _callstack_to_id(call_stack: list[str]) -> ExecutionId:
-        """Rebuild the full ExecutionId chain from a persisted call stack.
-
-        Inverse of ``_id_to_callstack``: each frame is ``name#sequence:args_hash``
-        (args_hash is a hex digest, so the first ``#`` and ``:`` are unambiguous
-        separators), and frames run outermost → innermost."""
-        parent: ExecutionId | None = None
-        eid: ExecutionId | None = None
-        for frame in call_stack:
-            name, rest = frame.split("#", 1)
-            seq_str, args_hash = rest.split(":", 1)
-            eid = ExecutionId(
-                parent_id=parent,
-                name=name,
-                sequence=int(seq_str),
-                args_hash=args_hash,
-            )
-            parent = eid
-        if eid is None:
-            raise ValueError("Cannot rebuild an ExecutionId from an empty call stack")
-        return eid
+        """Rebuild the full ExecutionId chain from a persisted call stack."""
+        return frames_to_execution_id(call_stack)
 
     # ------------------------------------------------------------------
     # Loading and in-memory state
@@ -317,7 +300,7 @@ class JsonFileSessionStore(SessionStore):
     async def get_descendants(
         self, execution_id: ExecutionId
     ) -> list[ExecutionId]:
-        prefix = self._id_to_key(execution_id) + "/"
+        prefix = execution_id_to_descendant_prefix(execution_id)
         async with self._lock:
             all_entries = self._log_entries + self._staged_log_entries
             deleted = self._staged_delete_keys
@@ -328,10 +311,15 @@ class JsonFileSessionStore(SessionStore):
                     keys.setdefault(key, entry["call_stack"])
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
 
-    async def delete_execution(self, execution_id: ExecutionId) -> None:
-        key = self._id_to_key(execution_id)
+    async def delete_executions(
+        self, execution_ids: Iterable[ExecutionId]
+    ) -> None:
+        keys = [self._id_to_key(execution_id) for execution_id in execution_ids]
+        if not keys:
+            return
         async with self._lock:
-            self._staged_delete_keys.add(key)
-        # Register the write outside the store lock (mirrors _add_log_entry) so
-        # commit rewrites executions.json even if no entry was staged this txn.
+            self._staged_delete_keys.update(keys)
+        # Register the write once, outside the store lock (mirrors
+        # _add_log_entry), so commit rewrites executions.json even if no entry
+        # was staged this txn.
         await self._client.stage_write(self._executions_path, self._on_write)

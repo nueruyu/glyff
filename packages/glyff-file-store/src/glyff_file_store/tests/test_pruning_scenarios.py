@@ -2,6 +2,8 @@
 file store. Proves that enabling ``prune_completed_descendants`` deletes the
 history of a task's descendants once it completes, without changing replay."""
 
+from collections.abc import AsyncIterator
+
 import pytest
 from glyff import Session, engrave
 from glyff.exceptions import YieldException
@@ -146,15 +148,16 @@ async def sc_root() -> str:
     return f"{a}/{b}"
 
 
-async def test_interrupt_prunes_completed_sibling_keeps_running_parent(
+async def test_interrupt_defers_pruning_until_root_completes(
     tmp_path, serializer: Serializer, hasher: ArgsHasher
 ):
     global _sc_interrupt
     sid = "prune-interrupt"
 
-    # Run 1: child_a completes (so its grandchild gets pruned), but the root is
-    # interrupted in child_b and stays STARTED — so the root's subtree as a
-    # whole is NOT pruned.
+    # Run 1: child_a (and its grandchild) complete, but child_a is a *nested*
+    # call, so pruning is deferred to its top-level ancestor. The root is
+    # interrupted in child_b and never completes, so nothing is pruned yet —
+    # the whole partial history (including sc_grand) is retained.
     _sc_interrupt = True
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
@@ -167,13 +170,13 @@ async def test_interrupt_prunes_completed_sibling_keeps_running_parent(
 
     names = _leaf_names(store)
     assert "sc_root" in names  # STARTED, retained
-    assert "sc_child_a" in names  # COMPLETED, retained
+    assert "sc_child_a" in names  # COMPLETED, retained (nested: prune deferred)
     assert "sc_child_b" in names  # STARTED, retained
-    assert "sc_grand" not in names  # pruned when child_a completed
+    assert "sc_grand" in names  # retained until the root completes
 
     # Run 2: resume. child_a is replayed from cache (never re-run), child_b
     # finishes, the root completes -> the root's descendants are pruned,
-    # including the cache-replayed child_a that this session never re-executed.
+    # including the cache-replayed child_a/grand this session never re-executed.
     _sc_runs.clear()
     _sc_interrupt = False
     store2 = JsonFileSessionStore(
@@ -191,3 +194,40 @@ async def test_interrupt_prunes_completed_sibling_keeps_running_parent(
     # Root completed -> entire subtree pruned, only the root frame remains.
     assert all(len(e["call_stack"]) == 1 for e in store2._log_entries)
     assert set(_leaf_names(store2)) == {"sc_root"}
+
+
+# --------------------------------------------------------------------------
+# Streaming: a completed top-level stream prunes its nested descendants
+# --------------------------------------------------------------------------
+
+
+@engrave
+async def st_item(i: int) -> int:
+    return i * i
+
+
+@engrave
+async def st_stream(n: int) -> AsyncIterator[int]:
+    # Each item is produced by a nested @engrave call, so the stream has a real
+    # descendant subtree to prune once it completes.
+    for i in range(n):
+        yield await st_item(i)
+
+
+async def test_streaming_completion_prunes_descendants(
+    tmp_path, serializer: Serializer, hasher: ArgsHasher
+):
+    store = JsonFileSessionStore(
+        client=FileClient(base_dir=tmp_path, session_id="prune-stream"),
+        serializer=serializer,
+    )
+    async with Session(
+        id="prune-stream", store=store, hasher=hasher, prune_completed_descendants=True
+    ):
+        items = [x async for x in st_stream(3)]
+
+    assert items == [0, 1, 4]
+    # The stream is top-level: once it completes naturally, its nested st_item
+    # records are pruned and only the stream's own entry survives.
+    assert all(len(e["call_stack"]) == 1 for e in store._log_entries)
+    assert set(_leaf_names(store)) == {"st_stream"}

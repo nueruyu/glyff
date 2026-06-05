@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, NamedTuple
 
 from glyff import ExecutionId
@@ -79,6 +80,9 @@ class StubSessionStore(SessionStore):
         self._record("get_descendants", execution_id)
         return await self._mem_store.get_descendants(execution_id)
 
-    async def delete_execution(self, execution_id: ExecutionId) -> None:
-        self._record("delete_execution", execution_id)
-        await self._mem_store.delete_execution(execution_id)
+    async def delete_executions(
+        self, execution_ids: Iterable[ExecutionId]
+    ) -> None:
+        execution_ids = list(execution_ids)
+        self._record("delete_executions", execution_ids)
+        await self._mem_store.delete_executions(execution_ids)

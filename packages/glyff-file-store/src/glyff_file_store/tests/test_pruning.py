@@ -1,5 +1,5 @@
 """Unit tests for the file store's pruning *mechanism*: the read-only
-``get_descendants`` structural query and the single-id ``delete_execution``.
+``get_descendants`` structural query and the batched ``delete_executions``.
 Pruning *policy* (when to call these) lives in the executor and is covered by
 the scenario tests."""
 
@@ -75,7 +75,7 @@ async def test_delete_execution_removes_only_that_id_and_reindexes(store_factory
     await _complete(store, root, "root_val")
 
     tx = await store.begin_transaction()
-    await store.delete_execution(child)
+    await store.delete_executions([child])
     # Not visible until commit.
     assert (await store.get_execution_record(child, str)) is not None
     await tx.commit()
@@ -93,7 +93,7 @@ async def test_delete_execution_rolls_back(store_factory):
     await _complete(store, eid, "v")
 
     tx = await store.begin_transaction()
-    await store.delete_execution(eid)
+    await store.delete_executions([eid])
     await tx.rollback()
 
     rec = await store.get_execution_record(eid, str)
@@ -113,7 +113,7 @@ async def test_deleted_entry_excluded_from_disk(store_factory, tmp_path, seriali
     await _complete(store, child, "cv")
 
     tx = await store.begin_transaction()
-    await store.delete_execution(child)
+    await store.delete_executions([child])
     await tx.commit()
 
     reopened = JsonFileSessionStore(

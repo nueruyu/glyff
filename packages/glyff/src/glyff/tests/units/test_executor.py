@@ -105,8 +105,50 @@ async def test_completion_prunes_descendants_when_enabled(
     # child it found.
     desc_calls = mock_store.get_calls("get_descendants")
     assert any(c.args[0] == base_execution_id for c in desc_calls)
-    delete_calls = mock_store.get_calls("delete_execution")
-    assert [c.args[0] for c in delete_calls] == [child]
+    delete_calls = mock_store.get_calls("delete_executions")
+    # A single batched call deleting exactly the child descendant.
+    assert len(delete_calls) == 1
+    assert delete_calls[0].args[0] == [child]
+
+
+async def test_nested_completion_does_not_prune(
+    mock_store: StubSessionStore,
+    nested_execution_id: ExecutionId,
+    hasher,
+):
+    # Pruning only happens at top-level (parent_id is None) completions; a nested
+    # call's subtree is pruned by its top-level ancestor, so a nested completion
+    # must not scan/delete on its own.
+    from glyff.context import Context, TransactionScope
+    from glyff.sequencer import Sequencer
+
+    ctx = Context(
+        session_id="prune-nested",
+        store=mock_store,
+        sequencer=Sequencer(),
+        hasher=hasher,
+        transaction_scope_factory=lambda: TransactionScope(mock_store),
+        prune_completed_descendants=True,
+    )
+    token = set_context(ctx)
+    try:
+
+        async def sample_func():
+            return "hello"
+
+        await execute(
+            ctx=ctx,
+            execution_id=nested_execution_id,
+            func=sample_func,
+            args=(),
+            kwargs={},
+            return_type=str,
+        )
+    finally:
+        reset_context(token)
+
+    assert not mock_store.get_calls("get_descendants")
+    assert not mock_store.get_calls("delete_executions")
 
 
 async def test_completion_does_not_prune_when_disabled(
@@ -128,7 +170,7 @@ async def test_completion_does_not_prune_when_disabled(
     )
 
     assert not mock_store.get_calls("get_descendants")
-    assert not mock_store.get_calls("delete_execution")
+    assert not mock_store.get_calls("delete_executions")
 
 
 async def test_completed_task_is_skipped(

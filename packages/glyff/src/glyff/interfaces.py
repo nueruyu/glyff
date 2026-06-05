@@ -1,5 +1,6 @@
 import inspect
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from typing import Any, Callable
 
 from .models import ExecutionId, ExecutionRecord
@@ -105,13 +106,16 @@ class SessionStore(ABC):
         ...
 
     @abstractmethod
-    async def delete_execution(self, execution_id: ExecutionId) -> None:
+    async def delete_executions(
+        self, execution_ids: Iterable[ExecutionId]
+    ) -> None:
         """
-        Deletes the record(s) for exactly the given execution.
+        Deletes the record(s) for exactly the given executions.
 
         Deletion is staged within the current transaction and applied on commit
         (and discarded on rollback), mirroring how writes are staged. The store
-        only deletes the single execution it is given; it has no notion of
-        children, descendants, or pruning.
+        only deletes the executions it is given; it has no notion of children,
+        descendants, or pruning. Taking the ids as a batch lets the store stage
+        them in one pass rather than once per id.
         """
         ...

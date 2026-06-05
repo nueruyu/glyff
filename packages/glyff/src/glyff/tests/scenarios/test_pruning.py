@@ -1,5 +1,5 @@
 """End-to-end pruning against the (in-memory) scenario store, exercising the
-executor-driven policy together with the store's get_descendants/delete_execution
+executor-driven policy together with the store's get_descendants/delete_executions
 mechanism within a live session."""
 
 import pytest
