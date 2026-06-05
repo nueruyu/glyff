@@ -12,6 +12,44 @@ _KEY_PREFIX = "execution::"
 _PARTS = ("status", "result", "error")
 
 
+def _id_to_frame(id: ExecutionId) -> str:
+    return f"{id.name}#{id.sequence}:{id.args_hash}"
+
+
+def _id_to_path(id: ExecutionId) -> str:
+    """Full ancestor path (outermost → innermost) used as the unique key body.
+
+    Including the ancestry — rather than only the innermost frame — makes keys
+    globally unique (sequence numbers restart per parent) and lets descendants
+    be found by a simple path-prefix match."""
+    frames: list[str] = []
+    current: ExecutionId | None = id
+    while current is not None:
+        frames.append(_id_to_frame(current))
+        current = current.parent_id
+    frames.reverse()
+    return "/".join(frames)
+
+
+def _frame_to_id(frame: str, parent: ExecutionId | None) -> ExecutionId:
+    name, rest = frame.split("#", 1)
+    seq_str, args_hash = rest.split(":", 1)
+    return ExecutionId(
+        parent_id=parent, name=name, sequence=int(seq_str), args_hash=args_hash
+    )
+
+
+def _path_to_id(path: str) -> ExecutionId:
+    """Inverse of ``_id_to_path``: rebuild the full ExecutionId chain."""
+    parent: ExecutionId | None = None
+    eid: ExecutionId | None = None
+    for frame in path.split("/"):
+        eid = _frame_to_id(frame, parent)
+        parent = eid
+    assert eid is not None
+    return eid
+
+
 def _make_key(path: str, part: str) -> str:
     return f"{_KEY_PREFIX}{path}::{part}"
 
@@ -71,7 +109,7 @@ class MemorySessionStore(SessionStore):
         self._lock = asyncio.Lock()
 
     def _id_to_key(self, id: ExecutionId, part: str) -> str:
-        return _make_key(id.to_key(), part)
+        return _make_key(_id_to_path(id), part)
 
     async def begin_transaction(self) -> Transaction:
         return _MemoryTransaction(self._client)
@@ -108,13 +146,13 @@ class MemorySessionStore(SessionStore):
     async def get_descendants(
         self, execution_id: ExecutionId
     ) -> list[ExecutionId]:
-        prefix = execution_id.descendant_key_prefix()
+        prefix = _id_to_path(execution_id) + "/"
         paths: set[str] = set()
         for key in self._client.all_keys():
             path = _key_to_path(key)
             if path is not None and path.startswith(prefix):
                 paths.add(path)
-        return [ExecutionId.from_key(p) for p in paths]
+        return [_path_to_id(p) for p in paths]
 
     async def delete_executions(
         self, execution_ids: Iterable[ExecutionId]
