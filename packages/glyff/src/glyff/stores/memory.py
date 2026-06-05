@@ -4,11 +4,6 @@ import asyncio
 from collections.abc import Iterable
 from typing import Any
 
-from ..identity import (
-    execution_id_to_descendant_prefix,
-    execution_id_to_path,
-    path_to_execution_id,
-)
 from ..interfaces import Execution, Serializer, SessionStore, Transaction
 from ..models import ExecutionId, ExecutionRecord, ExecutionStatus
 from .memory_client import MemoryClient
@@ -76,7 +71,7 @@ class MemorySessionStore(SessionStore):
         self._lock = asyncio.Lock()
 
     def _id_to_key(self, id: ExecutionId, part: str) -> str:
-        return _make_key(execution_id_to_path(id), part)
+        return _make_key(id.to_key(), part)
 
     async def begin_transaction(self) -> Transaction:
         return _MemoryTransaction(self._client)
@@ -113,13 +108,13 @@ class MemorySessionStore(SessionStore):
     async def get_descendants(
         self, execution_id: ExecutionId
     ) -> list[ExecutionId]:
-        prefix = execution_id_to_descendant_prefix(execution_id)
+        prefix = execution_id.descendant_key_prefix()
         paths: set[str] = set()
         for key in self._client.all_keys():
             path = _key_to_path(key)
             if path is not None and path.startswith(prefix):
                 paths.add(path)
-        return [path_to_execution_id(p) for p in paths]
+        return [ExecutionId.from_key(p) for p in paths]
 
     async def delete_executions(
         self, execution_ids: Iterable[ExecutionId]

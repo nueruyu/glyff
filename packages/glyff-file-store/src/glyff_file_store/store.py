@@ -8,13 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypedDict
 
-from glyff.identity import (
-    execution_id_to_descendant_prefix,
-    execution_id_to_frames,
-    execution_id_to_path,
-    frames_to_execution_id,
-    frames_to_path,
-)
 from glyff.interfaces import Execution, Serializer, SessionStore, Transaction
 from glyff.models import ExecutionId, ExecutionRecord, ExecutionStatus
 
@@ -133,26 +126,28 @@ class JsonFileSessionStore(SessionStore):
     # Id / call-stack helpers
     # ------------------------------------------------------------------
 
-    # A persisted ``call_stack`` is exactly the frame list of ``identity``: the
-    # ExecutionId chain encoded outermost → innermost. These thin wrappers keep
-    # the store's call sites readable while the encoding lives in one module.
+    # A persisted ``call_stack`` is exactly an ExecutionId's frame list (the
+    # chain encoded outermost → innermost). The frame/key encoding lives on
+    # ExecutionId; these thin wrappers keep the store's call sites readable.
 
     def _id_to_callstack(self, execution_id: ExecutionId) -> list[str]:
         """Convert an ExecutionId to a call stack list (outermost → innermost)."""
-        return execution_id_to_frames(execution_id)
+        return execution_id.to_frames()
 
     def _id_to_key(self, execution_id: ExecutionId) -> str:
         """Convert an ExecutionId to a stable, unique string key."""
-        return execution_id_to_path(execution_id)
+        return execution_id.to_key()
 
     @staticmethod
     def _callstack_to_key(call_stack: list[str]) -> str:
-        return frames_to_path(call_stack)
+        # A call stack is already a list of encoded frames; the key is just
+        # those frames joined the same way ExecutionId.to_key joins them.
+        return "/".join(call_stack)
 
     @staticmethod
     def _callstack_to_id(call_stack: list[str]) -> ExecutionId:
         """Rebuild the full ExecutionId chain from a persisted call stack."""
-        return frames_to_execution_id(call_stack)
+        return ExecutionId.from_frames(call_stack)
 
     # ------------------------------------------------------------------
     # Loading and in-memory state
@@ -300,7 +295,7 @@ class JsonFileSessionStore(SessionStore):
     async def get_descendants(
         self, execution_id: ExecutionId
     ) -> list[ExecutionId]:
-        prefix = execution_id_to_descendant_prefix(execution_id)
+        prefix = execution_id.descendant_key_prefix()
         async with self._lock:
             all_entries = self._log_entries + self._staged_log_entries
             deleted = self._staged_delete_keys
