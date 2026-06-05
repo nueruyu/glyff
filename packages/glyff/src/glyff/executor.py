@@ -8,6 +8,21 @@ from .exceptions import ExecutionFailedError, YieldException
 from .models import ExecutionId, ExecutionStatus
 
 
+async def _prune_descendants(ctx: Context, execution_id: ExecutionId) -> None:
+    """Once a task has completed, its descendants can never be reached on replay
+    (the completed parent short-circuits to its cached result). When enabled,
+    detect those now-unreachable descendants and ask the store to delete them.
+
+    Detection (policy) lives here; the store only answers a structural query and
+    deletes the single ids it is handed. Runs inside the caller's transaction
+    scope so deletions commit (or roll back) atomically with the completion."""
+    if not ctx.prune_completed_descendants:
+        return
+    store = ctx.store
+    for descendant in await store.get_descendants(execution_id):
+        await store.delete_execution(descendant)
+
+
 async def execute(
     ctx: Context,
     execution_id: ExecutionId,
@@ -47,6 +62,7 @@ async def execute(
         try:
             result = await func(*args, **kwargs)
             await execution.complete(result, return_type)
+            await _prune_descendants(ctx, execution_id)
             return result
         except YieldException:
             # Interruption is a graceful exit; don't stage failure.
@@ -182,6 +198,7 @@ async def execute_stream(
         async with ctx.get_transaction_scope():
             execution = await store.start_execution(execution_id)
             await execution.complete(collected, list_type)
+            await _prune_descendants(ctx, execution_id)
     finally:
         # Interruption (YieldException), early break / aclose (GeneratorExit) and
         # consumer-thrown exceptions all leave without recording: the partial

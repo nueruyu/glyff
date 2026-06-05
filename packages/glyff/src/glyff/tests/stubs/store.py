@@ -72,3 +72,13 @@ class StubSessionStore(SessionStore):
     ) -> ExecutionRecord | None:
         self._record("get_execution_record", execution_id, return_type)
         return await self._mem_store.get_execution_record(execution_id, return_type)
+
+    async def get_descendants(
+        self, execution_id: ExecutionId
+    ) -> list[ExecutionId]:
+        self._record("get_descendants", execution_id)
+        return await self._mem_store.get_descendants(execution_id)
+
+    async def delete_execution(self, execution_id: ExecutionId) -> None:
+        self._record("delete_execution", execution_id)
+        await self._mem_store.delete_execution(execution_id)

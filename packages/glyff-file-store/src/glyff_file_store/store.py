@@ -117,6 +117,8 @@ class JsonFileSessionStore(SessionStore):
         self._latest_index: dict[str, int] = {}
         # Entries staged by the current transaction, not yet committed.
         self._staged_log_entries: list[LogEntry] = []
+        # Keys whose entries the current transaction should drop on commit.
+        self._staged_delete_keys: set[str] = set()
         self._load_executions()
 
     # ------------------------------------------------------------------
@@ -145,6 +147,29 @@ class JsonFileSessionStore(SessionStore):
     @staticmethod
     def _callstack_to_key(call_stack: list[str]) -> str:
         return "/".join(call_stack)
+
+    @staticmethod
+    def _callstack_to_id(call_stack: list[str]) -> ExecutionId:
+        """Rebuild the full ExecutionId chain from a persisted call stack.
+
+        Inverse of ``_id_to_callstack``: each frame is ``name#sequence:args_hash``
+        (args_hash is a hex digest, so the first ``#`` and ``:`` are unambiguous
+        separators), and frames run outermost → innermost."""
+        parent: ExecutionId | None = None
+        eid: ExecutionId | None = None
+        for frame in call_stack:
+            name, rest = frame.split("#", 1)
+            seq_str, args_hash = rest.split(":", 1)
+            eid = ExecutionId(
+                parent_id=parent,
+                name=name,
+                sequence=int(seq_str),
+                args_hash=args_hash,
+            )
+            parent = eid
+        if eid is None:
+            raise ValueError("Cannot rebuild an ExecutionId from an empty call stack")
+        return eid
 
     # ------------------------------------------------------------------
     # Loading and in-memory state
@@ -188,23 +213,48 @@ class JsonFileSessionStore(SessionStore):
     # Staging and commit
     # ------------------------------------------------------------------
 
+    def _compute_committed_entries(self) -> list[LogEntry]:
+        """The entry list that this transaction will commit: committed plus
+        staged additions, minus any entries staged for deletion. Caller must
+        hold ``self._lock``. The same computation backs both the on-disk write
+        and the in-memory state so the two never diverge."""
+        all_entries = self._log_entries + self._staged_log_entries
+        if not self._staged_delete_keys:
+            return all_entries
+        deleted = self._staged_delete_keys
+        return [
+            e
+            for e in all_entries
+            if self._callstack_to_key(e["call_stack"]) not in deleted
+        ]
+
     async def _on_write(self) -> bytes:
         """Produce the new on-disk content from in-memory state. Called by
         FileClient at commit time."""
         async with self._lock:
-            all_entries = self._log_entries + self._staged_log_entries
+            all_entries = self._compute_committed_entries()
         return json.dumps(all_entries, indent=2, sort_keys=True).encode("utf-8")
 
     async def _on_transaction_commit(self) -> None:
         async with self._lock:
-            start_index = len(self._log_entries)
-            self._log_entries.extend(self._staged_log_entries)
-            self._index_new_entries(start_index=start_index)
-            self._staged_log_entries.clear()
+            if self._staged_delete_keys:
+                # Deletions remove entries from the middle of the list, breaking
+                # the positional-index invariant, so rebuild the index in full.
+                self._log_entries = self._compute_committed_entries()
+                self._staged_log_entries.clear()
+                self._staged_delete_keys.clear()
+                self._latest_index.clear()
+                self._index_new_entries(start_index=0)
+            else:
+                start_index = len(self._log_entries)
+                self._log_entries.extend(self._staged_log_entries)
+                self._index_new_entries(start_index=start_index)
+                self._staged_log_entries.clear()
 
     async def _on_transaction_rollback(self) -> None:
         async with self._lock:
             self._staged_log_entries.clear()
+            self._staged_delete_keys.clear()
 
     async def _add_log_entry(self, entry: LogEntry):
         # Append under the store lock, then call stage_write outside the
@@ -263,3 +313,25 @@ class JsonFileSessionStore(SessionStore):
         elif status == ExecutionStatus.FAILED:
             error = entry["error"] or ""
         return ExecutionRecord(status=status, result=result, error=error)
+
+    async def get_descendants(
+        self, execution_id: ExecutionId
+    ) -> list[ExecutionId]:
+        prefix = self._id_to_key(execution_id) + "/"
+        async with self._lock:
+            all_entries = self._log_entries + self._staged_log_entries
+            deleted = self._staged_delete_keys
+            keys: dict[str, list[str]] = {}
+            for entry in all_entries:
+                key = self._callstack_to_key(entry["call_stack"])
+                if key.startswith(prefix) and key not in deleted:
+                    keys.setdefault(key, entry["call_stack"])
+        return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
+
+    async def delete_execution(self, execution_id: ExecutionId) -> None:
+        key = self._id_to_key(execution_id)
+        async with self._lock:
+            self._staged_delete_keys.add(key)
+        # Register the write outside the store lock (mirrors _add_log_entry) so
+        # commit rewrites executions.json even if no entry was staged this txn.
+        await self._client.stage_write(self._executions_path, self._on_write)

@@ -59,6 +59,78 @@ async def test_successful_execution(
     assert len(mock_store.get_calls("commit")) == 1
 
 
+async def test_completion_prunes_descendants_when_enabled(
+    mock_store: StubSessionStore,
+    base_execution_id: ExecutionId,
+    hasher,
+):
+    # A context with pruning turned on.
+    from glyff.context import Context, TransactionScope
+    from glyff.sequencer import Sequencer
+
+    ctx = Context(
+        session_id="prune-on",
+        store=mock_store,
+        sequencer=Sequencer(),
+        hasher=hasher,
+        transaction_scope_factory=lambda: TransactionScope(mock_store),
+        prune_completed_descendants=True,
+    )
+    token = set_context(ctx)
+    try:
+        child = ExecutionId(
+            parent_id=base_execution_id, name="child", sequence=0, args_hash="c"
+        )
+
+        async def sample_func():
+            # Record the child so it becomes a real descendant in the store.
+            async with ctx.get_transaction_scope():
+                execution = await mock_store.start_execution(child)
+                await execution.complete("child", str)
+            return "hello"
+
+        result = await execute(
+            ctx=ctx,
+            execution_id=base_execution_id,
+            func=sample_func,
+            args=(),
+            kwargs={},
+            return_type=str,
+        )
+    finally:
+        reset_context(token)
+
+    assert result == "hello"
+    # The executor asked the store for the parent's descendants and deleted the
+    # child it found.
+    desc_calls = mock_store.get_calls("get_descendants")
+    assert any(c.args[0] == base_execution_id for c in desc_calls)
+    delete_calls = mock_store.get_calls("delete_execution")
+    assert [c.args[0] for c in delete_calls] == [child]
+
+
+async def test_completion_does_not_prune_when_disabled(
+    mock_store: StubSessionStore,
+    base_execution_id: ExecutionId,
+    test_context: Context,
+):
+    # Default test_context has pruning disabled.
+    async def sample_func():
+        return "hello"
+
+    await execute(
+        ctx=test_context,
+        execution_id=base_execution_id,
+        func=sample_func,
+        args=(),
+        kwargs={},
+        return_type=str,
+    )
+
+    assert not mock_store.get_calls("get_descendants")
+    assert not mock_store.get_calls("delete_execution")
+
+
 async def test_completed_task_is_skipped(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,

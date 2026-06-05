@@ -90,3 +90,28 @@ class SessionStore(ABC):
         The result, if any, is deserialized to the given type.
         """
         ...
+
+    @abstractmethod
+    async def get_descendants(
+        self, execution_id: ExecutionId
+    ) -> list[ExecutionId]:
+        """
+        Returns the ExecutionIds that are *strict* descendants of the given one,
+        based on the records currently held by this store.
+
+        This is a read-only structural query over the store's own data; it
+        carries no pruning policy. Callers decide what to do with the result.
+        """
+        ...
+
+    @abstractmethod
+    async def delete_execution(self, execution_id: ExecutionId) -> None:
+        """
+        Deletes the record(s) for exactly the given execution.
+
+        Deletion is staged within the current transaction and applied on commit
+        (and discarded on rollback), mirroring how writes are staged. The store
+        only deletes the single execution it is given; it has no notion of
+        children, descendants, or pruning.
+        """
+        ...

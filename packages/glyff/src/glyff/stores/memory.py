@@ -7,6 +7,59 @@ from ..interfaces import Execution, Serializer, SessionStore, Transaction
 from ..models import ExecutionId, ExecutionRecord, ExecutionStatus
 from .memory_client import MemoryClient
 
+_KEY_PREFIX = "execution::"
+_PARTS = ("status", "result", "error")
+
+
+def _id_to_frame(id: ExecutionId) -> str:
+    return f"{id.name}#{id.sequence}:{id.args_hash}"
+
+
+def _id_to_path(id: ExecutionId) -> str:
+    """Full ancestor path (outermost → innermost) used as the unique key body.
+
+    Including the ancestry — rather than only the innermost frame — makes keys
+    globally unique (sequence numbers restart per parent) and lets descendants
+    be found by a simple path-prefix match."""
+    frames: list[str] = []
+    current: ExecutionId | None = id
+    while current is not None:
+        frames.append(_id_to_frame(current))
+        current = current.parent_id
+    frames.reverse()
+    return "/".join(frames)
+
+
+def _frame_to_id(frame: str, parent: ExecutionId | None) -> ExecutionId:
+    name, rest = frame.split("#", 1)
+    seq_str, args_hash = rest.split(":", 1)
+    return ExecutionId(
+        parent_id=parent, name=name, sequence=int(seq_str), args_hash=args_hash
+    )
+
+
+def _path_to_id(path: str) -> ExecutionId:
+    """Inverse of ``_id_to_path``: rebuild the full ExecutionId chain."""
+    parent: ExecutionId | None = None
+    eid: ExecutionId | None = None
+    for frame in path.split("/"):
+        eid = _frame_to_id(frame, parent)
+        parent = eid
+    assert eid is not None
+    return eid
+
+
+def _make_key(path: str, part: str) -> str:
+    return f"{_KEY_PREFIX}{path}::{part}"
+
+
+def _key_to_path(key: str) -> str | None:
+    """Extract the path body from a full key, or None if not an execution key."""
+    if not key.startswith(_KEY_PREFIX):
+        return None
+    body, _, _ = key[len(_KEY_PREFIX) :].rpartition("::")
+    return body or None
+
 
 class _MemoryTransaction(Transaction):
     def __init__(self, client: MemoryClient):
@@ -24,23 +77,22 @@ class _MemoryExecution(Execution):
         self._store = store
         self._id = execution_id
 
-    def _id_to_key(self, id: ExecutionId, part: str) -> str:
-        return f"execution::{id.name}#{id.sequence}:{id.args_hash}::{part}"
-
     async def complete(self, value: Any, return_type: type) -> None:
         self._store._client.stage_write(
-            self._id_to_key(self._id, "status"), ExecutionStatus.COMPLETED
+            self._store._id_to_key(self._id, "status"), ExecutionStatus.COMPLETED
         )
         self._store._client.stage_write(
-            self._id_to_key(self._id, "result"),
+            self._store._id_to_key(self._id, "result"),
             self._store._serializer.serialize(value, return_type),
         )
 
     async def fail(self, error: str) -> None:
         self._store._client.stage_write(
-            self._id_to_key(self._id, "status"), ExecutionStatus.FAILED
+            self._store._id_to_key(self._id, "status"), ExecutionStatus.FAILED
         )
-        self._store._client.stage_write(self._id_to_key(self._id, "error"), error)
+        self._store._client.stage_write(
+            self._store._id_to_key(self._id, "error"), error
+        )
 
 
 class MemorySessionStore(SessionStore):
@@ -56,7 +108,7 @@ class MemorySessionStore(SessionStore):
         self._lock = asyncio.Lock()
 
     def _id_to_key(self, id: ExecutionId, part: str) -> str:
-        return f"execution::{id.name}#{id.sequence}:{id.args_hash}::{part}"
+        return _make_key(_id_to_path(id), part)
 
     async def begin_transaction(self) -> Transaction:
         return _MemoryTransaction(self._client)
@@ -89,3 +141,18 @@ class MemorySessionStore(SessionStore):
             error = await self._client.read(self._id_to_key(execution_id, "error"))
 
         return ExecutionRecord(status=status, result=result, error=error)
+
+    async def get_descendants(
+        self, execution_id: ExecutionId
+    ) -> list[ExecutionId]:
+        prefix = _id_to_path(execution_id) + "/"
+        paths: set[str] = set()
+        for key in self._client.all_keys():
+            path = _key_to_path(key)
+            if path is not None and path.startswith(prefix):
+                paths.add(path)
+        return [_path_to_id(p) for p in paths]
+
+    async def delete_execution(self, execution_id: ExecutionId) -> None:
+        for part in _PARTS:
+            self._client.stage_delete(self._id_to_key(execution_id, part))
