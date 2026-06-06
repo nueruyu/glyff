@@ -102,12 +102,8 @@ is handed (in one batched `delete_executions` call), so the policy applies
 uniformly across stores. Replay and resume are unaffected — only records that
 can no longer be reached are removed.
 
-Pruning fires when a *top-level* call completes, deleting its whole subtree in
-a single pass. A nested call's descendants are a subset of its top-level
-ancestor's, so they are pruned together when that ancestor completes rather than
-re-scanned at every level. The one visible effect: if a session is interrupted
-while the top-level call is still running, descendants of an already-completed
-nested call are kept until the top-level call completes on a later resume.
+Pruning fires at every completion, so a completed nested call's descendants are
+removed immediately rather than lingering until the top-level call finishes.
 
 ## Streaming
 

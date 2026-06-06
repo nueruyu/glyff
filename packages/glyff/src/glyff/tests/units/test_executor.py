@@ -111,14 +111,14 @@ async def test_completion_prunes_descendants_when_enabled(
     assert delete_calls[0].args[0] == [child]
 
 
-async def test_nested_completion_does_not_prune(
+async def test_nested_completion_prunes(
     mock_store: StubSessionStore,
     nested_execution_id: ExecutionId,
     hasher,
 ):
-    # Pruning only happens at top-level (parent_id is None) completions; a nested
-    # call's subtree is pruned by its top-level ancestor, so a nested completion
-    # must not scan/delete on its own.
+    # Pruning fires at every completion, including nested ones: a completed
+    # nested call scans for its own descendants right away rather than waiting
+    # for its top-level ancestor to finish.
     from glyff.context import Context, TransactionScope
     from glyff.sequencer import Sequencer
 
@@ -147,7 +147,10 @@ async def test_nested_completion_does_not_prune(
     finally:
         reset_context(token)
 
-    assert not mock_store.get_calls("get_descendants")
+    # The nested completion scanned for its own descendants...
+    desc_calls = mock_store.get_calls("get_descendants")
+    assert any(c.args[0] == nested_execution_id for c in desc_calls)
+    # ...but found none here, so nothing was deleted.
     assert not mock_store.get_calls("delete_executions")
 
 

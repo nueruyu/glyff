@@ -148,16 +148,15 @@ async def sc_root() -> str:
     return f"{a}/{b}"
 
 
-async def test_interrupt_defers_pruning_until_root_completes(
+async def test_nested_completion_prunes_mid_session(
     tmp_path, serializer: Serializer, hasher: ArgsHasher
 ):
     global _sc_interrupt
     sid = "prune-interrupt"
 
-    # Run 1: child_a (and its grandchild) complete, but child_a is a *nested*
-    # call, so pruning is deferred to its top-level ancestor. The root is
-    # interrupted in child_b and never completes, so nothing is pruned yet —
-    # the whole partial history (including sc_grand) is retained.
+    # Run 1: child_a completes mid-session and prunes its grandchild right away,
+    # even though the root is still running and is then interrupted in child_b.
+    # So sc_grand is already gone; child_a/child_b/root frames remain.
     _sc_interrupt = True
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
@@ -170,9 +169,9 @@ async def test_interrupt_defers_pruning_until_root_completes(
 
     names = _leaf_names(store)
     assert "sc_root" in names  # STARTED, retained
-    assert "sc_child_a" in names  # COMPLETED, retained (nested: prune deferred)
+    assert "sc_child_a" in names  # COMPLETED, retained
     assert "sc_child_b" in names  # STARTED, retained
-    assert "sc_grand" in names  # retained until the root completes
+    assert "sc_grand" not in names  # pruned the moment child_a completed
 
     # Run 2: resume. child_a is replayed from cache (never re-run), child_b
     # finishes, the root completes -> the root's descendants are pruned,

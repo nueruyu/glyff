@@ -13,19 +13,13 @@ async def _prune_descendants(ctx: Context, execution_id: ExecutionId) -> None:
     (the completed parent short-circuits to its cached result). When enabled,
     detect those now-unreachable descendants and ask the store to delete them.
 
-    We only prune at *top-level* completions (``parent_id is None``). A nested
-    completion's descendants are a subset of its top-level ancestor's, so
-    pruning per node would re-scan the same history repeatedly (O(N²) for a deep
-    tree); pruning once when the outermost call completes deletes the whole
-    subtree in a single pass and yields an identical committed result on a
-    successful run. Trade-off: if a session is interrupted while the top-level
-    call is still running, descendants of a completed *nested* call linger until
-    that top-level call completes on a later resume (where this prune fires).
+    This fires at every completion, so a completed nested call's descendants are
+    pruned immediately rather than lingering until the top-level call finishes.
 
     Detection (policy) lives here; the store only answers a structural query and
     deletes the ids it is handed. Runs inside the caller's transaction scope so
     deletions commit (or roll back) atomically with the completion."""
-    if not ctx.prune_completed_descendants or execution_id.parent_id is not None:
+    if not ctx.prune_completed_descendants:
         return
     descendants = await ctx.store.get_descendants(execution_id)
     if descendants:
