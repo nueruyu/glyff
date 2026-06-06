@@ -145,9 +145,7 @@ class MemorySessionStore(SessionStore):
 
         return ExecutionRecord(status=status, result=result, error=error)
 
-    async def get_descendants(
-        self, execution_id: ExecutionId
-    ) -> list[ExecutionId]:
+    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         prefix = _id_to_path(execution_id) + "/"
         paths: set[str] = set()
         for key in self._client.all_keys():
@@ -156,9 +154,7 @@ class MemorySessionStore(SessionStore):
                 paths.add(path)
         return [_path_to_id(p) for p in paths]
 
-    async def delete_executions(
-        self, execution_ids: Iterable[ExecutionId]
-    ) -> None:
+    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
         for execution_id in execution_ids:
             for part in _PARTS:
                 self._client.stage_delete(self._id_to_key(execution_id, part))

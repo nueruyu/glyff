@@ -13,7 +13,9 @@ def _child(parent, name, seq=0, h="h0") -> ExecutionId:
     return ExecutionId(parent_id=parent, name=name, sequence=seq, args_hash=h)
 
 
-async def _complete(store: MemorySessionStore, eid: ExecutionId, value, rtype=str) -> None:
+async def _complete(
+    store: MemorySessionStore, eid: ExecutionId, value, rtype=str
+) -> None:
     tx = await store.begin_transaction()
     ex = await store.start_execution(eid)
     await ex.complete(value, rtype)

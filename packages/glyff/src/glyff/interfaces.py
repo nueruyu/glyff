@@ -93,9 +93,7 @@ class SessionStore(ABC):
         ...
 
     @abstractmethod
-    async def get_descendants(
-        self, execution_id: ExecutionId
-    ) -> list[ExecutionId]:
+    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         """
         Returns the ExecutionIds that are *strict* descendants of the given one,
         based on the records currently held by this store.
@@ -106,9 +104,7 @@ class SessionStore(ABC):
         ...
 
     @abstractmethod
-    async def delete_executions(
-        self, execution_ids: Iterable[ExecutionId]
-    ) -> None:
+    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
         """
         Deletes the record(s) for exactly the given executions.
 

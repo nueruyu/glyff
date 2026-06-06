@@ -9,18 +9,24 @@ from glyff.models import ExecutionStatus
 from glyff_file_store import JsonFileSessionStore
 
 
-def _child(parent: ExecutionId | None, name: str, seq: int = 0, h: str = "h0") -> ExecutionId:
+def _child(
+    parent: ExecutionId | None, name: str, seq: int = 0, h: str = "h0"
+) -> ExecutionId:
     return ExecutionId(parent_id=parent, name=name, sequence=seq, args_hash=h)
 
 
-async def _complete(store: JsonFileSessionStore, eid: ExecutionId, value, rtype=str) -> None:
+async def _complete(
+    store: JsonFileSessionStore, eid: ExecutionId, value, rtype=str
+) -> None:
     tx = await store.begin_transaction()
     ex = await store.start_execution(eid)
     await ex.complete(value, rtype)
     await tx.commit()
 
 
-async def _fail(store: JsonFileSessionStore, eid: ExecutionId, error: str = "boom") -> None:
+async def _fail(
+    store: JsonFileSessionStore, eid: ExecutionId, error: str = "boom"
+) -> None:
     tx = await store.begin_transaction()
     ex = await store.start_execution(eid)
     await ex.fail(error)

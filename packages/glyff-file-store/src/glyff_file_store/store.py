@@ -319,9 +319,7 @@ class JsonFileSessionStore(SessionStore):
             error = entry["error"] or ""
         return ExecutionRecord(status=status, result=result, error=error)
 
-    async def get_descendants(
-        self, execution_id: ExecutionId
-    ) -> list[ExecutionId]:
+    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         prefix = self._id_to_key(execution_id) + "/"
         async with self._lock:
             all_entries = self._log_entries + self._staged_log_entries
@@ -333,9 +331,7 @@ class JsonFileSessionStore(SessionStore):
                     keys.setdefault(key, entry["call_stack"])
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
 
-    async def delete_executions(
-        self, execution_ids: Iterable[ExecutionId]
-    ) -> None:
+    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
         keys = [self._id_to_key(execution_id) for execution_id in execution_ids]
         if not keys:
             return

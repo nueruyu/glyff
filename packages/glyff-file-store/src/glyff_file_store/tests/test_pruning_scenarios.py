@@ -49,7 +49,9 @@ async def pr_root() -> int:
     return await pr_mid(0) + await pr_mid(10)
 
 
-async def test_fresh_run_prunes_whole_subtree(tmp_path, serializer: Serializer, hasher: ArgsHasher):
+async def test_fresh_run_prunes_whole_subtree(
+    tmp_path, serializer: Serializer, hasher: ArgsHasher
+):
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id="prune-fresh"),
         serializer=serializer,
@@ -67,7 +69,9 @@ async def test_fresh_run_prunes_whole_subtree(tmp_path, serializer: Serializer, 
     assert set(_leaf_names(store)) == {"pr_root"}
 
 
-async def test_disabled_flag_retains_descendants(tmp_path, serializer: Serializer, hasher: ArgsHasher):
+async def test_disabled_flag_retains_descendants(
+    tmp_path, serializer: Serializer, hasher: ArgsHasher
+):
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id="prune-off"),
         serializer=serializer,
@@ -80,19 +84,25 @@ async def test_disabled_flag_retains_descendants(tmp_path, serializer: Serialize
     assert "pr_leaf" in _leaf_names(store)
 
 
-async def test_replay_after_prune_is_correct(tmp_path, serializer: Serializer, hasher: ArgsHasher):
+async def test_replay_after_prune_is_correct(
+    tmp_path, serializer: Serializer, hasher: ArgsHasher
+):
     sid = "prune-replay"
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
     )
-    async with Session(id=sid, store=store, hasher=hasher, prune_completed_descendants=True):
+    async with Session(
+        id=sid, store=store, hasher=hasher, prune_completed_descendants=True
+    ):
         first = await pr_root()
 
     _runs.clear()
     store2 = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
     )
-    async with Session(id=sid, store=store2, hasher=hasher, prune_completed_descendants=True):
+    async with Session(
+        id=sid, store=store2, hasher=hasher, prune_completed_descendants=True
+    ):
         second = await pr_root()
 
     # Root replays from its own completed record; the pruned children are never

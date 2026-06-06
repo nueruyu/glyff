@@ -79,15 +79,11 @@ class StubSessionStore(SessionStore):
         self._record("get_execution_record", execution_id, return_type)
         return await self._mem_store.get_execution_record(execution_id, return_type)
 
-    async def get_descendants(
-        self, execution_id: ExecutionId
-    ) -> list[ExecutionId]:
+    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         self._record("get_descendants", execution_id)
         return await self._mem_store.get_descendants(execution_id)
 
-    async def delete_executions(
-        self, execution_ids: Iterable[ExecutionId]
-    ) -> None:
+    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
         execution_ids = list(execution_ids)
         self._record("delete_executions", execution_ids)
         await self._mem_store.delete_executions(execution_ids)
