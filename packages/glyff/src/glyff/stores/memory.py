@@ -74,26 +74,28 @@ class _MemoryTransaction(Transaction):
 
 
 class _MemoryExecution(Execution):
-    def __init__(self, store: MemorySessionStore, execution_id: ExecutionId):
-        self._store = store
+    def __init__(
+        self,
+        client: MemoryClient,
+        serializer: Serializer,
+        execution_id: ExecutionId,
+    ):
+        self._client = client
+        self._serializer = serializer
         self._id = execution_id
 
     async def complete(self, value: Any, return_type: type) -> None:
-        self._store._client.stage_write(
-            self._store._id_to_key(self._id, "status"), ExecutionStatus.COMPLETED
-        )
-        self._store._client.stage_write(
-            self._store._id_to_key(self._id, "result"),
-            self._store._serializer.serialize(value, return_type),
+        path = _id_to_path(self._id)
+        self._client.stage_write(_make_key(path, "status"), ExecutionStatus.COMPLETED)
+        self._client.stage_write(
+            _make_key(path, "result"),
+            self._serializer.serialize(value, return_type),
         )
 
     async def fail(self, error: str) -> None:
-        self._store._client.stage_write(
-            self._store._id_to_key(self._id, "status"), ExecutionStatus.FAILED
-        )
-        self._store._client.stage_write(
-            self._store._id_to_key(self._id, "error"), error
-        )
+        path = _id_to_path(self._id)
+        self._client.stage_write(_make_key(path, "status"), ExecutionStatus.FAILED)
+        self._client.stage_write(_make_key(path, "error"), error)
 
 
 class MemorySessionStore(SessionStore):
@@ -118,7 +120,7 @@ class MemorySessionStore(SessionStore):
         status_key = self._id_to_key(execution_id, "status")
         if await self._client.read(status_key) is None:
             self._client.stage_write(status_key, ExecutionStatus.STARTED)
-        return _MemoryExecution(self, execution_id)
+        return _MemoryExecution(self._client, self._serializer, execution_id)
 
     async def get_execution_record(
         self, execution_id: ExecutionId, return_type: type

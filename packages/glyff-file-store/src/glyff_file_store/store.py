@@ -59,13 +59,13 @@ class _FileTransaction(Transaction):
 class _FileExecution(Execution):
     def __init__(
         self,
-        store: JsonFileSessionStore,
-        execution_id: ExecutionId,
+        call_stack: list[str],
         serializer: Serializer,
+        append_entry: Callable[[LogEntry], Awaitable[None]],
     ):
-        self._store = store
-        self._id = execution_id
+        self._call_stack = call_stack
         self._serializer = serializer
+        self._append_entry = append_entry
 
     def _create_log_entry(
         self,
@@ -76,7 +76,7 @@ class _FileExecution(Execution):
         return LogEntry(
             timestamp=datetime.now(timezone.utc).isoformat(),
             event_type=_STATUS_TO_EVENT_TYPE[status],
-            call_stack=self._store._id_to_callstack(self._id),
+            call_stack=self._call_stack,
             result=result,
             error=error,
         )
@@ -87,11 +87,11 @@ class _FileExecution(Execution):
         entry = self._create_log_entry(
             ExecutionStatus.COMPLETED, result=persistable_result
         )
-        await self._store._add_log_entry(entry)
+        await self._append_entry(entry)
 
     async def fail(self, error: str) -> None:
         entry = self._create_log_entry(ExecutionStatus.FAILED, error=error)
-        await self._store._add_log_entry(entry)
+        await self._append_entry(entry)
 
 
 class JsonFileSessionStore(SessionStore):
@@ -290,7 +290,11 @@ class JsonFileSessionStore(SessionStore):
                 error=None,
             )
             await self._add_log_entry(entry)
-        return _FileExecution(self, execution_id, self._serializer)
+        return _FileExecution(
+            call_stack=self._id_to_callstack(execution_id),
+            serializer=self._serializer,
+            append_entry=self._add_log_entry,
+        )
 
     async def get_execution_record(
         self, execution_id: ExecutionId, return_type: type
