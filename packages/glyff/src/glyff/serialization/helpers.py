@@ -5,6 +5,7 @@ import json
 from typing import Any, Callable
 
 from ..exceptions import UnserializableArgumentError
+from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
 
 def _qualified_name(obj: Any) -> str:
@@ -28,6 +29,22 @@ def default_to_jsonable(obj: Any) -> Any:
     if converted is not obj:
         return converted
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+
+def stable_json_dumps(data: Any, default: Callable[[Any], Any] | None = None) -> str:
+    """Creates a stable, compact JSON string from arbitrary data."""
+    try:
+        return json.dumps(
+            data,
+            sort_keys=True,
+            default=default or default_to_jsonable,
+            separators=JSON_SEPARATORS,
+        )
+    except TypeError as e:
+        raise UnserializableArgumentError(
+            "Value could not be serialized to JSON for hashing. "
+            f"Ensure all components are JSON-serializable. Original error: {e}"
+        ) from e
 
 
 def build_hashable_args(
@@ -58,10 +75,8 @@ def build_hashable_args(
 def hash_from_dict(d: dict, func_name: str) -> str:
     """Creates a stable SHA256 hash from a dictionary."""
     try:
-        stable_repr = json.dumps(
-            d, sort_keys=True, default=default_to_jsonable, separators=(",", ":")
-        )
-    except TypeError as e:
+        stable_repr = stable_json_dumps(d)
+    except UnserializableArgumentError as e:
         raise UnserializableArgumentError(
             f"Arguments to '{func_name}' could not be serialized to JSON. "
             f"Ensure all arguments are JSON-serializable or handled by a custom "
@@ -69,5 +84,5 @@ def hash_from_dict(d: dict, func_name: str) -> str:
         ) from e
 
     hasher = hashlib.sha256()
-    hasher.update(stable_repr.encode("utf-8"))
+    hasher.update(stable_repr.encode(DEFAULT_ENCODING))
     return hasher.hexdigest()

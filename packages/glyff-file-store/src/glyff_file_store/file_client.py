@@ -42,6 +42,8 @@ class FileClient:
     """
 
     def __init__(self, base_dir: str | Path, session_id: str):
+        if any(c in session_id for c in ("/", "\\", "..")):
+            raise ValueError("session_id cannot contain path traversal elements.")
         self._session_path = Path(base_dir) / session_id
         self._recover_crashed_commit_sync()
         self._session_path.mkdir(parents=True, exist_ok=True)
@@ -205,7 +207,7 @@ class FileClient:
         try:
             self._populate_temp_dir_sync(temp_dir, resolved_writes, staged_deletes)
             self._swap_temp_into_place_sync(temp_dir)
-        except BaseException:
+        except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)
             raise
 

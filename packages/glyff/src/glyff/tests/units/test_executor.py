@@ -4,9 +4,11 @@ import pytest
 
 from glyff.context import Context, TransactionScope, reset_context, set_context
 from glyff.exceptions import ExecutionFailedError, YieldException
+from glyff.execution_path import execution_id_to_path
 from glyff.executor import execute, execute_stream
 from glyff.interfaces import Serializer
 from glyff.models import ExecutionId, ExecutionStatus
+from glyff.stores.memory import _make_key
 from glyff.tests.stubs.store import StubSessionStore
 
 
@@ -191,12 +193,12 @@ async def test_completed_task_is_skipped(
     test_context.sequencer.reset_for_call = AsyncMock()
 
     # Setup the internal memory store to return a completed state
-    key_prefix = f"execution::{base_execution_id.name}#{base_execution_id.sequence}:{base_execution_id.args_hash}"
-    mock_store._mem_store._client.data[f"{key_prefix}::status"] = (
+    path = execution_id_to_path(base_execution_id)
+    mock_store._mem_store._client.data[_make_key(path, "status")] = (
         ExecutionStatus.COMPLETED
     )
-    mock_store._mem_store._client.data[f"{key_prefix}::result"] = serializer.serialize(
-        "cached_result", str
+    mock_store._mem_store._client.data[_make_key(path, "result")] = (
+        await serializer.serialize("cached_result", str)
     )
 
     result = await execute(
@@ -227,9 +229,11 @@ async def test_failed_task_raises_error(
         executed = True
 
     # Setup the internal memory store to return a failed state
-    key_prefix = f"execution::{base_execution_id.name}#{base_execution_id.sequence}:{base_execution_id.args_hash}"
-    mock_store._mem_store._client.data[f"{key_prefix}::status"] = ExecutionStatus.FAILED
-    mock_store._mem_store._client.data[f"{key_prefix}::error"] = "it broke"
+    path = execution_id_to_path(base_execution_id)
+    mock_store._mem_store._client.data[_make_key(path, "status")] = (
+        ExecutionStatus.FAILED
+    )
+    mock_store._mem_store._client.data[_make_key(path, "error")] = "it broke"
 
     with pytest.raises(ExecutionFailedError, match="failed previously"):
         await execute(

@@ -127,4 +127,6 @@ async def test_deleted_entry_excluded_from_disk(store_factory, tmp_path, seriali
         serializer=serializer,
     )
     assert await reopened.get_execution_record(child, str) is None
-    assert (await reopened.get_execution_record(root, str)).result == "rv"
+    root_rec = await reopened.get_execution_record(root, str)
+    assert root_rec is not None
+    assert root_rec.result == "rv"

@@ -3,6 +3,7 @@ import inspect
 
 import pytest
 from glyff.exceptions import SerializationError, UnserializableArgumentError
+from glyff.interfaces import ArgsHasher, Serializer
 from pydantic import BaseModel
 
 from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
@@ -38,66 +39,75 @@ def sample_func(a: int, b: str = "default"):
     pass
 
 
-s = PydanticSerializer()
-h = PydanticArgsHasher()
+@pytest.fixture
+def serializer() -> Serializer:
+    return PydanticSerializer()
 
 
-def test_hash_args_positional_vs_keyword_are_equal():
+@pytest.fixture
+def hasher() -> ArgsHasher:
+    return PydanticArgsHasher()
+
+
+def test_hash_args_positional_vs_keyword_are_equal(hasher: ArgsHasher):
     sig = inspect.signature(sample_func)
-    h1 = h.hash_args(sample_func, sig, (1,), {"b": "test"})
-    h2 = h.hash_args(sample_func, sig, (), {"a": 1, "b": "test"})
+    h1 = hasher.hash_args(sample_func, sig, (1,), {"b": "test"})
+    h2 = hasher.hash_args(sample_func, sig, (), {"a": 1, "b": "test"})
     assert h1 == h2
 
 
-def test_hash_args_defaults_are_included():
+def test_hash_args_defaults_are_included(hasher: ArgsHasher):
     sig = inspect.signature(sample_func)
-    h1 = h.hash_args(sample_func, sig, (1,), {})
-    h2 = h.hash_args(sample_func, sig, (), {"a": 1, "b": "default"})
+    h1 = hasher.hash_args(sample_func, sig, (1,), {})
+    h2 = hasher.hash_args(sample_func, sig, (), {"a": 1, "b": "default"})
     assert h1 == h2
 
 
-def test_hash_args_different_values_differ():
+def test_hash_args_different_values_differ(hasher: ArgsHasher):
     sig = inspect.signature(sample_func)
-    h1 = h.hash_args(sample_func, sig, (1,), {})
-    h2 = h.hash_args(sample_func, sig, (2,), {})
+    h1 = hasher.hash_args(sample_func, sig, (1,), {})
+    h2 = hasher.hash_args(sample_func, sig, (2,), {})
     assert h1 != h2
 
 
-def test_hash_args_is_deterministic():
+def test_hash_args_is_deterministic(hasher: ArgsHasher):
     sig = inspect.signature(sample_func)
-    h1 = h.hash_args(sample_func, sig, (42,), {"b": "hello"})
-    h2 = h.hash_args(sample_func, sig, (42,), {"b": "hello"})
+    h1 = hasher.hash_args(sample_func, sig, (42,), {"b": "hello"})
+    h2 = hasher.hash_args(sample_func, sig, (42,), {"b": "hello"})
     assert h1 == h2
 
 
-def test_serialize_deserialize_primitives():
+async def test_serialize_deserialize_primitives(serializer: Serializer):
     data = {"key": "value", "num": 123, "flag": True, "items": [1, "a"]}
-    assert s.deserialize(s.serialize(data, dict), dict) == data
+    serialized = await serializer.serialize(data, dict)
+    assert await serializer.deserialize(serialized, dict) == data
 
 
-def test_serialize_deserialize_pydantic_model():
+async def test_serialize_deserialize_pydantic_model(serializer: Serializer):
     model = MyModel(x=42, y="hello")
-    assert s.deserialize(s.serialize(model, MyModel), MyModel) == model
+    serialized = await serializer.serialize(model, MyModel)
+    assert await serializer.deserialize(serialized, MyModel) == model
 
 
-def test_serialize_deserialize_list_of_models():
+async def test_serialize_deserialize_list_of_models(serializer: Serializer):
     models = [MyModel(x=i, y=str(i)) for i in range(3)]
-    result = s.deserialize(s.serialize(models, list[MyModel]), list[MyModel])
+    serialized = await serializer.serialize(models, list[MyModel])
+    result = await serializer.deserialize(serialized, list[MyModel])
     assert result == models
 
 
-def test_serialize_produces_stable_output():
+async def test_serialize_produces_stable_output(serializer: Serializer):
     d1 = {"b": 2, "a": 1}
     d2 = {"a": 1, "b": 2}
-    assert s.serialize(d1, dict) == s.serialize(d2, dict)
+    assert await serializer.serialize(d1, dict) == await serializer.serialize(d2, dict)
 
 
-def test_serialize_non_serializable_raises_custom_error():
+async def test_serialize_non_serializable_raises_custom_error(serializer: Serializer):
     with pytest.raises(SerializationError, match="could not be serialized"):
-        s.serialize(object(), object)
+        await serializer.serialize(object(), object)
 
 
-def test_hash_non_serializable_raises_custom_error():
+def test_hash_non_serializable_raises_custom_error(hasher: ArgsHasher):
     def func_with_obj(a: object):
         pass
 
@@ -106,10 +116,10 @@ def test_hash_non_serializable_raises_custom_error():
     with pytest.raises(
         UnserializableArgumentError, match="could not be serialized to JSON"
     ):
-        h.hash_args(func_with_obj, sig, (object(),), {})
+        hasher.hash_args(func_with_obj, sig, (object(),), {})
 
 
-def test_hash_nested_dataclass_type_and_callable_values():
+def test_hash_nested_dataclass_type_and_callable_values(hasher: ArgsHasher):
     @dataclasses.dataclass(frozen=True)
     class Container:
         data: MyDataClass
@@ -120,7 +130,7 @@ def test_hash_nested_dataclass_type_and_callable_values():
         pass
 
     sig = inspect.signature(func)
-    first = h.hash_args(
+    first = hasher.hash_args(
         func,
         sig,
         (
@@ -132,7 +142,7 @@ def test_hash_nested_dataclass_type_and_callable_values():
         ),
         {},
     )
-    second = h.hash_args(
+    second = hasher.hash_args(
         func,
         sig,
         (
@@ -148,38 +158,38 @@ def test_hash_nested_dataclass_type_and_callable_values():
     assert first == second
 
 
-def test_hash_callable_values_by_qualified_name():
+def test_hash_callable_values_by_qualified_name(hasher: ArgsHasher):
     def func(callback):
         pass
 
     sig = inspect.signature(func)
-    first = h.hash_args(func, sig, (helper_func,), {})
-    second = h.hash_args(func, sig, (helper_func,), {})
-    different = h.hash_args(func, sig, (another_helper_func,), {})
+    first = hasher.hash_args(func, sig, (helper_func,), {})
+    second = hasher.hash_args(func, sig, (helper_func,), {})
+    different = hasher.hash_args(func, sig, (another_helper_func,), {})
 
     assert first == second
     assert first != different
 
 
-def test_method_hash_differs_for_different_pydantic_instances():
+def test_method_hash_differs_for_different_pydantic_instances(hasher: ArgsHasher):
     inst1 = MyModel(x=1, y="a")
     inst2 = MyModel(x=2, y="a")
     func = MyModel.method
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (inst1, 10), {})
-    h2 = h.hash_args(func, sig, (inst2, 10), {})
+    h1 = hasher.hash_args(func, sig, (inst1, 10), {})
+    h2 = hasher.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 != h2
 
 
-def test_method_hash_is_same_for_identical_pydantic_instances():
+def test_method_hash_is_same_for_identical_pydantic_instances(hasher: ArgsHasher):
     inst1 = MyModel(x=1, y="a")
     inst2 = MyModel(x=1, y="a")
     func = MyModel.method
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (inst1, 10), {})
-    h2 = h.hash_args(func, sig, (inst2, 10), {})
+    h1 = hasher.hash_args(func, sig, (inst1, 10), {})
+    h2 = hasher.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 == h2

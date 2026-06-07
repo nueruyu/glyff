@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, TypedDict
 
+from glyff.execution_path import execution_id_to_path, path_to_execution_id
 from glyff.interfaces import Execution, Serializer, SessionStore, Transaction
 from glyff.models import ExecutionId, ExecutionRecord, ExecutionStatus
+from glyff.serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
 from .file_client import FileClient
 
@@ -82,7 +84,7 @@ class _FileExecution(Execution):
         )
 
     async def complete(self, value: object, return_type: type) -> None:
-        serialized_bytes = self._serializer.serialize(value, return_type)
+        serialized_bytes = await self._serializer.serialize(value, return_type)
         persistable_result = json.loads(serialized_bytes)
         entry = self._create_log_entry(
             ExecutionStatus.COMPLETED, result=persistable_result
@@ -128,22 +130,11 @@ class JsonFileSessionStore(SessionStore):
 
     def _id_to_callstack(self, execution_id: ExecutionId) -> list[str]:
         """Convert an ExecutionId to a call stack list (outermost → innermost)."""
-        frames: list[str] = []
-        current: ExecutionId | None = execution_id
-        while current is not None:
-            frames.append(f"{current.name}#{current.sequence}:{current.args_hash}")
-            current = current.parent_id
-        frames.reverse()
-        return frames
+        return execution_id_to_path(execution_id).split("/")
 
     def _id_to_key(self, execution_id: ExecutionId) -> str:
         """Convert an ExecutionId to a stable, unique string key."""
-        parent_path = (
-            f"{self._id_to_key(execution_id.parent_id)}/"
-            if execution_id.parent_id
-            else ""
-        )
-        return f"{parent_path}{execution_id.name}#{execution_id.sequence}:{execution_id.args_hash}"
+        return execution_id_to_path(execution_id)
 
     @staticmethod
     def _callstack_to_key(call_stack: list[str]) -> str:
@@ -151,26 +142,8 @@ class JsonFileSessionStore(SessionStore):
 
     @staticmethod
     def _callstack_to_id(call_stack: list[str]) -> ExecutionId:
-        """Rebuild the full ExecutionId chain from a persisted call stack.
-
-        Inverse of ``_id_to_callstack``: each frame is ``name#sequence:args_hash``
-        (args_hash is a hex digest, so the first ``#`` and ``:`` are unambiguous
-        separators), and frames run outermost → innermost."""
-        parent: ExecutionId | None = None
-        eid: ExecutionId | None = None
-        for frame in call_stack:
-            name, rest = frame.split("#", 1)
-            seq_str, args_hash = rest.split(":", 1)
-            eid = ExecutionId(
-                parent_id=parent,
-                name=name,
-                sequence=int(seq_str),
-                args_hash=args_hash,
-            )
-            parent = eid
-        if eid is None:
-            raise ValueError("Cannot rebuild an ExecutionId from an empty call stack")
-        return eid
+        """Rebuild the full ExecutionId chain from a persisted call stack."""
+        return path_to_execution_id("/".join(call_stack))
 
     # ------------------------------------------------------------------
     # Loading and in-memory state
@@ -234,7 +207,9 @@ class JsonFileSessionStore(SessionStore):
         FileClient at commit time."""
         async with self._lock:
             all_entries = self._compute_committed_entries()
-        return json.dumps(all_entries, indent=2, sort_keys=True).encode("utf-8")
+        return json.dumps(
+            all_entries, indent=2, sort_keys=True, separators=JSON_SEPARATORS
+        ).encode(DEFAULT_ENCODING)
 
     async def _on_transaction_commit(self) -> None:
         async with self._lock:
@@ -312,9 +287,11 @@ class JsonFileSessionStore(SessionStore):
             persistable_result = entry["result"]
             if persistable_result is not None:
                 serialized_bytes = json.dumps(
-                    persistable_result, sort_keys=True
-                ).encode("utf-8")
-                result = self._serializer.deserialize(serialized_bytes, return_type)
+                    persistable_result, sort_keys=True, separators=JSON_SEPARATORS
+                ).encode(DEFAULT_ENCODING)
+                result = await self._serializer.deserialize(
+                    serialized_bytes, return_type
+                )
         elif status == ExecutionStatus.FAILED:
             error = entry["error"] or ""
         return ExecutionRecord(status=status, result=result, error=error)
@@ -332,7 +309,7 @@ class JsonFileSessionStore(SessionStore):
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
 
     async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
-        keys = [self._id_to_key(execution_id) for execution_id in execution_ids]
+        keys = [execution_id_to_path(eid) for eid in execution_ids]
         if not keys:
             return
         async with self._lock:

@@ -2,29 +2,31 @@ import inspect
 import json
 from typing import Any, Callable
 
-from ..exceptions import SerializationError
+from ..exceptions import SerializationError, UnserializableArgumentError
 from ..interfaces import ArgsHasher, Serializer
-from .helpers import build_hashable_args, default_to_hashable, hash_from_dict
-
-
-def _json_stable_dumps(data: Any) -> str:
-    return json.dumps(data, sort_keys=True, separators=(",", ":"))
+from .constants import DEFAULT_ENCODING
+from .helpers import (
+    build_hashable_args,
+    default_to_hashable,
+    hash_from_dict,
+    stable_json_dumps,
+)
 
 
 class JsonSerializer(Serializer):
     """A serializer using only the standard `json` module."""
 
-    def serialize(self, value: Any, type_hint: type) -> bytes:
+    async def serialize(self, value: Any, type_hint: type) -> bytes:
         try:
-            return _json_stable_dumps(value).encode("utf-8")
-        except TypeError as e:
+            return stable_json_dumps(value).encode(DEFAULT_ENCODING)
+        except UnserializableArgumentError as e:
             raise SerializationError(
                 f"Value of type {value.__class__.__name__} could not be serialized "
                 f"to JSON. Original error: {e}"
             ) from e
 
-    def deserialize(self, data: bytes, type_hint: type) -> Any:
-        return json.loads(data.decode("utf-8"))
+    async def deserialize(self, data: bytes, type_hint: type) -> Any:
+        return json.loads(data.decode(DEFAULT_ENCODING))
 
 
 class JsonArgsHasher(ArgsHasher):

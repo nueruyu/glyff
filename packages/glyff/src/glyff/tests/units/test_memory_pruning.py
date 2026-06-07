@@ -2,6 +2,7 @@
 scheme (which also makes keys collision-free across different parents)."""
 
 from glyff import ExecutionId
+from glyff.execution_path import execution_id_to_path, path_to_execution_id
 from glyff.stores import MemoryClient, MemorySessionStore
 
 
@@ -77,22 +78,33 @@ async def test_full_path_keys_avoid_cross_parent_collision(serializer):
     await _complete(store, leaf_under_p1, "one")
     await _complete(store, leaf_under_p2, "two")
 
-    assert (await store.get_execution_record(leaf_under_p1, str)).result == "one"
-    assert (await store.get_execution_record(leaf_under_p2, str)).result == "two"
+    leaf_under_p1_rec = await store.get_execution_record(leaf_under_p1, str)
+    leaf_under_p2_rec = await store.get_execution_record(leaf_under_p2, str)
+    assert leaf_under_p1_rec is not None
+    assert leaf_under_p2_rec is not None
+    assert leaf_under_p1_rec.result == "one"
+    assert leaf_under_p2_rec.result == "two"
 
     # Deleting one leaf does not touch the colliding sibling under the other parent.
     tx = await store.begin_transaction()
     await store.delete_executions([leaf_under_p1])
     await tx.commit()
     assert await store.get_execution_record(leaf_under_p1, str) is None
-    assert (await store.get_execution_record(leaf_under_p2, str)).result == "two"
+    leaf_under_p2_rec = await store.get_execution_record(leaf_under_p2, str)
+    assert leaf_under_p2_rec is not None
+    assert leaf_under_p2_rec.result == "two"
 
 
 async def test_all_keys_includes_staged_excludes_deleted():
     client = MemoryClient()
-    client.stage_write("a", 1)
+    client.stage_write("execution::a::status", 1)
     await client.commit_staged()
-    client.stage_write("b", 2)
-    client.stage_delete("a")
+    client.stage_write("execution::b::status", 2)
+    client.stage_delete("execution::a::status")
     # "a" is committed but staged for deletion; "b" is staged for write.
-    assert client.all_keys() == {"b"}
+    assert client.all_keys() == {"execution::b::status"}
+
+
+def test_execution_path_roundtrip(base_execution_id: ExecutionId):
+    nested = _child(_child(base_execution_id, "mid", 2, "abc"), "leaf", 5, "def456")
+    assert path_to_execution_id(execution_id_to_path(nested)) == nested
