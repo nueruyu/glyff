@@ -4,6 +4,7 @@ import contextvars
 from collections.abc import Iterator, Sequence
 from typing import Callable, overload
 
+from .event_system import EventEmitter
 from .exceptions import ContextNotSetError, ExecutionFailedError, YieldException
 from .interfaces import ArgsHasher, SessionStore, Transaction
 from .models import ExecutionId
@@ -20,14 +21,14 @@ class Context:
         sequencer: Sequencer,
         hasher: ArgsHasher,
         transaction_scope_factory: Callable[[], TransactionScope],
-        prune_completed_descendants: bool = False,
+        event_emitter: EventEmitter,
     ) -> None:
         self._session_id = session_id
         self._store = store
         self._sequencer = sequencer
         self._hasher = hasher
         self._transaction_scope_factory = transaction_scope_factory
-        self._prune_completed_descendants = prune_completed_descendants
+        self._event_emitter = event_emitter
         self._tracer = ExecutionTracer()
         self._current_transaction_scope: TransactionScope | None = None
 
@@ -44,6 +45,10 @@ class Context:
         return self._hasher
 
     @property
+    def event_emitter(self) -> EventEmitter:
+        return self._event_emitter
+
+    @property
     def tracer(self) -> ExecutionTracer:
         return self._tracer
 
@@ -54,12 +59,6 @@ class Context:
     @property
     def current_execution_id(self) -> ExecutionId | None:
         return self._tracer.current
-
-    @property
-    def prune_completed_descendants(self) -> bool:
-        """When True, the executor deletes a task's descendant records once the
-        task completes (they can no longer be reached on replay)."""
-        return self._prune_completed_descendants
 
     @property
     def in_transaction(self) -> bool:

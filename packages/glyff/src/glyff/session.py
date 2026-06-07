@@ -1,4 +1,5 @@
 from .context import Context, TransactionScope, reset_context, set_context
+from .event_system import EventEmitter
 from .interfaces import ArgsHasher, SessionStore
 from .sequencer import Sequencer
 
@@ -14,12 +15,12 @@ class Session:
         id: str,
         store: SessionStore,
         hasher: ArgsHasher,
-        prune_completed_descendants: bool = False,
+        event_emitter: EventEmitter | None = None,
     ):
         self._id = id
         self._store = store
         self._hasher = hasher
-        self._prune_completed_descendants = prune_completed_descendants
+        self._event_emitter = event_emitter or EventEmitter([])
         self._context: Context | None = None
         self._context_token = None
 
@@ -40,7 +41,7 @@ class Session:
             sequencer=Sequencer(),
             hasher=self._hasher,
             transaction_scope_factory=lambda: TransactionScope(self._store),
-            prune_completed_descendants=self._prune_completed_descendants,
+            event_emitter=self._event_emitter,
         )
         self._context_token = set_context(self._context)
         return self

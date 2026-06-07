@@ -2,26 +2,9 @@ import traceback
 from typing import Any, Callable
 
 from .context import Context
+from .events import ExecutionCompleted, ExecutionFailed, ExecutionYielded
 from .exceptions import ExecutionFailedError, YieldException
 from .models import ExecutionId, ExecutionStatus
-
-
-async def _prune_descendants(ctx: Context, execution_id: ExecutionId) -> None:
-    """Once a task has completed, its descendants can never be reached on replay
-    (the completed parent short-circuits to its cached result). When enabled,
-    detect those now-unreachable descendants and ask the store to delete them.
-
-    This fires at every completion, so a completed nested call's descendants are
-    pruned immediately rather than lingering until the top-level call finishes.
-
-    Detection (policy) lives here; the store only answers a structural query and
-    deletes the ids it is handed. Runs inside the caller's transaction scope so
-    deletions commit (or roll back) atomically with the completion."""
-    if not ctx.prune_completed_descendants:
-        return
-    descendants = await ctx.store.get_descendants(execution_id)
-    if descendants:
-        await ctx.store.delete_executions(descendants)
 
 
 async def execute(
@@ -63,15 +46,27 @@ async def execute(
         try:
             result = await func(*args, **kwargs)
             await execution.complete(result, return_type)
-            await _prune_descendants(ctx, execution_id)
+            await ctx.event_emitter.emit(
+                ExecutionCompleted(context=ctx, execution_id=execution_id)
+            )
             return result
-        except YieldException:
+        except YieldException as y:
             # Interruption is a graceful exit; don't stage failure.
             # The state remains STARTED, allowing for resumption.
-            raise
+            await ctx.event_emitter.emit(
+                ExecutionYielded(context=ctx, execution_id=execution_id)
+            )
+            raise y
         except Exception as e:
             error_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
             await execution.fail(error_str)
+            await ctx.event_emitter.emit(
+                ExecutionFailed(
+                    context=ctx,
+                    execution_id=execution_id,
+                    error=error_str,
+                )
+            )
             raise ExecutionFailedError(
                 f"Task {execution_id} failed: {type(e).__name__}({e})"
             ) from e

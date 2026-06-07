@@ -1,9 +1,11 @@
 """End-to-end pruning scenarios driven through Session/executor against the
-file store. Proves that enabling ``prune_completed_descendants`` deletes the
-history of a task's descendants once it completes, without changing replay."""
+file store. Proves that registering ``PruningEventHandler`` deletes the history
+of a task's descendants once it completes, without changing replay."""
 
 import pytest
 from glyff import Session, engrave
+from glyff.event_handlers import PruningEventHandler
+from glyff.event_system import EventEmitter
 from glyff.exceptions import YieldException
 from glyff.interfaces import ArgsHasher, Serializer
 
@@ -13,6 +15,10 @@ from glyff_file_store import FileClient, JsonFileSessionStore
 def _leaf_names(store: JsonFileSessionStore) -> list[str]:
     """Innermost frame name of every committed entry."""
     return [e["call_stack"][-1].split("#")[0] for e in store._log_entries]
+
+
+def _pruning_emitter() -> EventEmitter:
+    return EventEmitter([PruningEventHandler()])
 
 
 # --------------------------------------------------------------------------
@@ -55,7 +61,7 @@ async def test_fresh_run_prunes_whole_subtree(
         serializer=serializer,
     )
     async with Session(
-        id="prune-fresh", store=store, hasher=hasher, prune_completed_descendants=True
+        id="prune-fresh", store=store, hasher=hasher, event_emitter=_pruning_emitter()
     ):
         result = await pr_root()
 
@@ -90,7 +96,7 @@ async def test_replay_after_prune_is_correct(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
     )
     async with Session(
-        id=sid, store=store, hasher=hasher, prune_completed_descendants=True
+        id=sid, store=store, hasher=hasher, event_emitter=_pruning_emitter()
     ):
         first = await pr_root()
 
@@ -99,7 +105,7 @@ async def test_replay_after_prune_is_correct(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
     )
     async with Session(
-        id=sid, store=store2, hasher=hasher, prune_completed_descendants=True
+        id=sid, store=store2, hasher=hasher, event_emitter=_pruning_emitter()
     ):
         second = await pr_root()
 
@@ -171,7 +177,7 @@ async def test_nested_completion_prunes_mid_session(
     )
     with pytest.raises(YieldException):
         async with Session(
-            id=sid, store=store, hasher=hasher, prune_completed_descendants=True
+            id=sid, store=store, hasher=hasher, event_emitter=_pruning_emitter()
         ):
             await sc_root()
 
@@ -190,7 +196,7 @@ async def test_nested_completion_prunes_mid_session(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
     )
     async with Session(
-        id=sid, store=store2, hasher=hasher, prune_completed_descendants=True
+        id=sid, store=store2, hasher=hasher, event_emitter=_pruning_emitter()
     ):
         result = await sc_root()
 
