@@ -122,6 +122,7 @@ class JsonFileSessionStore(SessionStore):
         self._staged_log_entries: list[LogEntry] = []
         # Keys whose entries the current transaction should drop on commit.
         self._staged_delete_keys: set[str] = set()
+        self._write_staged = False
         self._load_executions()
 
     # ------------------------------------------------------------------
@@ -226,22 +227,35 @@ class JsonFileSessionStore(SessionStore):
                 self._log_entries.extend(self._staged_log_entries)
                 self._index_new_entries(start_index=start_index)
                 self._staged_log_entries.clear()
+            self._write_staged = False
 
     async def _on_transaction_rollback(self) -> None:
         async with self._lock:
             self._staged_log_entries.clear()
             self._staged_delete_keys.clear()
+            self._write_staged = False
+
+    async def _stage_write_if_needed(self) -> None:
+        async with self._lock:
+            if self._write_staged:
+                return
+            self._write_staged = True
+
+        try:
+            await self._client.stage_write(self._executions_path, self._on_write)
+        except Exception:
+            async with self._lock:
+                self._write_staged = False
+            raise
 
     async def _add_log_entry(self, entry: LogEntry):
         # Append under the store lock, then call stage_write outside the
         # store lock to avoid a lock-ordering inversion against _on_write
         # (which acquires the store lock during commit_staged).
         async with self._lock:
-            must_stage = not self._staged_log_entries
             self._staged_log_entries.append(entry)
 
-        if must_stage:
-            await self._client.stage_write(self._executions_path, self._on_write)
+        await self._stage_write_if_needed()
 
     # ------------------------------------------------------------------
     # SessionStore interface
@@ -314,7 +328,4 @@ class JsonFileSessionStore(SessionStore):
             return
         async with self._lock:
             self._staged_delete_keys.update(keys)
-        # Register the write once, outside the store lock (mirrors
-        # _add_log_entry), so commit rewrites executions.json even if no entry
-        # was staged this txn.
-        await self._client.stage_write(self._executions_path, self._on_write)
+        await self._stage_write_if_needed()
