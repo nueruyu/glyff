@@ -3,6 +3,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from glyff.context import Context, TransactionScope, reset_context, set_context
+from glyff.event_handlers import PruningEventHandler
+from glyff.event_system import EventEmitter
 from glyff.exceptions import ExecutionFailedError, YieldException
 from glyff.execution_path import execution_id_to_path
 from glyff.executor import execute
@@ -66,17 +68,18 @@ async def test_completion_prunes_descendants_when_enabled(
     base_execution_id: ExecutionId,
     hasher,
 ):
-    # A context with pruning turned on.
+    # A context with pruning handler registered.
     from glyff.context import Context, TransactionScope
     from glyff.sequencer import Sequencer
 
+    emitter = EventEmitter([PruningEventHandler()])
     ctx = Context(
         session_id="prune-on",
         store=mock_store,
         sequencer=Sequencer(),
         hasher=hasher,
         transaction_scope_factory=lambda: TransactionScope(mock_store),
-        prune_completed_descendants=True,
+        event_emitter=emitter,
     )
     token = set_context(ctx)
     try:
@@ -124,13 +127,14 @@ async def test_nested_completion_prunes(
     from glyff.context import Context, TransactionScope
     from glyff.sequencer import Sequencer
 
+    emitter = EventEmitter([PruningEventHandler()])
     ctx = Context(
         session_id="prune-nested",
         store=mock_store,
         sequencer=Sequencer(),
         hasher=hasher,
         transaction_scope_factory=lambda: TransactionScope(mock_store),
-        prune_completed_descendants=True,
+        event_emitter=emitter,
     )
     token = set_context(ctx)
     try:
@@ -161,7 +165,7 @@ async def test_completion_does_not_prune_when_disabled(
     base_execution_id: ExecutionId,
     test_context: Context,
 ):
-    # Default test_context has pruning disabled.
+    # Default test_context has no pruning handler registered.
     async def sample_func():
         return "hello"
 

@@ -1,10 +1,12 @@
 """End-to-end pruning against the (in-memory) scenario store, exercising the
-executor-driven policy together with the store's get_descendants/delete_executions
+event-driven policy together with the store's get_descendants/delete_executions
 mechanism within a live session."""
 
 import pytest
 
 from glyff import Session, engrave
+from glyff.event_handlers import PruningEventHandler
+from glyff.event_system import EventEmitter
 from glyff.interfaces import ArgsHasher
 from glyff.stores.memory import _key_to_path
 from glyff.tests.types import StoreFactory
@@ -43,12 +45,16 @@ def _committed_paths(store) -> set[str]:
     return {p for k in store._client.data if (p := _key_to_path(k)) is not None}
 
 
+def _pruning_emitter() -> EventEmitter:
+    return EventEmitter([PruningEventHandler()])
+
+
 async def test_descendant_records_are_gone_after_completion(
     store_factory: StoreFactory, hasher: ArgsHasher
 ):
     store = store_factory("mem-prune")
     async with Session(
-        id="mem-prune", store=store, hasher=hasher, prune_completed_descendants=True
+        id="mem-prune", store=store, hasher=hasher, event_emitter=_pruning_emitter()
     ):
         result = await mp_root()
 
@@ -77,7 +83,7 @@ async def test_replay_after_prune_does_not_rerun(
 ):
     store = store_factory("mem-replay")
     async with Session(
-        id="mem-replay", store=store, hasher=hasher, prune_completed_descendants=True
+        id="mem-replay", store=store, hasher=hasher, event_emitter=_pruning_emitter()
     ):
         first = await mp_root()
 
@@ -85,7 +91,7 @@ async def test_replay_after_prune_does_not_rerun(
     # Same store object => same in-memory data; the completed root short-circuits
     # and the pruned descendants are never needed.
     async with Session(
-        id="mem-replay", store=store, hasher=hasher, prune_completed_descendants=True
+        id="mem-replay", store=store, hasher=hasher, event_emitter=_pruning_emitter()
     ):
         second = await mp_root()
 
