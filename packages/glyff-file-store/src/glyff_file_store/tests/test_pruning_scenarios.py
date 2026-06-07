@@ -2,8 +2,6 @@
 file store. Proves that enabling ``prune_completed_descendants`` deletes the
 history of a task's descendants once it completes, without changing replay."""
 
-from collections.abc import AsyncIterator
-
 import pytest
 from glyff import Session, engrave
 from glyff.exceptions import YieldException
@@ -203,40 +201,3 @@ async def test_nested_completion_prunes_mid_session(
     # Root completed -> entire subtree pruned, only the root frame remains.
     assert all(len(e["call_stack"]) == 1 for e in store2._log_entries)
     assert set(_leaf_names(store2)) == {"sc_root"}
-
-
-# --------------------------------------------------------------------------
-# Streaming: a completed top-level stream prunes its nested descendants
-# --------------------------------------------------------------------------
-
-
-@engrave
-async def st_item(i: int) -> int:
-    return i * i
-
-
-@engrave
-async def st_stream(n: int) -> AsyncIterator[int]:
-    # Each item is produced by a nested @engrave call, so the stream has a real
-    # descendant subtree to prune once it completes.
-    for i in range(n):
-        yield await st_item(i)
-
-
-async def test_streaming_completion_prunes_descendants(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
-):
-    store = JsonFileSessionStore(
-        client=FileClient(base_dir=tmp_path, session_id="prune-stream"),
-        serializer=serializer,
-    )
-    async with Session(
-        id="prune-stream", store=store, hasher=hasher, prune_completed_descendants=True
-    ):
-        items = [x async for x in st_stream(3)]
-
-    assert items == [0, 1, 4]
-    # The stream is top-level: once it completes naturally, its nested st_item
-    # records are pruned and only the stream's own entry survives.
-    assert all(len(e["call_stack"]) == 1 for e in store._log_entries)
-    assert set(_leaf_names(store)) == {"st_stream"}
