@@ -25,7 +25,9 @@ def _event_types_from_type_arg(type_arg: object) -> tuple[type[Event], ...]:
             for arg in get_args(type_arg)
             for event_type in _event_types_from_type_arg(arg)
         )
-    if isinstance(type_arg, type) and issubclass(type_arg, Event):
+    if isinstance(origin, type) and issubclass(origin, Event):
+        return (origin,)
+    if origin is None and isinstance(type_arg, type) and issubclass(type_arg, Event):
         return (type_arg,)
     return ()
 
@@ -77,9 +79,15 @@ class EventEmitter:
 
     async def emit(self, event: Event) -> None:
         """Dispatches an event to all handlers registered for its type."""
-        event_type = type(event)
-        handlers_to_run = self._handler_map.get(event_type, []) + self._handler_map.get(
-            Event, []
-        )
+        handlers_to_run: list[EventHandler] = []
+        seen_handlers: set[EventHandler] = set()
+        for event_type in type(event).__mro__:
+            if not issubclass(event_type, Event):
+                continue
+            for handler in self._handler_map.get(event_type, []):
+                if handler in seen_handlers:
+                    continue
+                seen_handlers.add(handler)
+                handlers_to_run.append(handler)
         for handler in handlers_to_run:
             await handler.handle(event)
