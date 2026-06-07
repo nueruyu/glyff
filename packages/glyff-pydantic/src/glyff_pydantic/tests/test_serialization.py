@@ -115,6 +115,14 @@ async def test_serialize_accepts_json_formatting_options():
     assert serialized.decode("utf-8") == '{\n  "message": "こんにちは"\n}'
 
 
+async def test_serialize_accepts_string_indent():
+    serialized = await PydanticSerializer(indent="\t").serialize(
+        {"message": "hello"}, dict
+    )
+
+    assert serialized.decode("utf-8") == '{\n\t"message": "hello"\n}'
+
+
 async def test_serialize_non_serializable_raises_custom_error(serializer: Serializer):
     with pytest.raises(SerializationError, match="could not be serialized"):
         await serializer.serialize(object(), object)

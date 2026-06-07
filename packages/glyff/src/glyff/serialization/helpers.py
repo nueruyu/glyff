@@ -34,7 +34,7 @@ def default_to_jsonable(obj: Any) -> Any:
 def stable_json_dumps(
     data: Any,
     default: Callable[[Any], Any] | None = None,
-    indent: int | None = None,
+    indent: int | str | None = None,
     ensure_ascii: bool = True,
 ) -> str:
     """Creates a stable JSON string from arbitrary data."""

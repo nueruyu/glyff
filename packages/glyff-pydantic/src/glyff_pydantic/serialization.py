@@ -33,7 +33,7 @@ class PydanticSerializer(Serializer):
 
     def __init__(
         self,
-        indent: int | None = None,
+        indent: int | str | None = None,
         ensure_ascii: bool = True,
     ) -> None:
         self._adapters: dict[Any, TypeAdapter] = {}

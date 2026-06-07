@@ -11,3 +11,9 @@ def test_stable_json_dumps_accepts_json_formatting_options():
     assert stable_json_dumps(
         {"message": "こんにちは"}, indent=2, ensure_ascii=False
     ) == ('{\n  "message": "こんにちは"\n}')
+
+
+def test_stable_json_dumps_accepts_string_indent():
+    assert stable_json_dumps({"message": "hello"}, indent="\t") == (
+        '{\n\t"message": "hello"\n}'
+    )
