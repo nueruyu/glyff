@@ -68,7 +68,7 @@ class FileClient:
             if not self._session_path.exists():
                 # Crashed between rename-to-backup and rename-from-temp.
                 # The backup holds the only good copy; restore it.
-                os.rename(backup, self._session_path)
+                self._rename_path_sync(backup, self._session_path)
             else:
                 # rename-from-temp succeeded but rmtree-backup was
                 # interrupted, or this is otherwise a stale backup.
@@ -200,7 +200,7 @@ class FileClient:
             self._populate_temp_dir_sync(temp_dir, resolved_writes, staged_deletes)
             self._swap_temp_into_place_sync(temp_dir)
         except Exception:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            self._remove_path_if_exists_sync(temp_dir, ignore_errors=True)
             raise
 
     def _populate_temp_dir_sync(

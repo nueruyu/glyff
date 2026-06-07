@@ -296,6 +296,39 @@ async def test_recovery_restores_session_from_orphan_backup(tmp_path: Path):
     assert not (tmp_path / (session_id + _BACKUP_SUFFIX)).exists()
 
 
+async def test_recovery_retries_transient_permission_error_restoring_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    session_id = "recoverable-retry"
+    backup = tmp_path / (session_id + _BACKUP_SUFFIX)
+    backup.mkdir()
+    (backup / "saved.txt").write_bytes(b"saved")
+
+    original_rename = os.rename
+    rename_failures = 0
+
+    def flaky_rename(source: str | Path, target: str | Path):
+        nonlocal rename_failures
+        source_path = Path(source)
+        target_path = Path(target)
+        if (
+            rename_failures == 0
+            and source_path.name == session_id + _BACKUP_SUFFIX
+            and target_path.name == session_id
+        ):
+            rename_failures += 1
+            raise PermissionError("simulated transient recovery lock")
+        return original_rename(source, target)
+
+    monkeypatch.setattr(os, "rename", flaky_rename)
+
+    client = FileClient(base_dir=tmp_path, session_id=session_id)
+
+    assert rename_failures == 1
+    assert await client.read("saved.txt") == b"saved"
+    assert not backup.exists()
+
+
 async def test_recovery_drops_orphan_backup_when_session_present(tmp_path: Path):
     """A .bak sibling alongside a live session (simulating a crash after
     rename-from-temp but before rmtree-backup) is dropped on init."""
