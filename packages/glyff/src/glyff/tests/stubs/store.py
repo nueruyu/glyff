@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 
 from glyff import ExecutionId
@@ -15,31 +16,36 @@ class Call(NamedTuple):
     kwargs: dict
 
 
+Recorder = Callable[..., None]
+
+
 class StubExecution(Execution):
-    def __init__(self, store: StubSessionStore, eid: ExecutionId):
-        self._store = store
+    def __init__(self, eid: ExecutionId, record: Recorder, impl: Execution):
         self._id = eid
+        self._record = record
+        self._impl = impl
 
     async def complete(self, value: Any, return_type: type) -> None:
-        self._store._record("complete", self._id, value, return_type)
-        await self._store.execution_impl.complete(value, return_type)
+        self._record("complete", self._id, value, return_type)
+        await self._impl.complete(value, return_type)
 
     async def fail(self, error: str) -> None:
-        self._store._record("fail", self._id, error)
-        await self._store.execution_impl.fail(error)
+        self._record("fail", self._id, error)
+        await self._impl.fail(error)
 
 
 class StubTransaction(Transaction):
-    def __init__(self, store: StubSessionStore):
-        self._store = store
+    def __init__(self, record: Recorder, impl: Transaction):
+        self._record = record
+        self._impl = impl
 
     async def commit(self) -> None:
-        self._store._record("commit")
-        await self._store.transaction_impl.commit()
+        self._record("commit")
+        await self._impl.commit()
 
     async def rollback(self) -> None:
-        self._store._record("rollback")
-        await self._store.transaction_impl.rollback()
+        self._record("rollback")
+        await self._impl.rollback()
 
 
 class StubSessionStore(SessionStore):
@@ -60,15 +66,24 @@ class StubSessionStore(SessionStore):
     async def begin_transaction(self) -> Transaction:
         self._record("begin_transaction")
         self.transaction_impl = await self._mem_store.begin_transaction()
-        return StubTransaction(self)
+        return StubTransaction(self._record, self.transaction_impl)
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         self._record("start_execution", execution_id)
         self.execution_impl = await self._mem_store.start_execution(execution_id)
-        return StubExecution(self, execution_id)
+        return StubExecution(execution_id, self._record, self.execution_impl)
 
     async def get_execution_record(
         self, execution_id: ExecutionId, return_type: type
     ) -> ExecutionRecord | None:
         self._record("get_execution_record", execution_id, return_type)
         return await self._mem_store.get_execution_record(execution_id, return_type)
+
+    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
+        self._record("get_descendants", execution_id)
+        return await self._mem_store.get_descendants(execution_id)
+
+    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
+        execution_ids = list(execution_ids)
+        self._record("delete_executions", execution_ids)
+        await self._mem_store.delete_executions(execution_ids)

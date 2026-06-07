@@ -14,10 +14,12 @@ class Session:
         id: str,
         store: SessionStore,
         hasher: ArgsHasher,
+        prune_completed_descendants: bool = False,
     ):
         self._id = id
         self._store = store
         self._hasher = hasher
+        self._prune_completed_descendants = prune_completed_descendants
         self._context: Context | None = None
         self._context_token = None
 
@@ -38,6 +40,7 @@ class Session:
             sequencer=Sequencer(),
             hasher=self._hasher,
             transaction_scope_factory=lambda: TransactionScope(self._store),
+            prune_completed_descendants=self._prune_completed_descendants,
         )
         self._context_token = set_context(self._context)
         return self

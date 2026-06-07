@@ -79,6 +79,32 @@ of yielding again.
 - `YieldException` suspends execution at a function boundary; the session
   can be resumed later by entering it again with the same session id.
 
+## Pruning completed subtrees
+
+Once a marked call completes, its result is recorded and any resume returns
+that result directly — the calls it made underneath are never replayed. Their
+records are therefore dead weight. Passing `prune_completed_descendants=True`
+to `Session` deletes a call's descendant records the moment it completes:
+
+```python
+session = glyff.Session(
+    id=session_id,
+    store=store,
+    hasher=hasher,
+    prune_completed_descendants=True,
+)
+```
+
+This is opt-in (default off) because it discards history you might otherwise
+keep for inspection. The detection of which records are unreachable lives in
+the executor; the store only answers `get_descendants` and deletes the ids it
+is handed (in one batched `delete_executions` call), so the policy applies
+uniformly across stores. Replay and resume are unaffected — only records that
+can no longer be reached are removed.
+
+Pruning fires at every completion, so a completed nested call's descendants are
+removed immediately rather than lingering until the top-level call finishes.
+
 ## Streaming
 
 A marked function annotated to return an `AsyncIterator` (or `AsyncGenerator`)

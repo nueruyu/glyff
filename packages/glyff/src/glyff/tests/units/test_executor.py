@@ -4,9 +4,11 @@ import pytest
 
 from glyff.context import Context, TransactionScope, reset_context, set_context
 from glyff.exceptions import ExecutionFailedError, YieldException
+from glyff.execution_path import execution_id_to_path
 from glyff.executor import execute, execute_stream
 from glyff.interfaces import Serializer
 from glyff.models import ExecutionId, ExecutionStatus
+from glyff.stores.memory import _make_key
 from glyff.tests.stubs.store import StubSessionStore
 
 
@@ -59,6 +61,123 @@ async def test_successful_execution(
     assert len(mock_store.get_calls("commit")) == 1
 
 
+async def test_completion_prunes_descendants_when_enabled(
+    mock_store: StubSessionStore,
+    base_execution_id: ExecutionId,
+    hasher,
+):
+    # A context with pruning turned on.
+    from glyff.context import Context, TransactionScope
+    from glyff.sequencer import Sequencer
+
+    ctx = Context(
+        session_id="prune-on",
+        store=mock_store,
+        sequencer=Sequencer(),
+        hasher=hasher,
+        transaction_scope_factory=lambda: TransactionScope(mock_store),
+        prune_completed_descendants=True,
+    )
+    token = set_context(ctx)
+    try:
+        child = ExecutionId(
+            parent_id=base_execution_id, name="child", sequence=0, args_hash="c"
+        )
+
+        async def sample_func():
+            # Record the child so it becomes a real descendant in the store.
+            async with ctx.get_transaction_scope():
+                execution = await mock_store.start_execution(child)
+                await execution.complete("child", str)
+            return "hello"
+
+        result = await execute(
+            ctx=ctx,
+            execution_id=base_execution_id,
+            func=sample_func,
+            args=(),
+            kwargs={},
+            return_type=str,
+        )
+    finally:
+        reset_context(token)
+
+    assert result == "hello"
+    # The executor asked the store for the parent's descendants and deleted the
+    # child it found.
+    desc_calls = mock_store.get_calls("get_descendants")
+    assert any(c.args[0] == base_execution_id for c in desc_calls)
+    delete_calls = mock_store.get_calls("delete_executions")
+    # A single batched call deleting exactly the child descendant.
+    assert len(delete_calls) == 1
+    assert delete_calls[0].args[0] == [child]
+
+
+async def test_nested_completion_prunes(
+    mock_store: StubSessionStore,
+    nested_execution_id: ExecutionId,
+    hasher,
+):
+    # Pruning fires at every completion, including nested ones: a completed
+    # nested call scans for its own descendants right away rather than waiting
+    # for its top-level ancestor to finish.
+    from glyff.context import Context, TransactionScope
+    from glyff.sequencer import Sequencer
+
+    ctx = Context(
+        session_id="prune-nested",
+        store=mock_store,
+        sequencer=Sequencer(),
+        hasher=hasher,
+        transaction_scope_factory=lambda: TransactionScope(mock_store),
+        prune_completed_descendants=True,
+    )
+    token = set_context(ctx)
+    try:
+
+        async def sample_func():
+            return "hello"
+
+        await execute(
+            ctx=ctx,
+            execution_id=nested_execution_id,
+            func=sample_func,
+            args=(),
+            kwargs={},
+            return_type=str,
+        )
+    finally:
+        reset_context(token)
+
+    # The nested completion scanned for its own descendants...
+    desc_calls = mock_store.get_calls("get_descendants")
+    assert any(c.args[0] == nested_execution_id for c in desc_calls)
+    # ...but found none here, so nothing was deleted.
+    assert not mock_store.get_calls("delete_executions")
+
+
+async def test_completion_does_not_prune_when_disabled(
+    mock_store: StubSessionStore,
+    base_execution_id: ExecutionId,
+    test_context: Context,
+):
+    # Default test_context has pruning disabled.
+    async def sample_func():
+        return "hello"
+
+    await execute(
+        ctx=test_context,
+        execution_id=base_execution_id,
+        func=sample_func,
+        args=(),
+        kwargs={},
+        return_type=str,
+    )
+
+    assert not mock_store.get_calls("get_descendants")
+    assert not mock_store.get_calls("delete_executions")
+
+
 async def test_completed_task_is_skipped(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,
@@ -74,12 +193,12 @@ async def test_completed_task_is_skipped(
     test_context.sequencer.reset_for_call = AsyncMock()
 
     # Setup the internal memory store to return a completed state
-    key_prefix = f"execution::{base_execution_id.name}#{base_execution_id.sequence}:{base_execution_id.args_hash}"
-    mock_store._mem_store._client.data[f"{key_prefix}::status"] = (
+    path = execution_id_to_path(base_execution_id)
+    mock_store._mem_store._client.data[_make_key(path, "status")] = (
         ExecutionStatus.COMPLETED
     )
-    mock_store._mem_store._client.data[f"{key_prefix}::result"] = serializer.serialize(
-        "cached_result", str
+    mock_store._mem_store._client.data[_make_key(path, "result")] = (
+        await serializer.serialize("cached_result", str)
     )
 
     result = await execute(
@@ -110,9 +229,11 @@ async def test_failed_task_raises_error(
         executed = True
 
     # Setup the internal memory store to return a failed state
-    key_prefix = f"execution::{base_execution_id.name}#{base_execution_id.sequence}:{base_execution_id.args_hash}"
-    mock_store._mem_store._client.data[f"{key_prefix}::status"] = ExecutionStatus.FAILED
-    mock_store._mem_store._client.data[f"{key_prefix}::error"] = "it broke"
+    path = execution_id_to_path(base_execution_id)
+    mock_store._mem_store._client.data[_make_key(path, "status")] = (
+        ExecutionStatus.FAILED
+    )
+    mock_store._mem_store._client.data[_make_key(path, "error")] = "it broke"
 
     with pytest.raises(ExecutionFailedError, match="failed previously"):
         await execute(

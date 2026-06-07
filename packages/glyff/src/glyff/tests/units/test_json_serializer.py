@@ -6,9 +6,6 @@ import pytest
 from glyff.exceptions import SerializationError, UnserializableArgumentError
 from glyff.serialization import JsonArgsHasher, JsonSerializer
 
-s = JsonSerializer()
-h = JsonArgsHasher()
-
 
 def sample_func(a: int, b: str = "default"):
     pass
@@ -45,51 +42,64 @@ def another_helper_func():
     pass
 
 
-def test_hash_args_positional_vs_keyword_are_equal():
+@pytest.fixture
+def serializer() -> JsonSerializer:
+    return JsonSerializer()
+
+
+@pytest.fixture
+def hasher() -> JsonArgsHasher:
+    return JsonArgsHasher()
+
+
+def test_hash_args_positional_vs_keyword_are_equal(hasher: JsonArgsHasher):
     sig = inspect.signature(sample_func)
-    h1 = h.hash_args(sample_func, sig, (1,), {"b": "test"})
-    h2 = h.hash_args(sample_func, sig, (), {"a": 1, "b": "test"})
+    h1 = hasher.hash_args(sample_func, sig, (1,), {"b": "test"})
+    h2 = hasher.hash_args(sample_func, sig, (), {"a": 1, "b": "test"})
     assert h1 == h2
 
 
-def test_hash_args_defaults_are_included():
+def test_hash_args_defaults_are_included(hasher: JsonArgsHasher):
     sig = inspect.signature(sample_func)
-    h1 = h.hash_args(sample_func, sig, (1,), {})
-    h2 = h.hash_args(sample_func, sig, (), {"a": 1, "b": "default"})
+    h1 = hasher.hash_args(sample_func, sig, (1,), {})
+    h2 = hasher.hash_args(sample_func, sig, (), {"a": 1, "b": "default"})
     assert h1 == h2
 
 
-def test_hash_args_different_values_differ():
+def test_hash_args_different_values_differ(hasher: JsonArgsHasher):
     sig = inspect.signature(sample_func)
-    h1 = h.hash_args(sample_func, sig, (1,), {})
-    h2 = h.hash_args(sample_func, sig, (2,), {})
+    h1 = hasher.hash_args(sample_func, sig, (1,), {})
+    h2 = hasher.hash_args(sample_func, sig, (2,), {})
     assert h1 != h2
 
 
-def test_hash_args_is_deterministic():
+def test_hash_args_is_deterministic(hasher: JsonArgsHasher):
     sig = inspect.signature(sample_func)
-    h1 = h.hash_args(sample_func, sig, (42,), {"b": "hello"})
-    h2 = h.hash_args(sample_func, sig, (42,), {"b": "hello"})
+    h1 = hasher.hash_args(sample_func, sig, (42,), {"b": "hello"})
+    h2 = hasher.hash_args(sample_func, sig, (42,), {"b": "hello"})
     assert h1 == h2
 
 
-def test_serialize_deserialize_primitives():
+async def test_serialize_deserialize_primitives(serializer: JsonSerializer):
     data = {"key": "value", "num": 123, "flag": True, "items": [1, "a"]}
-    assert s.deserialize(s.serialize(data, dict), dict) == data
+    serialized = await serializer.serialize(data, dict)
+    assert await serializer.deserialize(serialized, dict) == data
 
 
-def test_serialize_produces_stable_output():
+async def test_serialize_produces_stable_output(serializer: JsonSerializer):
     d1 = {"b": 2, "a": 1}
     d2 = {"a": 1, "b": 2}
-    assert s.serialize(d1, dict) == s.serialize(d2, dict)
+    assert await serializer.serialize(d1, dict) == await serializer.serialize(d2, dict)
 
 
-def test_serialize_non_serializable_raises_custom_error():
+async def test_serialize_non_serializable_raises_custom_error(
+    serializer: JsonSerializer,
+):
     with pytest.raises(SerializationError, match="could not be serialized to JSON"):
-        s.serialize(object(), object)
+        await serializer.serialize(object(), object)
 
 
-def test_hash_non_serializable_raises_custom_error():
+def test_hash_non_serializable_raises_custom_error(hasher: JsonArgsHasher):
     def func_with_obj(a: object):
         pass
 
@@ -98,10 +108,10 @@ def test_hash_non_serializable_raises_custom_error():
     with pytest.raises(
         UnserializableArgumentError, match="could not be serialized to JSON"
     ):
-        h.hash_args(func_with_obj, sig, (object(),), {})
+        hasher.hash_args(func_with_obj, sig, (object(),), {})
 
 
-def test_hash_nested_dataclass_and_type_values():
+def test_hash_nested_dataclass_and_type_values(hasher: JsonArgsHasher):
     @dataclasses.dataclass(frozen=True)
     class Container:
         data: MyDataClass
@@ -111,13 +121,13 @@ def test_hash_nested_dataclass_and_type_values():
         pass
 
     sig = inspect.signature(func)
-    first = h.hash_args(
+    first = hasher.hash_args(
         func,
         sig,
         (Container(data=MyDataClass(id="id1", value=100), cls=AnotherClass),),
         {},
     )
-    second = h.hash_args(
+    second = hasher.hash_args(
         func,
         sig,
         (Container(data=MyDataClass(id="id1", value=100), cls=AnotherClass),),
@@ -127,66 +137,72 @@ def test_hash_nested_dataclass_and_type_values():
     assert first == second
 
 
-def test_hash_callable_values_by_qualified_name():
+def test_hash_callable_values_by_qualified_name(hasher: JsonArgsHasher):
     def func(callback):
         pass
 
     sig = inspect.signature(func)
-    first = h.hash_args(func, sig, (helper_func,), {})
-    second = h.hash_args(func, sig, (helper_func,), {})
-    different = h.hash_args(func, sig, (another_helper_func,), {})
+    first = hasher.hash_args(func, sig, (helper_func,), {})
+    second = hasher.hash_args(func, sig, (helper_func,), {})
+    different = hasher.hash_args(func, sig, (another_helper_func,), {})
 
     assert first == second
     assert first != different
 
 
-def test_method_hash_differs_for_different_dataclass_instances():
+def test_method_hash_differs_for_different_dataclass_instances(
+    hasher: JsonArgsHasher,
+):
     inst1 = MyDataClass(id="id1", value=100)
     inst2 = MyDataClass(id="id2", value=100)
     func = MyDataClass.method
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (inst1, 10), {})
-    h2 = h.hash_args(func, sig, (inst2, 10), {})
+    h1 = hasher.hash_args(func, sig, (inst1, 10), {})
+    h2 = hasher.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 != h2
 
 
-def test_method_hash_is_same_for_identical_dataclass_instances():
+def test_method_hash_is_same_for_identical_dataclass_instances(
+    hasher: JsonArgsHasher,
+):
     inst1 = MyDataClass(id="id1", value=100)
     inst2 = MyDataClass(id="id1", value=100)
     func = MyDataClass.method
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (inst1, 10), {})
-    h2 = h.hash_args(func, sig, (inst2, 10), {})
+    h1 = hasher.hash_args(func, sig, (inst1, 10), {})
+    h2 = hasher.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 == h2
 
 
-def test_class_method_hash_is_stable():
+def test_class_method_hash_is_stable(hasher: JsonArgsHasher):
     func = AnotherClass.class_method.__func__
     sig = inspect.signature(func)
 
-    h1 = h.hash_args(func, sig, (AnotherClass, 10), {})
-    h2 = h.hash_args(func, sig, (AnotherClass, 10), {})
+    h1 = hasher.hash_args(func, sig, (AnotherClass, 10), {})
+    h2 = hasher.hash_args(func, sig, (AnotherClass, 10), {})
 
     assert h1 == h2
 
 
-def test_hash_method_on_unserializable_class_raises_error():
+def test_hash_method_on_unserializable_class_raises_error(hasher: JsonArgsHasher):
     inst = MyPlainClass("id1")
     func = MyPlainClass.method
     sig = inspect.signature(func)
 
     with pytest.raises(UnserializableArgumentError):
-        h.hash_args(func, sig, (inst, 10), {})
+        hasher.hash_args(func, sig, (inst, 10), {})
 
 
-def test_regular_function_with_self_parameter_is_hashed_normally():
+def test_regular_function_with_self_parameter_is_hashed_normally(
+    hasher: JsonArgsHasher,
+):
     def regular_func(self: str, x: int):
         pass
 
     sig = inspect.signature(regular_func)
-    result = h.hash_args(regular_func, sig, ("a serializable string", 10), {})
+    result = hasher.hash_args(regular_func, sig, ("a serializable string", 10), {})
     assert result is not None

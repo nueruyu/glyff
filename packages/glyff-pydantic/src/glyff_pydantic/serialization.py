@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import inspect
-import json
 from typing import Any, Callable
 
 from glyff.exceptions import SerializationError, UnserializableArgumentError
 from glyff.interfaces import ArgsHasher, Serializer
+from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.serialization.helpers import (
     build_hashable_args,
     default_to_hashable,
     default_to_jsonable,
+    stable_json_dumps,
 )
 from pydantic import BaseModel, TypeAdapter
 
@@ -26,40 +28,39 @@ def _json_default(obj: Any) -> Any:
         )
 
 
-def _json_stable_dumps(data: Any) -> str:
-    try:
-        return json.dumps(
-            data, sort_keys=True, default=_json_default, separators=(",", ":")
-        )
-    except SerializationError:
-        raise
-    except TypeError as e:
-        raise SerializationError(
-            f"Value could not be serialized to JSON. Original error: {e}"
-        ) from e
-
-
 class PydanticSerializer(Serializer):
     """A serializer implementation using Pydantic and JSON."""
 
     def __init__(self) -> None:
         self._adapters: dict[Any, TypeAdapter] = {}
+        self._lock = asyncio.Lock()
 
-    def _get_adapter(self, type_hint: type) -> TypeAdapter:
+    async def _get_adapter(self, type_hint: type) -> TypeAdapter:
         try:
-            adapter = self._adapters.get(type_hint)
+            if adapter := self._adapters.get(type_hint):
+                return adapter
         except TypeError:
             return TypeAdapter(type_hint)
-        if adapter is None:
+
+        async with self._lock:
+            if adapter := self._adapters.get(type_hint):
+                return adapter
             adapter = TypeAdapter(type_hint)
             self._adapters[type_hint] = adapter
-        return adapter
+            return adapter
 
-    def serialize(self, value: Any, type_hint: type) -> bytes:
+    async def serialize(self, value: Any, type_hint: type) -> bytes:
         try:
-            adapter = self._get_adapter(type_hint)
+            adapter = await self._get_adapter(type_hint)
             json_compatible = adapter.dump_python(value, mode="json")
-            return _json_stable_dumps(json_compatible).encode("utf-8")
+            return stable_json_dumps(json_compatible, default=_json_default).encode(
+                DEFAULT_ENCODING
+            )
+        except UnserializableArgumentError as e:
+            raise SerializationError(
+                f"Value of type {value.__class__.__name__} could not be serialized "
+                f"with Pydantic. Original error: {e}"
+            ) from e
         except SerializationError:
             raise
         except Exception as e:
@@ -68,8 +69,8 @@ class PydanticSerializer(Serializer):
                 f"with Pydantic. Original error: {e}"
             ) from e
 
-    def deserialize(self, data: bytes, type_hint: type) -> Any:
-        adapter = self._get_adapter(type_hint)
+    async def deserialize(self, data: bytes, type_hint: type) -> Any:
+        adapter = await self._get_adapter(type_hint)
         return adapter.validate_json(data)
 
 
@@ -89,13 +90,13 @@ class PydanticArgsHasher(ArgsHasher):
             func, sig, args, kwargs, transformer=self._to_hashable
         )
         try:
-            stable_repr = _json_stable_dumps(args_dict)
-        except SerializationError as e:
+            stable_repr = stable_json_dumps(args_dict, default=_json_default)
+        except (SerializationError, UnserializableArgumentError) as e:
             raise UnserializableArgumentError(
                 f"Arguments to '{func_name}' could not be serialized to JSON. "
                 f"Ensure all arguments are JSON-serializable or handled by a custom "
                 f"argument transformer. Original error: {e}"
             ) from e
         hasher = hashlib.sha256()
-        hasher.update(stable_repr.encode("utf-8"))
+        hasher.update(stable_repr.encode(DEFAULT_ENCODING))
         return hasher.hexdigest()

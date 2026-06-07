@@ -17,6 +17,11 @@ class MemoryClient:
     def data(self) -> dict[str, Any]:
         return self._data
 
+    def all_keys(self) -> set[str]:
+        """All keys visible to the current transaction: committed keys plus
+        keys staged for writing, minus those staged for deletion."""
+        return (self._data.keys() | self._staged_writes.keys()) - self._staged_deletes
+
     def clear_staged(self) -> None:
         self._staged_writes.clear()
         self._staged_deletes.clear()
