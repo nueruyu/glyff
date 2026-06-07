@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -228,6 +229,37 @@ async def test_commit_leaves_no_orphan_temp_directories(
     # Only the session directory should remain — no .commit-* or .bak.
     session_name = client.resolve(".").resolve().name
     assert [s.name for s in siblings] == [session_name]
+
+
+async def test_commit_retries_transient_permission_error_while_swapping_temp(
+    client: FileClient, monkeypatch: pytest.MonkeyPatch
+):
+    await client.stage_write("file.txt", b"old")
+    await client.commit_staged()
+    await client.stage_write("file.txt", b"new")
+
+    original_rename = os.rename
+    rename_failures = 0
+
+    def flaky_rename(source: str | Path, target: str | Path):
+        nonlocal rename_failures
+        source_path = Path(source)
+        target_path = Path(target)
+        if (
+            rename_failures == 0
+            and source_path.name.startswith("test-session" + _TEMP_PREFIX)
+            and target_path.name == "test-session"
+        ):
+            rename_failures += 1
+            raise PermissionError("simulated transient rename lock")
+        return original_rename(source, target)
+
+    monkeypatch.setattr(os, "rename", flaky_rename)
+
+    await client.commit_staged()
+
+    assert rename_failures == 1
+    assert await client.read("file.txt") == b"new"
 
 
 async def test_failed_commit_leaves_no_orphan_temp_directories(
