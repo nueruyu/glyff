@@ -31,14 +31,21 @@ def default_to_jsonable(obj: Any) -> Any:
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
-def stable_json_dumps(data: Any, default: Callable[[Any], Any] | None = None) -> str:
-    """Creates a stable, compact JSON string from arbitrary data."""
+def stable_json_dumps(
+    data: Any,
+    default: Callable[[Any], Any] | None = None,
+    indent: int | str | None = None,
+    ensure_ascii: bool = True,
+) -> str:
+    """Creates a stable JSON string from arbitrary data."""
     try:
         return json.dumps(
             data,
+            indent=indent,
             sort_keys=True,
+            ensure_ascii=ensure_ascii,
             default=default or default_to_jsonable,
-            separators=JSON_SEPARATORS,
+            separators=JSON_SEPARATORS if indent is None else None,
         )
     except TypeError as e:
         raise UnserializableArgumentError(

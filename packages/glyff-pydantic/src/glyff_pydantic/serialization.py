@@ -31,9 +31,15 @@ def _json_default(obj: Any) -> Any:
 class PydanticSerializer(Serializer):
     """A serializer implementation using Pydantic and JSON."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        indent: int | str | None = None,
+        ensure_ascii: bool = True,
+    ) -> None:
         self._adapters: dict[Any, TypeAdapter] = {}
         self._lock = asyncio.Lock()
+        self._indent = indent
+        self._ensure_ascii = ensure_ascii
 
     async def _get_adapter(self, type_hint: type) -> TypeAdapter:
         try:
@@ -53,9 +59,12 @@ class PydanticSerializer(Serializer):
         try:
             adapter = await self._get_adapter(type_hint)
             json_compatible = adapter.dump_python(value, mode="json")
-            return stable_json_dumps(json_compatible, default=_json_default).encode(
-                DEFAULT_ENCODING
-            )
+            return stable_json_dumps(
+                json_compatible,
+                indent=self._indent,
+                ensure_ascii=self._ensure_ascii,
+                default=_json_default,
+            ).encode(DEFAULT_ENCODING)
         except UnserializableArgumentError as e:
             raise SerializationError(
                 f"Value of type {value.__class__.__name__} could not be serialized "
