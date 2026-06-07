@@ -102,6 +102,19 @@ async def test_serialize_produces_stable_output(serializer: Serializer):
     assert await serializer.serialize(d1, dict) == await serializer.serialize(d2, dict)
 
 
+async def test_serialize_defaults_to_compact_ascii_json():
+    serialized = await PydanticSerializer().serialize({"message": "こんにちは"}, dict)
+    assert serialized == b'{"message":"\\u3053\\u3093\\u306b\\u3061\\u306f"}'
+
+
+async def test_serialize_accepts_json_formatting_options():
+    serialized = await PydanticSerializer(indent=2, ensure_ascii=False).serialize(
+        {"message": "こんにちは"}, dict
+    )
+
+    assert serialized.decode("utf-8") == '{\n  "message": "こんにちは"\n}'
+
+
 async def test_serialize_non_serializable_raises_custom_error(serializer: Serializer):
     with pytest.raises(SerializationError, match="could not be serialized"):
         await serializer.serialize(object(), object)
