@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine, NamedTuple, Union
 
@@ -18,6 +19,7 @@ Content = Union[bytes, WriteCallback]
 
 _BACKUP_SUFFIX = ".bak"
 _TEMP_PREFIX = ".commit-"
+_PERMISSION_RETRY_DELAYS = (0.01, 0.025, 0.05, 0.1, 0.2)
 
 
 class StagedOperation(NamedTuple):
@@ -66,28 +68,18 @@ class FileClient:
             if not self._session_path.exists():
                 # Crashed between rename-to-backup and rename-from-temp.
                 # The backup holds the only good copy; restore it.
-                os.rename(backup, self._session_path)
+                self._rename_path_sync(backup, self._session_path)
             else:
                 # rename-from-temp succeeded but rmtree-backup was
                 # interrupted, or this is otherwise a stale backup.
-                if backup.is_dir():
-                    shutil.rmtree(backup, ignore_errors=True)
-                else:
-                    try:
-                        backup.unlink()
-                    except OSError as e:
-                        logger.warning(
-                            "Could not remove stale backup file %s: %s",
-                            backup,
-                            e,
-                        )
+                self._remove_path_if_exists_sync(backup, ignore_errors=True)
 
         parent = self._session_path.parent
         if parent.exists():
             temp_prefix = self._session_path.name + _TEMP_PREFIX
             for sibling in parent.iterdir():
                 if sibling.name.startswith(temp_prefix) and sibling.is_dir():
-                    shutil.rmtree(sibling, ignore_errors=True)
+                    self._remove_path_if_exists_sync(sibling, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Public API
@@ -208,7 +200,7 @@ class FileClient:
             self._populate_temp_dir_sync(temp_dir, resolved_writes, staged_deletes)
             self._swap_temp_into_place_sync(temp_dir)
         except Exception:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            self._remove_path_if_exists_sync(temp_dir, ignore_errors=True)
             raise
 
     def _populate_temp_dir_sync(
@@ -236,21 +228,63 @@ class FileClient:
         backup = self._session_path.with_name(self._session_path.name + _BACKUP_SUFFIX)
         if backup.exists():
             # Defensive: drop any stale backup from a prior crash.
-            if backup.is_dir():
-                shutil.rmtree(backup)
-            else:
-                backup.unlink()
+            self._remove_path_if_exists_sync(backup)
 
         if self._session_path.exists():
-            os.rename(self._session_path, backup)
+            self._rename_path_sync(self._session_path, backup)
 
         try:
-            os.rename(temp_dir, self._session_path)
+            self._rename_path_sync(temp_dir, self._session_path)
         except BaseException:
             # Swap failed; restore the original from backup.
             if backup.exists() and not self._session_path.exists():
-                os.rename(backup, self._session_path)
+                self._rename_path_sync(backup, self._session_path)
             raise
 
         if backup.exists():
-            shutil.rmtree(backup, ignore_errors=True)
+            self._remove_path_if_exists_sync(backup, ignore_errors=True)
+
+    def _remove_path_if_exists_sync(
+        self, path: Path, *, ignore_errors: bool = False
+    ) -> None:
+        try:
+            if not path.exists():
+                return
+
+            if path.is_dir():
+                self._retry_permission_error_sync(
+                    lambda: shutil.rmtree(path),
+                    f"remove directory {path}",
+                )
+            else:
+                self._retry_permission_error_sync(
+                    path.unlink,
+                    f"remove file {path}",
+                )
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            if not ignore_errors:
+                raise
+            logger.warning("Could not remove %s: %s", path, e)
+
+    def _rename_path_sync(self, source: Path, target: Path) -> None:
+        self._retry_permission_error_sync(
+            lambda: os.rename(source, target),
+            f"rename {source} to {target}",
+        )
+
+    def _retry_permission_error_sync(
+        self, operation: Callable[[], Any], description: str
+    ) -> Any:
+        for delay in (*_PERMISSION_RETRY_DELAYS, None):
+            try:
+                return operation()
+            except PermissionError:
+                if delay is None:
+                    raise
+                logger.debug(
+                    "Retrying file store operation after PermissionError: %s",
+                    description,
+                )
+                time.sleep(delay)
