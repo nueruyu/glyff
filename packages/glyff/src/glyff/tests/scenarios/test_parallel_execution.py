@@ -4,7 +4,7 @@ import pytest
 
 from glyff import Session, engrave
 from glyff.exceptions import YieldException
-from glyff.interfaces import ArgsHasher
+from glyff import ArgsHasher
 from glyff.tests.types import StoreFactory
 
 _calls: list[str] = []

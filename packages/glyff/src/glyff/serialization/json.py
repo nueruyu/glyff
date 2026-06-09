@@ -3,7 +3,7 @@ import json
 from typing import Any, Callable
 
 from ..exceptions import SerializationError, UnserializableArgumentError
-from ..interfaces import ArgsHasher, Serializer
+from .._interfaces import ArgsHasher, Serializer
 from .constants import DEFAULT_ENCODING
 from .helpers import (
     build_hashable_args,

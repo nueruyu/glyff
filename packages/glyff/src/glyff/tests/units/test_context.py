@@ -1,6 +1,6 @@
 import pytest
 
-from glyff.context import get_context
+from glyff._context import get_context
 from glyff.exceptions import ContextNotSetError
 
 

@@ -1,5 +1,5 @@
 from glyff import Session, engrave
-from glyff.interfaces import ArgsHasher, Serializer
+from glyff import ArgsHasher, Serializer
 
 from glyff_file_store import FileClient, JsonFileSessionStore
 

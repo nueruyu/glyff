@@ -4,10 +4,10 @@ of a task's descendants once it completes, without changing replay."""
 
 import pytest
 from glyff import Session, engrave
-from glyff.event_handlers import PruningEventHandler
-from glyff.event_system import EventEmitter
+from glyff import PruningEventHandler
+from glyff import EventEmitter
 from glyff.exceptions import YieldException
-from glyff.interfaces import ArgsHasher, Serializer
+from glyff import ArgsHasher, Serializer
 
 from glyff_file_store import FileClient, JsonFileSessionStore
 

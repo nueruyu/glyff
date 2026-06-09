@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .event_system import EventHandler
+from ._event_system import EventHandler
 from .events import ExecutionCompleted
 
 

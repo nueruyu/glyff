@@ -1,7 +1,7 @@
 import asyncio
 
 from glyff import ExecutionId
-from glyff.sequencer import Sequencer
+from glyff._sequencer import Sequencer
 
 
 async def test_increments_per_name():

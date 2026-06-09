@@ -2,7 +2,7 @@ import pytest
 
 from glyff import Session, engrave
 from glyff.exceptions import ExecutionFailedError
-from glyff.interfaces import ArgsHasher
+from glyff import ArgsHasher
 from glyff.tests.types import StoreFactory
 
 _calls: list[int] = []

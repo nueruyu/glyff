@@ -3,10 +3,10 @@ import uuid
 import pytest
 
 from glyff import ExecutionId
-from glyff.context import Context, TransactionScope
-from glyff.event_system import EventEmitter
-from glyff.interfaces import ArgsHasher, Serializer, SessionStore
-from glyff.sequencer import Sequencer
+from glyff._context import Context, TransactionScope
+from glyff import EventEmitter
+from glyff import ArgsHasher, Serializer, SessionStore
+from glyff._sequencer import Sequencer
 from glyff.serialization import (
     JsonArgsHasher,
     JsonSerializer,

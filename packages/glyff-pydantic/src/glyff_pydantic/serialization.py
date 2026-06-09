@@ -6,7 +6,7 @@ import inspect
 from typing import Any, Callable
 
 from glyff.exceptions import SerializationError, UnserializableArgumentError
-from glyff.interfaces import ArgsHasher, Serializer
+from glyff import ArgsHasher, Serializer
 from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.serialization.helpers import (
     build_hashable_args,

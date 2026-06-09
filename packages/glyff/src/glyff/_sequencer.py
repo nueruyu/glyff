@@ -1,7 +1,7 @@
 import asyncio
 from collections import defaultdict
 
-from .models import ExecutionId
+from ._models import ExecutionId
 
 
 class Sequencer:

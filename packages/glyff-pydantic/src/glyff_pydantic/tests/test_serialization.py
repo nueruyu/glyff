@@ -3,7 +3,7 @@ import inspect
 
 import pytest
 from glyff.exceptions import SerializationError, UnserializableArgumentError
-from glyff.interfaces import ArgsHasher, Serializer
+from glyff import ArgsHasher, Serializer
 from pydantic import BaseModel
 
 from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
