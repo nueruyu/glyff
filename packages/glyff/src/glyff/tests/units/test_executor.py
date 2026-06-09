@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from glyff._context import Context, TransactionScope, reset_context, set_context
-from glyff import PruningEventHandler
+from glyff.event_handlers import PruningEventHandler
 from glyff import EventEmitter
 from glyff.exceptions import ExecutionFailedError, YieldException
 from glyff.stores import execution_id_to_path

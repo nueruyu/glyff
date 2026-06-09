@@ -1,5 +1,4 @@
 from ._engrave import engrave
-from ._event_handlers import PruningEventHandler
 from ._event_system import Event, EventEmitter, EventHandler
 from ._interfaces import ArgsHasher, Execution, Serializer, SessionStore, Transaction
 from ._models import ExecutionId, ExecutionRecord, ExecutionStatus
@@ -11,7 +10,6 @@ __all__ = [
     "Event",
     "EventHandler",
     "EventEmitter",
-    "PruningEventHandler",
     "ArgsHasher",
     "Serializer",
     "SessionStore",

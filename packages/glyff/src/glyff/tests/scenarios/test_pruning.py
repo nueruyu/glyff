@@ -5,7 +5,7 @@ mechanism within a live session."""
 import pytest
 
 from glyff import Session, engrave
-from glyff import PruningEventHandler
+from glyff.event_handlers import PruningEventHandler
 from glyff import EventEmitter
 from glyff import ArgsHasher
 from glyff.stores.memory import _key_to_path
