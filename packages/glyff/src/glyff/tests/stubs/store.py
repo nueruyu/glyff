@@ -11,8 +11,7 @@ from glyff import (
     SessionStore,
     Transaction,
 )
-from glyff.store import MemorySessionStore
-from glyff.store._memory_client import MemoryClient
+from glyff.store import MemoryClient, MemorySessionStore
 
 
 class Call(NamedTuple):
