@@ -20,7 +20,7 @@ from glyff import (
 from glyff.serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 from glyff.stores import execution_id_to_path, path_to_execution_id
 
-from .file_client import FileClient
+from ._file_client import FileClient
 
 logger = logging.getLogger(__name__)
 

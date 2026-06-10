@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from glyff_file_store import FileClient
+from glyff_file_store._file_client import _BACKUP_SUFFIX, _TEMP_PREFIX
 from glyff_file_store.exceptions import InvalidStagedContentError
-from glyff_file_store.file_client import _BACKUP_SUFFIX, _TEMP_PREFIX
 
 
 @pytest.fixture
