@@ -2,10 +2,10 @@ import functools
 import inspect
 from typing import Any, Callable, ParamSpec, TypeVar, cast
 
-from .context import Context, get_context
+from ._context import Context, get_context
 from .exceptions import MissingTypeHintError, TypeHintResolutionError
-from .executor import execute
-from .models import ExecutionId
+from ._executor import execute
+from ._models import ExecutionId
 
 P = ParamSpec("P")
 R = TypeVar("R")

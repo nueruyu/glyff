@@ -5,10 +5,10 @@ import hashlib
 import inspect
 from typing import Any, Callable
 
+from glyff import ArgsHasher, Serializer
 from glyff.exceptions import SerializationError, UnserializableArgumentError
-from glyff.interfaces import ArgsHasher, Serializer
 from glyff.serialization.constants import DEFAULT_ENCODING
-from glyff.serialization.helpers import (
+from glyff.serialization.utils import (
     build_hashable_args,
     default_to_hashable,
     default_to_jsonable,

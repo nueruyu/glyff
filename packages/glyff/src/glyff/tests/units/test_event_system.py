@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from glyff.event_system import Event, EventEmitter, EventHandler
+from glyff import Event, EventEmitter, EventHandler
 
 
 @dataclass(frozen=True)

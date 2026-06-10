@@ -2,15 +2,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from glyff.context import Context, TransactionScope, reset_context, set_context
+from glyff import EventEmitter, ExecutionId, ExecutionStatus, Serializer
+from glyff._context import Context, TransactionScope, reset_context, set_context
+from glyff._executor import execute
+from glyff._sequencer import Sequencer
 from glyff.event_handlers import PruningEventHandler
-from glyff.event_system import EventEmitter
 from glyff.exceptions import ExecutionFailedError, YieldException
-from glyff.execution_path import execution_id_to_path
-from glyff.executor import execute
-from glyff.interfaces import Serializer
-from glyff.models import ExecutionId, ExecutionStatus
-from glyff.stores.memory import _make_key
+from glyff.store._memory import _make_key
+from glyff.store.utils import execution_id_to_path
 from glyff.tests.stubs.store import StubSessionStore
 
 
@@ -69,9 +68,6 @@ async def test_completion_prunes_descendants_when_enabled(
     hasher,
 ):
     # A context with pruning handler registered.
-    from glyff.context import Context, TransactionScope
-    from glyff.sequencer import Sequencer
-
     emitter = EventEmitter([PruningEventHandler()])
     ctx = Context(
         session_id="prune-on",
@@ -124,9 +120,6 @@ async def test_nested_completion_prunes(
     # Pruning fires at every completion, including nested ones: a completed
     # nested call scans for its own descendants right away rather than waiting
     # for its top-level ancestor to finish.
-    from glyff.context import Context, TransactionScope
-    from glyff.sequencer import Sequencer
-
     emitter = EventEmitter([PruningEventHandler()])
     ctx = Context(
         session_id="prune-nested",

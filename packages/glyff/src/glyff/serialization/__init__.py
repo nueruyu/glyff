@@ -1,4 +1,4 @@
-from .json import JsonArgsHasher, JsonSerializer
+from ._json import JsonArgsHasher, JsonSerializer
 
 __all__ = [
     "JsonSerializer",

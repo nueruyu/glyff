@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .models import ExecutionId
+from .._models import ExecutionId
 
 
 def _format_frame(eid: ExecutionId) -> str:

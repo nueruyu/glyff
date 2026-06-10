@@ -1,5 +1,5 @@
 from typing import Callable
 
-from glyff.interfaces import SessionStore
+from glyff import SessionStore
 
 StoreFactory = Callable[[str], SessionStore]

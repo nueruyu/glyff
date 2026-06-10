@@ -2,16 +2,14 @@ import uuid
 
 import pytest
 
-from glyff import ExecutionId
-from glyff.context import Context, TransactionScope
-from glyff.event_system import EventEmitter
-from glyff.interfaces import ArgsHasher, Serializer, SessionStore
-from glyff.sequencer import Sequencer
+from glyff import ArgsHasher, EventEmitter, ExecutionId, Serializer, SessionStore
+from glyff._context import Context, TransactionScope
+from glyff._sequencer import Sequencer
 from glyff.serialization import (
     JsonArgsHasher,
     JsonSerializer,
 )
-from glyff.stores import MemoryClient, MemorySessionStore
+from glyff.store import MemoryClient, MemorySessionStore
 from glyff.tests.stubs.store import StubSessionStore
 from glyff.tests.types import StoreFactory
 
