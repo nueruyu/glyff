@@ -6,7 +6,7 @@ import pytest
 
 from glyff import ArgsHasher, EventEmitter, Session, engrave
 from glyff.event_handlers import PruningEventHandler
-from glyff.stores.memory import _key_to_path
+from glyff.store._memory import _key_to_path
 from glyff.tests.types import StoreFactory
 
 _runs: list[str] = []
