@@ -8,6 +8,7 @@ from glyff import EventEmitter, ExecutionId, ExecutionStatus, Serializer
 from glyff.exceptions import ExecutionFailedError, YieldException
 from glyff.stores import execution_id_to_path
 from glyff._executor import execute
+from glyff._sequencer import Sequencer
 from glyff.stores.memory import _make_key
 from glyff.tests.stubs.store import StubSessionStore
 
@@ -67,9 +68,6 @@ async def test_completion_prunes_descendants_when_enabled(
     hasher,
 ):
     # A context with pruning handler registered.
-    from glyff._context import Context, TransactionScope
-    from glyff._sequencer import Sequencer
-
     emitter = EventEmitter([PruningEventHandler()])
     ctx = Context(
         session_id="prune-on",
@@ -122,9 +120,6 @@ async def test_nested_completion_prunes(
     # Pruning fires at every completion, including nested ones: a completed
     # nested call scans for its own descendants right away rather than waiting
     # for its top-level ancestor to finish.
-    from glyff._context import Context, TransactionScope
-    from glyff._sequencer import Sequencer
-
     emitter = EventEmitter([PruningEventHandler()])
     ctx = Context(
         session_id="prune-nested",
