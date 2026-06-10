@@ -4,10 +4,8 @@ mechanism within a live session."""
 
 import pytest
 
-from glyff import Session, engrave
+from glyff import ArgsHasher, EventEmitter, Session, engrave
 from glyff.event_handlers import PruningEventHandler
-from glyff import EventEmitter
-from glyff import ArgsHasher
 from glyff.stores.memory import _key_to_path
 from glyff.tests.types import StoreFactory
 

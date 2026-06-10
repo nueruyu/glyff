@@ -1,7 +1,5 @@
 import pytest
-from glyff import ExecutionId
-from glyff import SessionStore
-from glyff import ExecutionStatus
+from glyff import ExecutionId, ExecutionStatus, SessionStore
 
 
 async def test_initial_state_is_none(store_factory, base_execution_id: ExecutionId):

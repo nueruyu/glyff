@@ -3,8 +3,7 @@
 Pruning *policy* (when to call these) lives in the executor and is covered by
 the scenario tests."""
 
-from glyff import ExecutionId
-from glyff import ExecutionStatus
+from glyff import ExecutionId, ExecutionStatus
 
 from glyff_file_store import JsonFileSessionStore
 

@@ -4,12 +4,10 @@ import pytest
 
 from glyff._context import Context, TransactionScope, reset_context, set_context
 from glyff.event_handlers import PruningEventHandler
-from glyff import EventEmitter
+from glyff import EventEmitter, ExecutionId, ExecutionStatus, Serializer
 from glyff.exceptions import ExecutionFailedError, YieldException
 from glyff.stores import execution_id_to_path
 from glyff._executor import execute
-from glyff import Serializer
-from glyff import ExecutionId, ExecutionStatus
 from glyff.stores.memory import _make_key
 from glyff.tests.stubs.store import StubSessionStore
 

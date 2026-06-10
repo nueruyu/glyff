@@ -1,6 +1,4 @@
-from glyff import ExecutionId
-from glyff import SessionStore
-from glyff import ExecutionStatus
+from glyff import ExecutionId, ExecutionStatus, SessionStore
 from glyff.tests.types import StoreFactory
 
 

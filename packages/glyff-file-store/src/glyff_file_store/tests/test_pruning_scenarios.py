@@ -3,11 +3,9 @@ file store. Proves that registering ``PruningEventHandler`` deletes the history
 of a task's descendants once it completes, without changing replay."""
 
 import pytest
-from glyff import Session, engrave
+from glyff import ArgsHasher, EventEmitter, Serializer, Session, engrave
 from glyff.event_handlers import PruningEventHandler
-from glyff import EventEmitter
 from glyff.exceptions import YieldException
-from glyff import ArgsHasher, Serializer
 
 from glyff_file_store import FileClient, JsonFileSessionStore
 
