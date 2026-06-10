@@ -18,7 +18,7 @@ from glyff import (
     Transaction,
 )
 from glyff.serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
-from glyff.store.helpers import execution_id_to_path, path_to_execution_id
+from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 from ._file_client import FileClient
 

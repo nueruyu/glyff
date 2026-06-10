@@ -9,7 +9,7 @@ from glyff._sequencer import Sequencer
 from glyff.event_handlers import PruningEventHandler
 from glyff.exceptions import ExecutionFailedError, YieldException
 from glyff.store._memory import _make_key
-from glyff.store.helpers import execution_id_to_path
+from glyff.store.utils import execution_id_to_path
 from glyff.tests.stubs.store import StubSessionStore
 
 

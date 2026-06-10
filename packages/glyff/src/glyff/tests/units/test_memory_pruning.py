@@ -6,7 +6,7 @@ from glyff.store import (
     MemoryClient,
     MemorySessionStore,
 )
-from glyff.store.helpers import execution_id_to_path, path_to_execution_id
+from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 
 def _store(serializer) -> MemorySessionStore:
