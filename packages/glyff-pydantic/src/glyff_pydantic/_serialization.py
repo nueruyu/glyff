@@ -11,6 +11,7 @@ from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.serialization.utils import (
     build_hashable_args,
     default_to_hashable,
+    default_to_hashable_id,
     default_to_jsonable,
     stable_json_dumps,
 )
@@ -26,6 +27,14 @@ def _json_default(obj: Any) -> Any:
         raise SerializationError(
             f"Object of type {obj.__class__.__name__} is not JSON serializable"
         )
+
+
+def _hash_default(obj: Any) -> Any:
+    """json.dumps hook for hashing: like ``_json_default`` but identifies otherwise
+    unserializable objects by their class' qualified name instead of raising."""
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    return default_to_hashable_id(obj)
 
 
 class PydanticSerializer(Serializer):
@@ -99,7 +108,7 @@ class PydanticArgsHasher(ArgsHasher):
             func, sig, args, kwargs, transformer=self._to_hashable
         )
         try:
-            stable_repr = stable_json_dumps(args_dict, default=_json_default)
+            stable_repr = stable_json_dumps(args_dict, default=_hash_default)
         except (SerializationError, UnserializableArgumentError) as e:
             raise UnserializableArgumentError(
                 f"Arguments to '{func_name}' could not be serialized to JSON. "

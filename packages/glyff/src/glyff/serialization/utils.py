@@ -15,7 +15,11 @@ def _qualified_name(obj: Any) -> str:
 def default_to_hashable(obj: Any) -> Any:
     """Converts common non-JSON-native objects to a serializable representation."""
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return dataclasses.asdict(obj)
+        # Shallow field extraction (rather than dataclasses.asdict) so that nested
+        # values are handled by json.dumps' default hook instead of being deep-copied.
+        # This keeps non-deepcopyable members (locks, sockets, ...) from crashing here
+        # and lets nested objects fall back to identity hashing where appropriate.
+        return {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
     if isinstance(obj, type):
         return _qualified_name(obj)
     if callable(obj) and hasattr(obj, "__module__") and hasattr(obj, "__qualname__"):
@@ -24,11 +28,30 @@ def default_to_hashable(obj: Any) -> Any:
 
 
 def default_to_jsonable(obj: Any) -> Any:
-    """Converts nested objects encountered by json.dumps to serializable values."""
+    """Converts nested objects encountered by json.dumps to serializable values.
+
+    Used for serialization, which must round-trip real data; anything that cannot be
+    represented raises rather than being silently identified by name.
+    """
     converted = default_to_hashable(obj)
     if converted is not obj:
         return converted
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+
+def default_to_hashable_id(obj: Any) -> Any:
+    """json.dumps hook for hashing.
+
+    Behaves like ``default_to_jsonable`` but, instead of raising for objects that
+    cannot be serialized, identifies them by their class' qualified name. Hashing only
+    needs a stable identity, so unserializable values (stateless services, tools, ...)
+    are distinguished by their class rather than their state. State that should affect
+    the hash must be exposed via a dataclass.
+    """
+    converted = default_to_hashable(obj)
+    if converted is not obj:
+        return converted
+    return _qualified_name(type(obj))
 
 
 def stable_json_dumps(
@@ -82,7 +105,7 @@ def build_hashable_args(
 def hash_from_dict(d: dict, func_name: str) -> str:
     """Creates a stable SHA256 hash from a dictionary."""
     try:
-        stable_repr = stable_json_dumps(d)
+        stable_repr = stable_json_dumps(d, default=default_to_hashable_id)
     except UnserializableArgumentError as e:
         raise UnserializableArgumentError(
             f"Arguments to '{func_name}' could not be serialized to JSON. "

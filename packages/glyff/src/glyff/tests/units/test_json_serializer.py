@@ -3,7 +3,7 @@ import inspect
 
 import pytest
 
-from glyff.exceptions import SerializationError, UnserializableArgumentError
+from glyff.exceptions import SerializationError
 from glyff.serialization import JsonArgsHasher, JsonSerializer
 
 
@@ -99,16 +99,21 @@ async def test_serialize_non_serializable_raises_custom_error(
         await serializer.serialize(object(), object)
 
 
-def test_hash_non_serializable_raises_custom_error(hasher: JsonArgsHasher):
+def test_hash_unserializable_arg_uses_class_qualified_name(hasher: JsonArgsHasher):
     def func_with_obj(a: object):
         pass
 
     sig = inspect.signature(func_with_obj)
 
-    with pytest.raises(
-        UnserializableArgumentError, match="could not be serialized to JSON"
-    ):
-        hasher.hash_args(func_with_obj, sig, (object(),), {})
+    first = hasher.hash_args(func_with_obj, sig, (MyPlainClass("id1"),), {})
+    second = hasher.hash_args(func_with_obj, sig, (MyPlainClass("id2"),), {})
+    different = hasher.hash_args(func_with_obj, sig, (object(),), {})
+
+    # Unserializable values are identified by their class, so instances of the same
+    # class hash identically (state is intentionally ignored) while instances of a
+    # different class differ.
+    assert first == second
+    assert first != different
 
 
 def test_hash_nested_dataclass_and_type_values(hasher: JsonArgsHasher):
@@ -188,13 +193,54 @@ def test_class_method_hash_is_stable(hasher: JsonArgsHasher):
     assert h1 == h2
 
 
-def test_hash_method_on_unserializable_class_raises_error(hasher: JsonArgsHasher):
-    inst = MyPlainClass("id1")
+def test_hash_method_on_plain_class_uses_class_qualified_name(hasher: JsonArgsHasher):
     func = MyPlainClass.method
     sig = inspect.signature(func)
 
-    with pytest.raises(UnserializableArgumentError):
-        hasher.hash_args(func, sig, (inst, 10), {})
+    # A plain (non-dataclass) `self` is hashed by its class qualified name, so calls on
+    # different instances of the same class collapse to the same hash while arguments
+    # still differentiate the call.
+    h1 = hasher.hash_args(func, sig, (MyPlainClass("id1"), 10), {})
+    h2 = hasher.hash_args(func, sig, (MyPlainClass("id2"), 10), {})
+    h3 = hasher.hash_args(func, sig, (MyPlainClass("id1"), 20), {})
+
+    assert h1 == h2
+    assert h1 != h3
+
+
+def test_hash_dataclass_with_nested_plain_service(hasher: JsonArgsHasher):
+    """A dataclass (state matters) holding plain, non-deepcopyable services hashes.
+
+    The dataclass state differentiates calls while nested plain services are identified
+    by their class, even when they hold members that cannot be deep-copied.
+    """
+    import threading
+
+    class Tool:
+        def __init__(self, lock):
+            self.lock = lock
+
+    @dataclasses.dataclass
+    class Agent:
+        name: str
+        tools: list
+
+        def run(self, query: str):
+            pass
+
+    func = Agent.run
+    sig = inspect.signature(func)
+
+    a1 = Agent("researcher", [Tool(threading.Lock())])
+    a2 = Agent("researcher", [Tool(threading.Lock())])
+    a3 = Agent("writer", [Tool(threading.Lock())])
+
+    h1 = hasher.hash_args(func, sig, (a1, "hi"), {})
+    h2 = hasher.hash_args(func, sig, (a2, "hi"), {})
+    h3 = hasher.hash_args(func, sig, (a3, "hi"), {})
+
+    assert h1 == h2
+    assert h1 != h3
 
 
 def test_regular_function_with_self_parameter_is_hashed_normally(

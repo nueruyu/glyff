@@ -2,7 +2,7 @@ import dataclasses
 import inspect
 
 import pytest
-from glyff.exceptions import SerializationError, UnserializableArgumentError
+from glyff.exceptions import SerializationError
 from glyff import ArgsHasher, Serializer
 from pydantic import BaseModel
 
@@ -128,16 +128,26 @@ async def test_serialize_non_serializable_raises_custom_error(serializer: Serial
         await serializer.serialize(object(), object)
 
 
-def test_hash_non_serializable_raises_custom_error(hasher: ArgsHasher):
+def test_hash_unserializable_arg_uses_class_qualified_name(hasher: ArgsHasher):
+    class PlainA:
+        pass
+
+    class PlainB:
+        pass
+
     def func_with_obj(a: object):
         pass
 
     sig = inspect.signature(func_with_obj)
 
-    with pytest.raises(
-        UnserializableArgumentError, match="could not be serialized to JSON"
-    ):
-        hasher.hash_args(func_with_obj, sig, (object(),), {})
+    first = hasher.hash_args(func_with_obj, sig, (PlainA(),), {})
+    second = hasher.hash_args(func_with_obj, sig, (PlainA(),), {})
+    different = hasher.hash_args(func_with_obj, sig, (PlainB(),), {})
+
+    # Unserializable values are identified by their class qualified name: same class
+    # hashes identically, different class differs.
+    assert first == second
+    assert first != different
 
 
 def test_hash_nested_dataclass_type_and_callable_values(hasher: ArgsHasher):
