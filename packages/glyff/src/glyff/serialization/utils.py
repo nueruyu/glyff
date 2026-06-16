@@ -1,3 +1,29 @@
+"""Helpers for turning arbitrary call arguments into stable JSON.
+
+Design: "by value" vs "by identity"
+------------------------------------
+Both hashing and serialization need to map non-JSON-native objects to JSON. The
+discriminator is "can we build a *stable serialized value* for this object?":
+
+* JSON-native values and dataclasses are represented *by value* (a dataclass is
+  just one type we know how to extract a value from -- see ``default_to_hashable``).
+* Everything else is handled *by identity*: hashing falls back to the class'
+  qualified name (``default_to_hashable_id``), serialization raises
+  (``default_to_jsonable``). See those functions for why the terminal behaviour
+  differs.
+
+Python's ``hash()`` / ``__hash__`` is deliberately NOT used as the discriminator:
+
+(a) It is not stable across processes. The resulting ``args_hash`` is a
+    cache/resumption key (it becomes part of the file-store path), so it must be
+    identical across runs. ``str`` hashing is randomized per-process and the
+    default object ``__hash__`` is ``id()``-based -- both change on restart.
+(b) It maps the wrong way. A normal ``@dataclass`` (``eq=True``) has
+    ``__hash__ is None`` (unhashable) yet we want it by value; a plain object is
+    ``id()``-hashable yet we want it identified by class. "Python-hashable" is
+    essentially the inverse of the distinction we need.
+"""
+
 import dataclasses
 import hashlib
 import inspect
@@ -13,7 +39,13 @@ def _qualified_name(obj: Any) -> str:
 
 
 def default_to_hashable(obj: Any) -> Any:
-    """Converts common non-JSON-native objects to a serializable representation."""
+    """Shared value-extraction used by both the hashing and serialization paths.
+
+    Converts the object types we know how to represent *by value* (dataclasses) or
+    *by identity* (types, callables) and returns everything else unchanged, leaving
+    the caller's terminal json.dumps hook (``default_to_jsonable`` for serialization,
+    ``default_to_hashable_id`` for hashing) to decide what to do with it.
+    """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         # Shallow field extraction (rather than dataclasses.asdict) so that nested
         # values are handled by json.dumps' default hook instead of being deep-copied.
@@ -28,10 +60,13 @@ def default_to_hashable(obj: Any) -> Any:
 
 
 def default_to_jsonable(obj: Any) -> Any:
-    """Converts nested objects encountered by json.dumps to serializable values.
+    """json.dumps hook for *serialization*.
 
-    Used for serialization, which must round-trip real data; anything that cannot be
-    represented raises rather than being silently identified by name.
+    Identical to ``default_to_hashable_id`` except for the terminal fallback: an
+    object with no value representation *raises* here, because serialized data is
+    read back as the real value (``deserialize``) and a class name cannot be turned
+    back into the object. This is the single, intentional divergence between the two
+    paths -- it stems from serialization needing to round-trip real data.
     """
     converted = default_to_hashable(obj)
     if converted is not obj:
@@ -40,13 +75,13 @@ def default_to_jsonable(obj: Any) -> Any:
 
 
 def default_to_hashable_id(obj: Any) -> Any:
-    """json.dumps hook for hashing.
+    """json.dumps hook for *hashing*.
 
-    Behaves like ``default_to_jsonable`` but, instead of raising for objects that
-    cannot be serialized, identifies them by their class' qualified name. Hashing only
-    needs a stable identity, so unserializable values (stateless services, tools, ...)
-    are distinguished by their class rather than their state. State that should affect
-    the hash must be exposed via a dataclass.
+    Identical to ``default_to_jsonable`` except for the terminal fallback: an object
+    with no value representation is identified by its class' qualified name instead of
+    raising. Hashing only needs a stable fingerprint, so unserializable values
+    (stateless services, tools, ...) are distinguished by their class rather than
+    their state. State that should affect the hash must be exposed via a dataclass.
     """
     converted = default_to_hashable(obj)
     if converted is not obj:

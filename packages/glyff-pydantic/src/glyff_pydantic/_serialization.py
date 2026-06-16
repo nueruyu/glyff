@@ -19,6 +19,11 @@ from pydantic import BaseModel, TypeAdapter
 
 
 def _json_default(obj: Any) -> Any:
+    """json.dumps hook for *serialization*: handle BaseModel by value, then defer to
+    the core ``default_to_jsonable`` (which raises on unrepresentable values, since
+    serialized data must round-trip). Mirrors ``_hash_default``; see
+    ``glyff.serialization.utils`` for the value-vs-identity rationale and why the two
+    differ only in the terminal fallback (raise vs class name)."""
     if isinstance(obj, BaseModel):
         return obj.model_dump(mode="json")
     try:
@@ -30,8 +35,10 @@ def _json_default(obj: Any) -> Any:
 
 
 def _hash_default(obj: Any) -> Any:
-    """json.dumps hook for hashing: like ``_json_default`` but identifies otherwise
-    unserializable objects by their class' qualified name instead of raising."""
+    """json.dumps hook for *hashing*: handle BaseModel by value, then defer to the core
+    ``default_to_hashable_id``, which identifies otherwise-unserializable objects by
+    their class' qualified name instead of raising. Mirrors ``_json_default`` and
+    differs only in that terminal fallback."""
     if isinstance(obj, BaseModel):
         return obj.model_dump(mode="json")
     return default_to_hashable_id(obj)
