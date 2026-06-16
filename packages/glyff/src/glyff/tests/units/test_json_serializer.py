@@ -243,6 +243,47 @@ def test_hash_dataclass_with_nested_plain_service(hasher: JsonArgsHasher):
     assert h1 != h3
 
 
+def test_hash_set_is_by_content_and_order_independent(hasher: JsonArgsHasher):
+    def func(a: set):
+        pass
+
+    sig = inspect.signature(func)
+
+    # Value types json doesn't encode natively (set/frozenset) are hashed by content,
+    # independent of insertion order, rather than colliding on "builtins.set".
+    h_ab = hasher.hash_args(func, sig, ({1, 2, 3},), {})
+    h_ba = hasher.hash_args(func, sig, ({3, 2, 1},), {})
+    h_cd = hasher.hash_args(func, sig, ({4, 5, 6},), {})
+
+    assert h_ab == h_ba
+    assert h_ab != h_cd
+
+
+def test_hash_frozenset_matches_equivalent_set(hasher: JsonArgsHasher):
+    def func(a: object):
+        pass
+
+    sig = inspect.signature(func)
+    h_set = hasher.hash_args(func, sig, ({1, 2},), {})
+    h_frozen = hasher.hash_args(func, sig, (frozenset({2, 1}),), {})
+
+    # Both reduce to the same sorted content representation.
+    assert h_set == h_frozen
+
+
+def test_hash_bytes_is_by_content(hasher: JsonArgsHasher):
+    def func(a: bytes):
+        pass
+
+    sig = inspect.signature(func)
+    h1 = hasher.hash_args(func, sig, (b"abc",), {})
+    h2 = hasher.hash_args(func, sig, (b"abc",), {})
+    h3 = hasher.hash_args(func, sig, (b"xyz",), {})
+
+    assert h1 == h2
+    assert h1 != h3
+
+
 def test_regular_function_with_self_parameter_is_hashed_normally(
     hasher: JsonArgsHasher,
 ):

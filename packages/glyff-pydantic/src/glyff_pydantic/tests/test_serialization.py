@@ -224,3 +224,39 @@ def test_method_hash_is_same_for_identical_pydantic_instances(hasher: ArgsHasher
     h2 = hasher.hash_args(func, sig, (inst2, 10), {})
 
     assert h1 == h2
+
+
+def test_hash_model_with_nested_opaque_member(hasher: ArgsHasher):
+    """A model holding an opaque (non-serializable) member hashes without raising.
+
+    The model's serializable state differentiates calls while the opaque member is
+    identified by its class instead of triggering a PydanticSerializationError.
+    """
+    from pydantic import ConfigDict
+
+    class Tool:
+        def __init__(self, n):
+            self.n = n
+
+    class Agent(BaseModel):
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+        name: str
+        tool: Tool
+
+        def run(self, query: str):
+            pass
+
+    func = Agent.run
+    sig = inspect.signature(func)
+
+    a1 = Agent(name="researcher", tool=Tool(1))
+    a2 = Agent(name="researcher", tool=Tool(2))
+    a3 = Agent(name="writer", tool=Tool(1))
+
+    h1 = hasher.hash_args(func, sig, (a1, "hi"), {})
+    h2 = hasher.hash_args(func, sig, (a2, "hi"), {})
+    h3 = hasher.hash_args(func, sig, (a3, "hi"), {})
+
+    # Opaque tool identified by class (h1 == h2), serializable state differentiates.
+    assert h1 == h2
+    assert h1 != h3

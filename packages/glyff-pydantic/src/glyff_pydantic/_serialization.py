@@ -16,6 +16,16 @@ from glyff.serialization.utils import (
     stable_json_dumps,
 )
 from pydantic import BaseModel, TypeAdapter
+from pydantic_core import to_jsonable_python
+
+
+def _model_to_hashable(obj: BaseModel) -> Any:
+    """Convert a model to a JSON-able value for hashing.
+
+    Uses pydantic_core so nested values are resolved by pydantic (datetime, UUID,
+    set, ...) while genuinely opaque members (services, tools, non-deepcopyable
+    objects) fall back to identity/class-name hashing instead of raising."""
+    return to_jsonable_python(obj, fallback=default_to_hashable_id)
 
 
 def _json_default(obj: Any) -> Any:
@@ -35,12 +45,13 @@ def _json_default(obj: Any) -> Any:
 
 
 def _hash_default(obj: Any) -> Any:
-    """json.dumps hook for *hashing*: handle BaseModel by value, then defer to the core
+    """json.dumps hook for *hashing*: handle BaseModel via ``_model_to_hashable`` (which
+    falls back to identity hashing for opaque members), then defer to the core
     ``default_to_hashable_id``, which identifies otherwise-unserializable objects by
     their class' qualified name instead of raising. Mirrors ``_json_default`` and
     differs only in that terminal fallback."""
     if isinstance(obj, BaseModel):
-        return obj.model_dump(mode="json")
+        return _model_to_hashable(obj)
     return default_to_hashable_id(obj)
 
 
@@ -104,7 +115,7 @@ class PydanticArgsHasher(ArgsHasher):
 
     def _to_hashable(self, obj: Any) -> Any:
         if isinstance(obj, BaseModel):
-            return obj.model_dump(mode="json")
+            return _model_to_hashable(obj)
         return default_to_hashable(obj)
 
     def hash_args(

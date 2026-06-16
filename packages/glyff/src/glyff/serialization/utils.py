@@ -77,15 +77,30 @@ def default_to_jsonable(obj: Any) -> Any:
 def default_to_hashable_id(obj: Any) -> Any:
     """json.dumps hook for *hashing*.
 
-    Identical to ``default_to_jsonable`` except for the terminal fallback: an object
-    with no value representation is identified by its class' qualified name instead of
-    raising. Hashing only needs a stable fingerprint, so unserializable values
-    (stateless services, tools, ...) are distinguished by their class rather than
-    their state. State that should affect the hash must be exposed via a dataclass.
+    Identical to ``default_to_jsonable`` except for the terminal handling: rather than
+    raising, value-bearing types that stdlib json cannot natively encode are hashed by
+    their content, and anything still left over is identified by its class' qualified
+    name. Hashing only needs a stable fingerprint, so truly opaque values (stateless
+    services, tools, ...) are distinguished by their class rather than their state;
+    state that should affect the hash must be exposed via a dataclass.
     """
     converted = default_to_hashable(obj)
     if converted is not obj:
         return converted
+    # Value types json doesn't encode natively: hash by content so distinct values do
+    # not silently collide on a shared class name (only the hashing path does this;
+    # serialization stays strict).
+    if isinstance(obj, (set, frozenset)):
+        try:
+            return sorted(obj)
+        except TypeError:
+            # Unorderable elements: order by a stable serialized form (str() would be
+            # id-based and therefore unstable across processes for opaque elements).
+            return sorted(
+                obj, key=lambda e: stable_json_dumps(e, default=default_to_hashable_id)
+            )
+    if isinstance(obj, (bytes, bytearray)):
+        return obj.hex()
     return _qualified_name(type(obj))
 
 
