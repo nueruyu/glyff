@@ -6,7 +6,10 @@ Both hashing and serialization need to map non-JSON-native objects to JSON. The
 discriminator is "can we build a *stable serialized value* for this object?":
 
 * JSON-native values and dataclasses are represented *by value* (a dataclass is
-  just one type we know how to extract a value from -- see ``default_to_hashable``).
+  just one type we know how to extract a value from -- see ``_to_value``). Hashing
+  honours ``dataclasses.field(compare=False)`` / ``hash=False`` so non-identity
+  members can be excluded, while serialization keeps every field so persisted data
+  round-trips.
 * Everything else is handled *by identity*: hashing falls back to the class'
   qualified name (``default_to_hashable_id``), serialization raises
   (``default_to_jsonable``). See those functions for why the terminal behaviour
@@ -38,25 +41,46 @@ def _qualified_name(obj: Any) -> str:
     return f"{obj.__module__}.{obj.__qualname__}"
 
 
-def default_to_hashable(obj: Any) -> Any:
-    """Shared value-extraction used by both the hashing and serialization paths.
+def _field_in_hash(f: dataclasses.Field) -> bool:
+    """Whether a dataclass field participates in hashing.
+
+    Mirrors a dataclass' own ``__hash__`` generation: a field is included unless it
+    is excluded via ``field(compare=False)`` (or ``field(hash=False)``). This lets a
+    dataclass exclude non-identity members (injected dependencies, mutable counters)
+    from the hash while keeping its identifying fields.
+    """
+    return f.compare if f.hash is None else f.hash
+
+
+def _to_value(obj: Any, *, for_hashing: bool) -> Any:
+    """Shared value-extraction for both the hashing and serialization paths.
 
     Converts the object types we know how to represent *by value* (dataclasses) or
     *by identity* (types, callables) and returns everything else unchanged, leaving
-    the caller's terminal json.dumps hook (``default_to_jsonable`` for serialization,
-    ``default_to_hashable_id`` for hashing) to decide what to do with it.
+    the caller's terminal json.dumps hook to decide what to do with it. When
+    ``for_hashing`` is true, dataclass fields excluded from hashing
+    (``field(compare=False)`` / ``hash=False``) are dropped; serialization always
+    keeps every field so persisted data round-trips faithfully.
     """
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
         # Shallow field extraction (rather than dataclasses.asdict) so that nested
         # values are handled by json.dumps' default hook instead of being deep-copied.
         # This keeps non-deepcopyable members (locks, sockets, ...) from crashing here
         # and lets nested objects fall back to identity hashing where appropriate.
-        return {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
+        fields = dataclasses.fields(obj)
+        if for_hashing:
+            fields = [f for f in fields if _field_in_hash(f)]
+        return {f.name: getattr(obj, f.name) for f in fields}
     if isinstance(obj, type):
         return _qualified_name(obj)
     if callable(obj) and hasattr(obj, "__module__") and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
     return obj
+
+
+def default_to_hashable(obj: Any) -> Any:
+    """Value-extraction for the *hashing* path (honours ``field(compare=False)``)."""
+    return _to_value(obj, for_hashing=True)
 
 
 def default_to_jsonable(obj: Any) -> Any:
@@ -66,9 +90,10 @@ def default_to_jsonable(obj: Any) -> Any:
     object with no value representation *raises* here, because serialized data is
     read back as the real value (``deserialize``) and a class name cannot be turned
     back into the object. This is the single, intentional divergence between the two
-    paths -- it stems from serialization needing to round-trip real data.
+    paths -- it stems from serialization needing to round-trip real data. (It also
+    keeps every dataclass field, including any excluded from hashing.)
     """
-    converted = default_to_hashable(obj)
+    converted = _to_value(obj, for_hashing=False)
     if converted is not obj:
         return converted
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")

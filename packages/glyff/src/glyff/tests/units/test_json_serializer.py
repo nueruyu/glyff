@@ -284,6 +284,41 @@ def test_hash_bytes_is_by_content(hasher: JsonArgsHasher):
     assert h1 != h3
 
 
+@dataclasses.dataclass
+class AgentWithDep:
+    name: str
+    # A non-identity member (an injected dependency / mutable counter) that should not
+    # influence the hash; identifying state lives in `name`.
+    counter: int = dataclasses.field(compare=False, default=0)
+
+    def run(self, query: str):
+        pass
+
+
+def test_hash_ignores_compare_false_dataclass_fields(hasher: JsonArgsHasher):
+    func = AgentWithDep.run
+    sig = inspect.signature(func)
+
+    # `counter` is field(compare=False), so it is excluded from the hash; only `name`
+    # and the call arguments differentiate.
+    h1 = hasher.hash_args(func, sig, (AgentWithDep("a", counter=1), "q"), {})
+    h2 = hasher.hash_args(func, sig, (AgentWithDep("a", counter=99), "q"), {})
+    h3 = hasher.hash_args(func, sig, (AgentWithDep("b", counter=1), "q"), {})
+
+    assert h1 == h2
+    assert h1 != h3
+
+
+async def test_serialize_includes_compare_false_dataclass_fields(
+    serializer: JsonSerializer,
+):
+    # Serialization must round-trip real data, so excluded-from-hash fields are still
+    # serialized.
+    data = await serializer.serialize(AgentWithDep("a", counter=7), AgentWithDep)
+    assert b"counter" in data
+    assert b"7" in data
+
+
 def test_regular_function_with_self_parameter_is_hashed_normally(
     hasher: JsonArgsHasher,
 ):

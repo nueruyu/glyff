@@ -226,6 +226,27 @@ def test_method_hash_is_same_for_identical_pydantic_instances(hasher: ArgsHasher
     assert h1 == h2
 
 
+def test_hash_ignores_compare_false_dataclass_fields(hasher: ArgsHasher):
+    @dataclasses.dataclass
+    class AgentWithDep:
+        name: str
+        counter: int = dataclasses.field(compare=False, default=0)
+
+        def run(self, query: str):
+            pass
+
+    func = AgentWithDep.run
+    sig = inspect.signature(func)
+
+    # field(compare=False) is excluded from the hash via the shared dataclass logic.
+    h1 = hasher.hash_args(func, sig, (AgentWithDep("a", counter=1), "q"), {})
+    h2 = hasher.hash_args(func, sig, (AgentWithDep("a", counter=99), "q"), {})
+    h3 = hasher.hash_args(func, sig, (AgentWithDep("b", counter=1), "q"), {})
+
+    assert h1 == h2
+    assert h1 != h3
+
+
 def test_hash_model_with_nested_opaque_member(hasher: ArgsHasher):
     """A model holding an opaque (non-serializable) member hashes without raising.
 
