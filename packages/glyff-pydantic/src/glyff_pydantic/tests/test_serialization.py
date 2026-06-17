@@ -281,3 +281,33 @@ def test_hash_model_with_nested_opaque_member(hasher: ArgsHasher):
     # Opaque tool identified by class (h1 == h2), serializable state differentiates.
     assert h1 == h2
     assert h1 != h3
+
+
+def test_model_set_field_is_sorted_for_stable_hashing():
+    """A model's set field is emitted as a sorted list so the hash is process-stable.
+
+    pydantic_core would otherwise emit the set in (hash-randomized) iteration order.
+    """
+    from glyff_pydantic._serialization import _model_to_hashable
+
+    class M(BaseModel):
+        tags: set
+
+    dumped = _model_to_hashable(M(tags={"gamma", "alpha", "beta"}))
+    assert dumped["tags"] == ["alpha", "beta", "gamma"]
+
+
+def test_model_set_field_hash_is_content_based(hasher: ArgsHasher):
+    class M(BaseModel):
+        tags: set
+
+    def f(a: object):
+        pass
+
+    sig = inspect.signature(f)
+    h1 = hasher.hash_args(f, sig, (M(tags={1, 2, 3}),), {})
+    h2 = hasher.hash_args(f, sig, (M(tags={3, 2, 1}),), {})
+    h3 = hasher.hash_args(f, sig, (M(tags={4, 5, 6}),), {})
+
+    assert h1 == h2
+    assert h1 != h3

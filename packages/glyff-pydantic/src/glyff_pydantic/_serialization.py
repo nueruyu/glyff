@@ -19,13 +19,40 @@ from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
 
 
+def _sort_sets(val: Any) -> Any:
+    """Recursively replace sets/frozensets with sorted lists.
+
+    pydantic_core would otherwise emit a set's *iteration order*, which is not stable
+    across processes (str hashing is randomized), and ``stable_json_dumps`` does not
+    sort list elements. Sorting here keeps the hash process-stable. Unorderable
+    elements are ordered by a stable serialized form (str() would be id-based)."""
+    if isinstance(val, (set, frozenset)):
+        try:
+            return sorted(_sort_sets(x) for x in val)
+        except TypeError:
+            return sorted(
+                (_sort_sets(x) for x in val),
+                key=lambda e: stable_json_dumps(e, default=default_to_hashable_id),
+            )
+    if isinstance(val, dict):
+        return {k: _sort_sets(v) for k, v in val.items()}
+    if isinstance(val, list):
+        return [_sort_sets(x) for x in val]
+    if isinstance(val, tuple):
+        return tuple(_sort_sets(x) for x in val)
+    return val
+
+
 def _model_to_hashable(obj: BaseModel) -> Any:
     """Convert a model to a JSON-able value for hashing.
 
-    Uses pydantic_core so nested values are resolved by pydantic (datetime, UUID,
-    set, ...) while genuinely opaque members (services, tools, non-deepcopyable
-    objects) fall back to identity/class-name hashing instead of raising."""
-    return to_jsonable_python(obj, fallback=default_to_hashable_id)
+    Dumps to python-native types first (preserving sets so they can be sorted into a
+    deterministic order), then uses pydantic_core so nested values are resolved by
+    pydantic (datetime, UUID, ...) while genuinely opaque members (services, tools,
+    non-deepcopyable objects) fall back to identity/class-name hashing instead of
+    raising."""
+    dumped = obj.model_dump(mode="python")
+    return to_jsonable_python(_sort_sets(dumped), fallback=default_to_hashable_id)
 
 
 def _json_default(obj: Any) -> Any:
