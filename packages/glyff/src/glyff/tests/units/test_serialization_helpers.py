@@ -1,4 +1,4 @@
-from glyff.serialization.utils import stable_json_dumps
+from glyff.serialization._utils import stable_json_dumps
 
 
 def test_stable_json_dumps_defaults_to_compact_ascii_json():

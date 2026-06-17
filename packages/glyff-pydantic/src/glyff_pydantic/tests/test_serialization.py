@@ -288,12 +288,12 @@ def test_model_set_field_is_sorted_for_stable_hashing():
 
     pydantic_core would otherwise emit the set in (hash-randomized) iteration order.
     """
-    from glyff_pydantic._serialization import _model_to_hashable
+    from glyff_pydantic import PydanticArgsHasher
 
     class M(BaseModel):
         tags: set
 
-    dumped = _model_to_hashable(M(tags={"gamma", "alpha", "beta"}))
+    dumped = PydanticArgsHasher()._model_to_hashable(M(tags={"gamma", "alpha", "beta"}))
     assert dumped["tags"] == ["alpha", "beta", "gamma"]
 
 

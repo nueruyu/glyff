@@ -96,10 +96,12 @@ def build_hashable_args(
     return args_dict
 
 
-def hash_from_dict(d: dict, func_name: str) -> str:
+def hash_from_dict(
+    d: dict, func_name: str, default: Callable[[Any], Any] = to_hashable
+) -> str:
     """Creates a stable SHA256 hash from a dictionary."""
     try:
-        stable_repr = stable_json_dumps(d, default=to_hashable)
+        stable_repr = stable_json_dumps(d, default=default)
     except UnserializableArgumentError as e:
         raise UnserializableArgumentError(
             f"Arguments to '{func_name}' could not be serialized to JSON. "
