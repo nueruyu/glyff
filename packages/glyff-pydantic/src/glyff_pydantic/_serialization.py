@@ -10,76 +10,50 @@ from glyff.exceptions import SerializationError, UnserializableArgumentError
 from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.serialization.utils import (
     build_hashable_args,
-    default_to_hashable,
-    default_to_hashable_id,
-    default_to_jsonable,
     stable_json_dumps,
+    to_hashable,
+    to_serializable,
 )
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
 
 
-def _sort_sets(val: Any) -> Any:
-    """Recursively replace sets/frozensets with sorted lists.
-
-    pydantic_core would otherwise emit a set's *iteration order*, which is not stable
-    across processes (str hashing is randomized), and ``stable_json_dumps`` does not
-    sort list elements. Sorting here keeps the hash process-stable. Unorderable
-    elements are ordered by a stable serialized form (str() would be id-based)."""
+def _canonicalize(val: Any) -> Any:
+    """Replace sets with sorted lists, recursively, for cross-process-stable hashing."""
     if isinstance(val, (set, frozenset)):
         try:
-            return sorted(_sort_sets(x) for x in val)
+            return sorted(_canonicalize(x) for x in val)
         except TypeError:
             return sorted(
-                (_sort_sets(x) for x in val),
-                key=lambda e: stable_json_dumps(e, default=default_to_hashable_id),
+                (_canonicalize(x) for x in val),
+                key=lambda e: stable_json_dumps(e, default=to_hashable),
             )
     if isinstance(val, dict):
-        return {k: _sort_sets(v) for k, v in val.items()}
+        return {k: _canonicalize(v) for k, v in val.items()}
     if isinstance(val, list):
-        return [_sort_sets(x) for x in val]
+        return [_canonicalize(x) for x in val]
     if isinstance(val, tuple):
-        return tuple(_sort_sets(x) for x in val)
+        return tuple(_canonicalize(x) for x in val)
     return val
 
 
 def _model_to_hashable(obj: BaseModel) -> Any:
-    """Convert a model to a JSON-able value for hashing.
-
-    Dumps to python-native types first (preserving sets so they can be sorted into a
-    deterministic order), then uses pydantic_core so nested values are resolved by
-    pydantic (datetime, UUID, ...) while genuinely opaque members (services, tools,
-    non-deepcopyable objects) fall back to identity/class-name hashing instead of
-    raising."""
-    dumped = obj.model_dump(mode="python")
-    return to_jsonable_python(_sort_sets(dumped), fallback=default_to_hashable_id)
+    # Dump to python types (keeping sets so they can be sorted), then let pydantic_core
+    # encode known types and fall back to identity hashing for opaque members.
+    dumped = _canonicalize(obj.model_dump(mode="python"))
+    return to_jsonable_python(dumped, fallback=to_hashable)
 
 
-def _json_default(obj: Any) -> Any:
-    """json.dumps hook for *serialization*: handle BaseModel by value, then defer to
-    the core ``default_to_jsonable`` (which raises on unrepresentable values, since
-    serialized data must round-trip). Mirrors ``_hash_default``; see
-    ``glyff.serialization.utils`` for the value-vs-identity rationale and why the two
-    differ only in the terminal fallback (raise vs class name)."""
+def _serialize_default(obj: Any) -> Any:
     if isinstance(obj, BaseModel):
         return obj.model_dump(mode="json")
-    try:
-        return default_to_jsonable(obj)
-    except TypeError:
-        raise SerializationError(
-            f"Object of type {obj.__class__.__name__} is not JSON serializable"
-        )
+    return to_serializable(obj)
 
 
 def _hash_default(obj: Any) -> Any:
-    """json.dumps hook for *hashing*: handle BaseModel via ``_model_to_hashable`` (which
-    falls back to identity hashing for opaque members), then defer to the core
-    ``default_to_hashable_id``, which identifies otherwise-unserializable objects by
-    their class' qualified name instead of raising. Mirrors ``_json_default`` and
-    differs only in that terminal fallback."""
     if isinstance(obj, BaseModel):
         return _model_to_hashable(obj)
-    return default_to_hashable_id(obj)
+    return to_hashable(obj)
 
 
 class PydanticSerializer(Serializer):
@@ -117,7 +91,7 @@ class PydanticSerializer(Serializer):
                 json_compatible,
                 indent=self._indent,
                 ensure_ascii=self._ensure_ascii,
-                default=_json_default,
+                default=_serialize_default,
             ).encode(DEFAULT_ENCODING)
         except UnserializableArgumentError as e:
             raise SerializationError(
@@ -140,25 +114,17 @@ class PydanticSerializer(Serializer):
 class PydanticArgsHasher(ArgsHasher):
     """An ArgsHasher implementation that uses Pydantic-aware JSON serialization."""
 
-    def _to_hashable(self, obj: Any) -> Any:
-        if isinstance(obj, BaseModel):
-            return _model_to_hashable(obj)
-        return default_to_hashable(obj)
-
     def hash_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> str:
         func_name = getattr(func, "__qualname__", func.__name__)
-        args_dict = build_hashable_args(
-            func, sig, args, kwargs, transformer=self._to_hashable
-        )
+        args_dict = build_hashable_args(sig, args, kwargs)
         try:
             stable_repr = stable_json_dumps(args_dict, default=_hash_default)
         except (SerializationError, UnserializableArgumentError) as e:
             raise UnserializableArgumentError(
                 f"Arguments to '{func_name}' could not be serialized to JSON. "
-                f"Ensure all arguments are JSON-serializable or handled by a custom "
-                f"argument transformer. Original error: {e}"
+                f"Ensure all arguments are JSON-serializable. Original error: {e}"
             ) from e
         hasher = hashlib.sha256()
         hasher.update(stable_repr.encode(DEFAULT_ENCODING))

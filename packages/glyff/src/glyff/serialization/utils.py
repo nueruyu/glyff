@@ -1,30 +1,8 @@
-"""Helpers for turning arbitrary call arguments into stable JSON.
+"""Turn call arguments into stable JSON for hashing and serialization.
 
-Design: "by value" vs "by identity"
-------------------------------------
-Both hashing and serialization need to map non-JSON-native objects to JSON. The
-discriminator is "can we build a *stable serialized value* for this object?":
-
-* JSON-native values and dataclasses are represented *by value* (a dataclass is
-  just one type we know how to extract a value from -- see ``_to_value``). Hashing
-  honours ``dataclasses.field(compare=False)`` / ``hash=False`` so non-identity
-  members can be excluded, while serialization keeps every field so persisted data
-  round-trips.
-* Everything else is handled *by identity*: hashing falls back to the class'
-  qualified name (``default_to_hashable_id``), serialization raises
-  (``default_to_jsonable``). See those functions for why the terminal behaviour
-  differs.
-
-Python's ``hash()`` / ``__hash__`` is deliberately NOT used as the discriminator:
-
-(a) It is not stable across processes. The resulting ``args_hash`` is a
-    cache/resumption key (it becomes part of the file-store path), so it must be
-    identical across runs. ``str`` hashing is randomized per-process and the
-    default object ``__hash__`` is ``id()``-based -- both change on restart.
-(b) It maps the wrong way. A normal ``@dataclass`` (``eq=True``) has
-    ``__hash__ is None`` (unhashable) yet we want it by value; a plain object is
-    ``id()``-hashable yet we want it identified by class. "Python-hashable" is
-    essentially the inverse of the distinction we need.
+Both paths encode dataclasses and JSON-native values by value. They differ only on
+objects with no value representation: hashing identifies them by class name, while
+serialization raises (its output must round-trip back to the real value).
 """
 
 import dataclasses
@@ -41,92 +19,43 @@ def _qualified_name(obj: Any) -> str:
     return f"{obj.__module__}.{obj.__qualname__}"
 
 
-def _field_in_hash(f: dataclasses.Field) -> bool:
-    """Whether a dataclass field participates in hashing.
-
-    Mirrors a dataclass' own ``__hash__`` generation: a field is included unless it
-    is excluded via ``field(compare=False)`` (or ``field(hash=False)``). This lets a
-    dataclass exclude non-identity members (injected dependencies, mutable counters)
-    from the hash while keeping its identifying fields.
-    """
-    return f.compare if f.hash is None else f.hash
+def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
+    # Exclude fields the dataclass itself excludes from __hash__ (field(compare=False)).
+    return [f for f in dataclasses.fields(obj) if (f.hash if f.hash is not None else f.compare)]
 
 
-def _to_value(obj: Any, *, for_hashing: bool) -> Any:
-    """Shared value-extraction for both the hashing and serialization paths.
+def _sorted_for_hash(values: Any) -> list:
+    # Sets have no stable iteration order across processes; sort for a stable hash.
+    try:
+        return sorted(values)
+    except TypeError:
+        return sorted(values, key=lambda v: stable_json_dumps(v, default=to_hashable))
 
-    Converts the object types we know how to represent *by value* (dataclasses) or
-    *by identity* (types, callables) and returns everything else unchanged, leaving
-    the caller's terminal json.dumps hook to decide what to do with it. When
-    ``for_hashing`` is true, dataclass fields excluded from hashing
-    (``field(compare=False)`` / ``hash=False``) are dropped; serialization always
-    keeps every field so persisted data round-trips faithfully.
-    """
-    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        # Shallow field extraction (rather than dataclasses.asdict) so that nested
-        # values are handled by json.dumps' default hook instead of being deep-copied.
-        # This keeps non-deepcopyable members (locks, sockets, ...) from crashing here
-        # and lets nested objects fall back to identity hashing where appropriate.
-        fields = dataclasses.fields(obj)
-        if for_hashing:
-            fields = [f for f in fields if _field_in_hash(f)]
-        return {f.name: getattr(obj, f.name) for f in fields}
+
+def to_hashable(obj: Any) -> Any:
+    """json.dumps default hook for hashing. Encodes by value, else by class name."""
     if isinstance(obj, type):
         return _qualified_name(obj)
-    if callable(obj) and hasattr(obj, "__module__") and hasattr(obj, "__qualname__"):
-        return _qualified_name(obj)
-    return obj
-
-
-def default_to_hashable(obj: Any) -> Any:
-    """Value-extraction for the *hashing* path (honours ``field(compare=False)``)."""
-    return _to_value(obj, for_hashing=True)
-
-
-def default_to_jsonable(obj: Any) -> Any:
-    """json.dumps hook for *serialization*.
-
-    Identical to ``default_to_hashable_id`` except for the terminal fallback: an
-    object with no value representation *raises* here, because serialized data is
-    read back as the real value (``deserialize``) and a class name cannot be turned
-    back into the object. This is the single, intentional divergence between the two
-    paths -- it stems from serialization needing to round-trip real data. (It also
-    keeps every dataclass field, including any excluded from hashing.)
-    """
-    converted = _to_value(obj, for_hashing=False)
-    if converted is not obj:
-        return converted
-    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
-
-
-def default_to_hashable_id(obj: Any) -> Any:
-    """json.dumps hook for *hashing*.
-
-    Identical to ``default_to_jsonable`` except for the terminal handling: rather than
-    raising, value-bearing types that stdlib json cannot natively encode are hashed by
-    their content, and anything still left over is identified by its class' qualified
-    name. Hashing only needs a stable fingerprint, so truly opaque values (stateless
-    services, tools, ...) are distinguished by their class rather than their state;
-    state that should affect the hash must be exposed via a dataclass.
-    """
-    converted = default_to_hashable(obj)
-    if converted is not obj:
-        return converted
-    # Value types json doesn't encode natively: hash by content so distinct values do
-    # not silently collide on a shared class name (only the hashing path does this;
-    # serialization stays strict).
+    if dataclasses.is_dataclass(obj):
+        return {f.name: getattr(obj, f.name) for f in _hashed_fields(obj)}
     if isinstance(obj, (set, frozenset)):
-        try:
-            return sorted(obj)
-        except TypeError:
-            # Unorderable elements: order by a stable serialized form (str() would be
-            # id-based and therefore unstable across processes for opaque elements).
-            return sorted(
-                obj, key=lambda e: stable_json_dumps(e, default=default_to_hashable_id)
-            )
+        return _sorted_for_hash(obj)
     if isinstance(obj, (bytes, bytearray)):
         return obj.hex()
+    if callable(obj) and hasattr(obj, "__qualname__"):
+        return _qualified_name(obj)
     return _qualified_name(type(obj))
+
+
+def to_serializable(obj: Any) -> Any:
+    """json.dumps default hook for serialization. Encodes by value, else raises."""
+    if isinstance(obj, type):
+        return _qualified_name(obj)
+    if dataclasses.is_dataclass(obj):
+        return {f.name: getattr(obj, f.name) for f in dataclasses.fields(obj)}
+    if callable(obj) and hasattr(obj, "__qualname__"):
+        return _qualified_name(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 def stable_json_dumps(
@@ -142,7 +71,7 @@ def stable_json_dumps(
             indent=indent,
             sort_keys=True,
             ensure_ascii=ensure_ascii,
-            default=default or default_to_jsonable,
+            default=default or to_serializable,
             separators=JSON_SEPARATORS if indent is None else None,
         )
     except TypeError as e:
@@ -153,39 +82,30 @@ def stable_json_dumps(
 
 
 def build_hashable_args(
-    func: Callable,
-    sig: inspect.Signature,
-    args: tuple,
-    kwargs: dict,
-    transformer: Callable[[Any], Any],
+    sig: inspect.Signature, args: tuple, kwargs: dict
 ) -> dict[str, Any]:
-    """Binds arguments and applies a transformer to each value."""
+    """Binds arguments into a name->value dict, dropping *args/**kwargs."""
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
 
     args_dict: dict[str, Any] = {}
     for name, value in bound.arguments.items():
-        param = sig.parameters[name]
-        if param.kind in (
+        if sig.parameters[name].kind not in (
             inspect.Parameter.VAR_POSITIONAL,
             inspect.Parameter.VAR_KEYWORD,
         ):
-            continue
-
-        args_dict[name] = transformer(value)
-
+            args_dict[name] = value
     return args_dict
 
 
 def hash_from_dict(d: dict, func_name: str) -> str:
     """Creates a stable SHA256 hash from a dictionary."""
     try:
-        stable_repr = stable_json_dumps(d, default=default_to_hashable_id)
+        stable_repr = stable_json_dumps(d, default=to_hashable)
     except UnserializableArgumentError as e:
         raise UnserializableArgumentError(
             f"Arguments to '{func_name}' could not be serialized to JSON. "
-            f"Ensure all arguments are JSON-serializable or handled by a custom "
-            f"argument transformer. Original error: {e}"
+            f"Ensure all arguments are JSON-serializable. Original error: {e}"
         ) from e
 
     hasher = hashlib.sha256()

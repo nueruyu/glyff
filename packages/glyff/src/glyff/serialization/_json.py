@@ -7,7 +7,6 @@ from ..exceptions import SerializationError, UnserializableArgumentError
 from .constants import DEFAULT_ENCODING
 from .utils import (
     build_hashable_args,
-    default_to_hashable,
     hash_from_dict,
     stable_json_dumps,
 )
@@ -36,7 +35,5 @@ class JsonArgsHasher(ArgsHasher):
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> str:
         func_name = getattr(func, "__qualname__", func.__name__)
-        args_dict = build_hashable_args(
-            func, sig, args, kwargs, transformer=default_to_hashable
-        )
+        args_dict = build_hashable_args(sig, args, kwargs)
         return hash_from_dict(args_dict, func_name)
