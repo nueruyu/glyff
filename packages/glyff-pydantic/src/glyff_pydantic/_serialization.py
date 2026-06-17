@@ -21,13 +21,10 @@ from pydantic_core import to_jsonable_python
 def _canonicalize(val: Any) -> Any:
     """Replace sets with sorted lists, recursively, for cross-process-stable hashing."""
     if isinstance(val, (set, frozenset)):
-        try:
-            return sorted(_canonicalize(x) for x in val)
-        except TypeError:
-            return sorted(
-                (_canonicalize(x) for x in val),
-                key=lambda e: stable_json_dumps(e, default=to_hashable),
-            )
+        return sorted(
+            (_canonicalize(x) for x in val),
+            key=lambda e: stable_json_dumps(e, default=to_hashable),
+        )
     if isinstance(val, dict):
         return {k: _canonicalize(v) for k, v in val.items()}
     if isinstance(val, list):

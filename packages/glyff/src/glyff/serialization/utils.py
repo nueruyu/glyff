@@ -25,11 +25,9 @@ def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
 
 
 def _sorted_for_hash(values: Any) -> list:
-    # Sets have no stable iteration order across processes; sort for a stable hash.
-    try:
-        return sorted(values)
-    except TypeError:
-        return sorted(values, key=lambda v: stable_json_dumps(v, default=to_hashable))
+    # A set has no stable cross-process order; impose one via each element's canonical
+    # JSON (works for unorderable/mixed elements; str()/repr() would be id-based).
+    return sorted(values, key=lambda v: stable_json_dumps(v, default=to_hashable))
 
 
 def to_hashable(obj: Any) -> Any:
