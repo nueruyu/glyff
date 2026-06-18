@@ -1,4 +1,13 @@
-from glyff.serialization._utils import stable_json_dumps
+from glyff.serialization._utils import _sorted_for_hash, stable_json_dumps, to_hashable
+
+
+def test_sorted_for_hash_is_stable_for_partial_order_elements():
+    # frozenset only defines a partial order, so a direct sorted() would leave
+    # incomparable elements in process-randomized input order. _sorted_for_hash must
+    # instead order them by their canonical JSON.
+    values = {frozenset({"a", "b"}), frozenset({"c", "d"}), frozenset({"e"})}
+    expected = sorted(values, key=lambda v: stable_json_dumps(v, default=to_hashable))
+    assert _sorted_for_hash(values) == expected
 
 
 def test_stable_json_dumps_defaults_to_compact_ascii_json():
