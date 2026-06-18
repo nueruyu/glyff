@@ -6,6 +6,7 @@ serialization raises (its output must round-trip back to the real value).
 """
 
 import dataclasses
+import functools
 import hashlib
 import inspect
 import json
@@ -25,15 +26,26 @@ def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
 
 
 def _sorted_for_hash(values: Any) -> list:
-    # A set has no stable cross-process order; impose one via each element's canonical
-    # JSON (works for unorderable/mixed elements; str()/repr() would be id-based).
-    return sorted(values, key=lambda v: stable_json_dumps(v, default=to_hashable))
+    # A set has no stable cross-process order; impose one. Sort directly when elements
+    # are orderable (fast), else by each element's canonical JSON (str()/repr() would
+    # be id-based and therefore unstable across processes).
+    try:
+        return sorted(values)
+    except TypeError:
+        return sorted(values, key=lambda v: stable_json_dumps(v, default=to_hashable))
 
 
 def to_hashable(obj: Any) -> Any:
     """json.dumps default hook for hashing. Encodes by value, else by class name."""
     if isinstance(obj, type):
         return _qualified_name(obj)
+    if isinstance(obj, functools.partial):
+        # partials are callable but have no __qualname__; hash by their components.
+        return {
+            "__partial__": to_hashable(obj.func),
+            "args": obj.args,
+            "keywords": obj.keywords,
+        }
     if dataclasses.is_dataclass(obj):
         return {f.name: getattr(obj, f.name) for f in _hashed_fields(obj)}
     if isinstance(obj, (set, frozenset)):

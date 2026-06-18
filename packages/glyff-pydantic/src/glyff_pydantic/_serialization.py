@@ -74,10 +74,16 @@ class PydanticArgsHasher(JsonArgsHasher):
     def _canonicalize(self, val: Any) -> Any:
         # Replace sets with sorted lists, recursively, for cross-process-stable hashing.
         if isinstance(val, (set, frozenset)):
-            return sorted(
-                (self._canonicalize(x) for x in val),
-                key=lambda e: json.dumps(e, sort_keys=True, default=self._to_jsonable),
-            )
+            items = [self._canonicalize(x) for x in val]
+            try:
+                return sorted(items)
+            except TypeError:
+                return sorted(
+                    items,
+                    key=lambda e: json.dumps(
+                        e, sort_keys=True, default=self._to_jsonable
+                    ),
+                )
         if isinstance(val, dict):
             return {k: self._canonicalize(v) for k, v in val.items()}
         if isinstance(val, list):

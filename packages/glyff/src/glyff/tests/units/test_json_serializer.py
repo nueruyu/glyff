@@ -172,6 +172,30 @@ def test_hash_callable_values_by_qualified_name(hasher: JsonArgsHasher):
     assert first != different
 
 
+def test_hash_partial_by_components(hasher: JsonArgsHasher):
+    import functools
+
+    def func(callback):
+        pass
+
+    sig = inspect.signature(func)
+
+    def base(a, b):
+        return a + b
+
+    # partials hash by their func/args/keywords, not all collapsing to "functools.partial".
+    h1 = hasher.hash_args(func, sig, (functools.partial(base, 1),), {})
+    h1_again = hasher.hash_args(func, sig, (functools.partial(base, 1),), {})
+    diff_arg = hasher.hash_args(func, sig, (functools.partial(base, 2),), {})
+    diff_kw = hasher.hash_args(func, sig, (functools.partial(base, 1, b=9),), {})
+    diff_func = hasher.hash_args(func, sig, (functools.partial(helper_func),), {})
+
+    assert h1 == h1_again
+    assert h1 != diff_arg
+    assert h1 != diff_kw
+    assert h1 != diff_func
+
+
 def test_method_hash_differs_for_different_dataclass_instances(
     hasher: JsonArgsHasher,
 ):
