@@ -73,6 +73,23 @@ def test_hash_args_different_values_differ(hasher: JsonArgsHasher):
     assert h1 != h2
 
 
+def test_hash_args_includes_var_positional_and_keyword(hasher: JsonArgsHasher):
+    def func(a, *args, **kwargs):
+        pass
+
+    sig = inspect.signature(func)
+    # *args and **kwargs must affect the hash, otherwise distinct calls collide.
+    assert hasher.hash_args(func, sig, (1, 2), {}) != hasher.hash_args(
+        func, sig, (1, 3), {}
+    )
+    assert hasher.hash_args(func, sig, (1,), {"x": 2}) != hasher.hash_args(
+        func, sig, (1,), {"x": 3}
+    )
+    assert hasher.hash_args(func, sig, (1, 2), {"x": 3}) == hasher.hash_args(
+        func, sig, (1, 2), {"x": 3}
+    )
+
+
 def test_hash_args_is_deterministic(hasher: JsonArgsHasher):
     sig = inspect.signature(sample_func)
     h1 = hasher.hash_args(sample_func, sig, (42,), {"b": "hello"})

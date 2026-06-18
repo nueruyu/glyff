@@ -82,18 +82,14 @@ def stable_json_dumps(
 def build_hashable_args(
     sig: inspect.Signature, args: tuple, kwargs: dict
 ) -> dict[str, Any]:
-    """Binds arguments into a name->value dict, dropping *args/**kwargs."""
+    """Binds arguments into a name->value dict, including *args/**kwargs.
+
+    Variadic parameters appear as a tuple (var-positional) and dict (var-keyword),
+    both of which json serializes, so they contribute to the hash.
+    """
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
-
-    args_dict: dict[str, Any] = {}
-    for name, value in bound.arguments.items():
-        if sig.parameters[name].kind not in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        ):
-            args_dict[name] = value
-    return args_dict
+    return dict(bound.arguments)
 
 
 def hash_from_dict(
