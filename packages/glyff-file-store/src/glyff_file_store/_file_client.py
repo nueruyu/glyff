@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import shutil
@@ -53,12 +54,16 @@ class FileClient:
         # transaction replaces the earlier op (last write wins).
         self._staged_ops: dict[str, StagedOperation] = {}
         self._staged_deletes: set[str] = set()
-        # Paths whose staged write callback is currently being resolved, keyed
-        # by the resolving task. A callback that reads its own path (e.g.
-        # append semantics) must see the committed file rather than recursing
-        # into its own staged op; tracking the task ensures a *concurrent* read
-        # of the same path from a different task still resolves the staged op.
-        self._resolving: set[tuple[str, asyncio.Task[Any] | None]] = set()
+        # Paths whose staged write callback is currently being resolved. A
+        # callback that reads its own path (e.g. append semantics) must see the
+        # committed file rather than recursing into its own staged op. A
+        # ContextVar (rather than a task-keyed set) means any child tasks the
+        # callback spawns inherit the resolving set — so the recursion guard
+        # still fires across ``create_task``/``gather`` — while unrelated
+        # concurrent reads keep their own context and still resolve the op.
+        self._resolving: contextvars.ContextVar[frozenset[str]] = (
+            contextvars.ContextVar("file_client_resolving", default=frozenset())
+        )
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -112,13 +117,13 @@ class FileClient:
         single-threaded event loop) and the write callback is awaited without
         the lock, so an append-style callback that re-enters ``read`` cannot
         deadlock. While such a callback runs, a nested read of the *same* path
-        from the *same* task falls through to the committed file (see
-        ``self._resolving``); a concurrent read from another task still
-        resolves the staged op.
+        from the same task (or a child task it spawns) falls through to the
+        committed file (see ``self._resolving``); an unrelated concurrent read
+        from another task still resolves the staged op.
         """
         rel_str = str(path)
-        current_task = asyncio.current_task()
-        if (rel_str, current_task) in self._resolving:
+        resolving = self._resolving.get()
+        if rel_str in resolving:
             # This task's staged write callback is reading its own path; serve
             # the committed file so it can compute the new content (and so it
             # cannot recurse into its own staged op).
@@ -129,11 +134,11 @@ class FileClient:
         if op is None:
             return await self._read_committed(path)
 
-        self._resolving.add((rel_str, current_task))
+        token = self._resolving.set(resolving | {rel_str})
         try:
             return await op.write()
         finally:
-            self._resolving.discard((rel_str, current_task))
+            self._resolving.reset(token)
 
     async def _read_committed(self, path: str | Path) -> bytes | None:
         """Read the committed file from disk, ignoring any staged state."""
@@ -206,13 +211,12 @@ class FileClient:
             # callback reading its own path sees the committed file instead of
             # recursing into its own staged op.
             resolved_writes: dict[str, bytes] = {}
-            current_task = asyncio.current_task()
             for rel_path, op in self._staged_ops.items():
-                self._resolving.add((rel_path, current_task))
+                token = self._resolving.set(self._resolving.get() | {rel_path})
                 try:
                     resolved_writes[rel_path] = await op.write()
                 finally:
-                    self._resolving.discard((rel_path, current_task))
+                    self._resolving.reset(token)
 
             staged_deletes = set(self._staged_deletes)
 

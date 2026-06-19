@@ -500,3 +500,21 @@ async def test_commit_reflects_state_mutated_after_a_staged_read(
     await client.commit_staged()
     # The commit reflects the latest state, not the value frozen at first read.
     assert await client.read("k.txt") == b"a,b"
+
+
+async def test_read_resolving_propagates_to_child_tasks(client: FileClient):
+    """A staged write callback that reads its own path from a child task it
+    spawns must still fall back to the committed file. The resolving guard is a
+    ContextVar, so child tasks inherit it instead of recursing infinitely."""
+    (client.resolve("k.txt").parent).mkdir(exist_ok=True)
+    client.resolve("k.txt").write_bytes(b"committed")
+
+    async def writer() -> bytes:
+        async def read_self() -> bytes | None:
+            return await client.read("k.txt")
+
+        val = await asyncio.create_task(read_self())
+        return (val or b"") + b"-new"
+
+    await client.stage_write("k.txt", writer)
+    assert await client.read("k.txt") == b"committed-new"
