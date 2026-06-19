@@ -1,3 +1,4 @@
+from ._context import get_context
 from ._engrave import engrave
 from ._event_system import Event, EventEmitter, EventHandler
 from ._interfaces import ArgsHasher, Execution, Serializer, SessionStore, Transaction
@@ -18,4 +19,5 @@ __all__ = [
     "ExecutionId",
     "ExecutionRecord",
     "ExecutionStatus",
+    "get_context",
 ]
