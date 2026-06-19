@@ -143,13 +143,14 @@ async def test_stage_write_rejects_invalid_content(client: FileClient):
 
 async def test_callback_can_implement_append_semantics(client: FileClient):
     """Users who want 'append' semantics can implement them in a callback
-    that reads existing content and concatenates the new bytes. Verified
-    across multiple commits to confirm prior content is preserved."""
+    that reads existing committed content (staged=False) and concatenates the
+    new bytes. Verified across multiple commits to confirm prior content is
+    preserved."""
     path = "log.txt"
 
     async def make_appender(suffix: bytes):
         async def writer() -> bytes:
-            existing = await client.read(path) or b""
+            existing = await client.read(path, staged=False) or b""
             return existing + suffix
 
         return writer
@@ -446,13 +447,9 @@ async def test_read_falls_through_to_committed_file(client: FileClient):
     assert await client.read("k.txt") == b"v"
 
 
-async def test_concurrent_read_during_resolution_sees_staged_value(
-    client: FileClient,
-):
-    """While one task resolves a staged write callback, a concurrent read of
-    the same path from a *different* task must still observe the staged value
-    rather than falling back to the committed file (the ``_resolving`` guard is
-    per-task, not global)."""
+async def test_concurrent_staged_reads_both_resolve(client: FileClient):
+    """Two concurrent staged reads of the same path each resolve the staged
+    write callback and observe the staged value."""
     started = asyncio.Event()
     release = asyncio.Event()
 
@@ -465,7 +462,7 @@ async def test_concurrent_read_during_resolution_sees_staged_value(
     # No committed file exists, so a wrong fall-through would read as None.
 
     task_a = asyncio.create_task(client.read("k.txt"))
-    await started.wait()  # task A is now inside the callback (path is resolving)
+    await started.wait()  # task A is now inside the callback
 
     task_b = asyncio.create_task(client.read("k.txt"))
     await asyncio.sleep(0)  # let task B reach its own await
@@ -473,6 +470,22 @@ async def test_concurrent_read_during_resolution_sees_staged_value(
     release.set()
     assert await task_b == b"staged"
     assert await task_a == b"staged"
+
+
+async def test_read_staged_false_returns_committed_ignoring_staged(
+    client: FileClient,
+):
+    """staged=False reads only the committed file, ignoring a staged write or
+    delete on the same path."""
+    client.resolve("k.txt").write_bytes(b"committed")
+
+    await client.stage_write("k.txt", b"staged")
+    assert await client.read("k.txt") == b"staged"
+    assert await client.read("k.txt", staged=False) == b"committed"
+
+    await client.stage_delete("k.txt")
+    assert await client.read("k.txt") is None
+    assert await client.read("k.txt", staged=False) == b"committed"
 
 
 async def test_commit_reflects_state_mutated_after_a_staged_read(
@@ -502,16 +515,15 @@ async def test_commit_reflects_state_mutated_after_a_staged_read(
     assert await client.read("k.txt") == b"a,b"
 
 
-async def test_read_resolving_propagates_to_child_tasks(client: FileClient):
-    """A staged write callback that reads its own path from a child task it
-    spawns must still fall back to the committed file. The resolving guard is a
-    ContextVar, so child tasks inherit it instead of recursing infinitely."""
-    (client.resolve("k.txt").parent).mkdir(exist_ok=True)
+async def test_callback_reads_committed_from_child_task(client: FileClient):
+    """A write callback reads its own committed content with staged=False, so
+    it works the same whether it reads inline or from a child task it spawns —
+    there is no recursion to guard against."""
     client.resolve("k.txt").write_bytes(b"committed")
 
     async def writer() -> bytes:
         async def read_self() -> bytes | None:
-            return await client.read("k.txt")
+            return await client.read("k.txt", staged=False)
 
         val = await asyncio.create_task(read_self())
         return (val or b"") + b"-new"

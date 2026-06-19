@@ -56,3 +56,17 @@ async def test_read_consistent_with_all_keys():
     assert client.all_keys() == {"staged"}
     assert await client.read("staged") == b"s"
     assert await client.read("committed") is None
+
+
+async def test_read_staged_false_returns_committed_ignoring_staged():
+    client = MemoryClient()
+    client.stage_write("k", b"committed")
+    await client.commit_staged()
+
+    client.stage_write("k", b"staged")
+    assert await client.read("k") == b"staged"
+    assert await client.read("k", staged=False) == b"committed"
+
+    client.stage_delete("k")
+    assert await client.read("k") is None
+    assert await client.read("k", staged=False) == b"committed"

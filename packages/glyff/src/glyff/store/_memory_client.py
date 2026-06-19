@@ -33,16 +33,20 @@ class MemoryClient:
                 self._data.pop(key, None)
         self.clear_staged()
 
-    async def read(self, key: str) -> Any | None:
-        """Read the value visible to the current transaction: a staged write
-        overrides the committed value, a staged delete reads as ``None``, and
-        otherwise the committed value is returned. This mirrors the staged
-        view exposed by ``all_keys()``."""
+    async def read(self, key: str, *, staged: bool = True) -> Any | None:
+        """Read the value for ``key``.
+
+        With ``staged=True`` (the default) the read is transaction-aware: a
+        staged write overrides the committed value, a staged delete reads as
+        ``None``, and otherwise the committed value is returned (mirroring the
+        staged view exposed by ``all_keys()``). With ``staged=False`` only the
+        committed value is returned, ignoring all staged state."""
         async with self._lock:
-            if key in self._staged_deletes:
-                return None
-            if key in self._staged_writes:
-                return self._staged_writes[key]
+            if staged:
+                if key in self._staged_deletes:
+                    return None
+                if key in self._staged_writes:
+                    return self._staged_writes[key]
             return self._data.get(key)
 
     def stage_write(self, key: str, value: Any) -> None:
