@@ -471,3 +471,27 @@ async def test_concurrent_read_during_resolution_sees_staged_value(
     release.set()
     assert await task_b == b"staged"
     assert await task_a == b"staged"
+
+
+async def test_read_then_commit_uses_same_bytes_for_nondeterministic_callback(
+    client: FileClient,
+):
+    """A read() that resolves a staged callback caches the result, and
+    commit_staged commits that same cached value. For a non-deterministic
+    callback this keeps what was read consistent with what lands on disk."""
+    counter = 0
+
+    async def nondeterministic_writer() -> bytes:
+        nonlocal counter
+        counter += 1
+        return f"value-{counter}".encode()
+
+    await client.stage_write("k.txt", nondeterministic_writer)
+
+    observed = await client.read("k.txt")
+    assert observed == b"value-1"
+
+    await client.commit_staged()
+    # The callback ran exactly once; the committed bytes match what read saw.
+    assert counter == 1
+    assert await client.read("k.txt") == observed

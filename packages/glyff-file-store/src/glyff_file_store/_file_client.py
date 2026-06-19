@@ -212,14 +212,25 @@ class FileClient:
             # place for retry. Mark each path as resolving so an append-style
             # callback reading its own path sees the committed file instead of
             # recursing into its own staged op.
+            #
+            # Reuse any value already resolved by a prior read() in this
+            # transaction (and cache freshly resolved values): a callback may
+            # be non-deterministic, so committing the same bytes that read()
+            # observed preserves read-your-writes, and a retry after a partial
+            # failure won't re-invoke an already-resolved callback.
             resolved_writes: dict[str, bytes] = {}
             current_task = asyncio.current_task()
             for rel_path, op in self._staged_ops.items():
+                if rel_path in self._staged_read_cache:
+                    resolved_writes[rel_path] = self._staged_read_cache[rel_path]
+                    continue
                 self._resolving.add((rel_path, current_task))
                 try:
-                    resolved_writes[rel_path] = await op.write()
+                    content = await op.write()
                 finally:
                     self._resolving.discard((rel_path, current_task))
+                resolved_writes[rel_path] = content
+                self._staged_read_cache[rel_path] = content
 
             staged_deletes = set(self._staged_deletes)
 
