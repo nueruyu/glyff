@@ -8,3 +8,14 @@ members = [
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
 asyncio_mode = "auto"
+
+[tool.pyright]
+include = [
+    "packages/glyff/src",
+    "packages/glyff-pydantic/src",
+    "packages/glyff-file-store/src",
+]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
