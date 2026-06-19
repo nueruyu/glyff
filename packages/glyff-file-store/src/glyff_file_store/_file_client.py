@@ -53,6 +53,14 @@ class FileClient:
         # transaction replaces the earlier op (last write wins).
         self._staged_ops: dict[str, StagedOperation] = {}
         self._staged_deletes: set[str] = set()
+        # Resolved bytes of staged write callbacks, cached so repeated reads
+        # within a transaction don't re-invoke the callback. Invalidated
+        # whenever the underlying op is replaced, cancelled, or cleared.
+        self._staged_read_cache: dict[str, bytes] = {}
+        # Paths whose staged write callback is currently being resolved. A
+        # callback that reads its own path (e.g. append semantics) must see
+        # the committed file rather than recursing into its own staged op.
+        self._resolving: set[str] = set()
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
@@ -89,6 +97,49 @@ class FileClient:
         return self._session_path / path
 
     async def read(self, path: str | Path) -> bytes | None:
+        """Read the bytes visible to the current transaction: a staged write
+        overrides the committed file, a staged delete reads as ``None``, and
+        otherwise the committed file is read from disk.
+
+        Serving a staged write means invoking its commit-time callback; the
+        resolved bytes are cached for the transaction so repeated reads of the
+        same staged path don't re-run the callback. ``clear_staged`` and
+        ``commit_staged`` discard the cache along with the staged ops.
+
+        Like the committed-disk read, this does not hold ``self._lock``: the
+        staged dicts are inspected synchronously (an atomic snapshot under the
+        single-threaded event loop) and the write callback is awaited without
+        the lock, so an append-style callback that re-enters ``read`` cannot
+        deadlock. While such a callback runs, a nested read of the *same* path
+        falls through to the committed file (see ``self._resolving``).
+        """
+        rel_str = str(path)
+        if rel_str in self._resolving:
+            # A staged write callback is reading its own path; serve the
+            # committed file so it can compute the new content (and so it
+            # cannot recurse into its own staged op or a stale cache entry).
+            return await self._read_committed(path)
+        if rel_str in self._staged_deletes:
+            return None
+        if rel_str in self._staged_read_cache:
+            return self._staged_read_cache[rel_str]
+        op = self._staged_ops.get(rel_str)
+        if op is None:
+            return await self._read_committed(path)
+
+        self._resolving.add(rel_str)
+        try:
+            content = await op.write()
+        finally:
+            self._resolving.discard(rel_str)
+        # Cache only if this op is still the staged one; a concurrent
+        # stage_*/commit across the await may have replaced or cleared it.
+        if self._staged_ops.get(rel_str) is op:
+            self._staged_read_cache[rel_str] = content
+        return content
+
+    async def _read_committed(self, path: str | Path) -> bytes | None:
+        """Read the committed file from disk, ignoring any staged state."""
         try:
             return await asyncio.to_thread(self.resolve(path).read_bytes)
         except FileNotFoundError:
@@ -127,12 +178,14 @@ class FileClient:
         async with self._lock:
             self._staged_ops[rel_str] = op
             self._staged_deletes.discard(rel_str)
+            self._staged_read_cache.pop(rel_str, None)
 
     async def stage_delete(self, path: str | Path) -> None:
         rel_str = str(path)
         async with self._lock:
             self._staged_deletes.add(rel_str)
             cancelled = self._staged_ops.pop(rel_str, None)
+            self._staged_read_cache.pop(rel_str, None)
         # Run the cancelled op's clear callback outside the lock so a
         # callback that re-enters FileClient cannot deadlock.
         if cancelled is not None and cancelled.clear is not None:
@@ -151,10 +204,16 @@ class FileClient:
 
             # Resolve all writer callbacks before touching disk. If any
             # raises, nothing has changed and the staged ops remain in
-            # place for retry.
+            # place for retry. Mark each path as resolving so an append-style
+            # callback reading its own path sees the committed file instead of
+            # recursing into its own staged op.
             resolved_writes: dict[str, bytes] = {}
             for rel_path, op in self._staged_ops.items():
-                resolved_writes[rel_path] = await op.write()
+                self._resolving.add(rel_path)
+                try:
+                    resolved_writes[rel_path] = await op.write()
+                finally:
+                    self._resolving.discard(rel_path)
 
             staged_deletes = set(self._staged_deletes)
 
@@ -184,6 +243,7 @@ class FileClient:
         ]
         self._staged_ops.clear()
         self._staged_deletes.clear()
+        self._staged_read_cache.clear()
         return clear_tasks
 
     def _commit_to_disk_sync(

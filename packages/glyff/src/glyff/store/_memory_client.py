@@ -34,7 +34,15 @@ class MemoryClient:
         self.clear_staged()
 
     async def read(self, key: str) -> Any | None:
+        """Read the value visible to the current transaction: a staged write
+        overrides the committed value, a staged delete reads as ``None``, and
+        otherwise the committed value is returned. This mirrors the staged
+        view exposed by ``all_keys()``."""
         async with self._lock:
+            if key in self._staged_deletes:
+                return None
+            if key in self._staged_writes:
+                return self._staged_writes[key]
             return self._data.get(key)
 
     def stage_write(self, key: str, value: Any) -> None:

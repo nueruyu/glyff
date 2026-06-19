@@ -15,8 +15,11 @@ async def test_start_execution_stages_start_event(
     store: SessionStore = store_factory("test-start")
     tx = await store.begin_transaction()
     await store.start_execution(base_execution_id)
-    # State is not visible before commit
-    assert await store.get_execution_record(base_execution_id, dict) is None
+    # Read-your-writes: the staged STARTED state is visible within the
+    # transaction, before commit.
+    staged = await store.get_execution_record(base_execution_id, dict)
+    assert staged is not None
+    assert staged.status == ExecutionStatus.STARTED
     await tx.commit()
     state = await store.get_execution_record(base_execution_id, dict)
     assert state is not None
@@ -32,9 +35,11 @@ async def test_commit_completion(
     tx = await store.begin_transaction()
     execution = await store.start_execution(base_execution_id)
     await execution.complete(result_obj, dict)
-    assert (
-        await store.get_execution_record(base_execution_id, dict) is None
-    )  # Not visible before commit
+    # Read-your-writes: the staged completion is visible before commit.
+    staged = await store.get_execution_record(base_execution_id, dict)
+    assert staged is not None
+    assert staged.status == ExecutionStatus.COMPLETED
+    assert staged.result == result_obj
     await tx.commit()
 
     state = await store.get_execution_record(base_execution_id, dict)

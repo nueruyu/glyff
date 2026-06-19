@@ -187,9 +187,11 @@ async def test_partial_commit_failure_leaves_disk_unchanged(client: FileClient):
     with pytest.raises(RuntimeError, match="simulated writer failure"):
         await client.commit_staged()
 
-    # Neither file changed on disk.
-    assert await client.read("a.txt") == b"a-original"
-    assert await client.read("b.txt") == b"b-original"
+    # Neither file changed on disk. (Read the committed files directly: the
+    # staged ops remain after the failed commit, so a transaction-aware
+    # read() would reflect the still-staged write rather than the disk.)
+    assert client.resolve("a.txt").read_bytes() == b"a-original"
+    assert client.resolve("b.txt").read_bytes() == b"b-original"
 
 
 async def test_partial_commit_failure_can_be_retried(client: FileClient):
@@ -372,3 +374,70 @@ async def test_stage_write_after_stage_delete_writes(client: FileClient):
     await client.commit_staged()
 
     assert await client.read(path) == b"new content"
+
+
+async def test_read_observes_staged_write(client: FileClient):
+    await client.stage_write("k.txt", b"v")
+    assert await client.read("k.txt") == b"v"
+
+
+async def test_staged_write_overrides_committed_file(client: FileClient):
+    await client.stage_write("k.txt", b"old")
+    await client.commit_staged()
+
+    await client.stage_write("k.txt", b"new")
+    assert await client.read("k.txt") == b"new"
+    # The committed file on disk is untouched until commit.
+    assert client.resolve("k.txt").read_bytes() == b"old"
+
+
+async def test_read_observes_staged_delete(client: FileClient):
+    await client.stage_write("k.txt", b"v")
+    await client.commit_staged()
+
+    await client.stage_delete("k.txt")
+    assert await client.read("k.txt") is None
+
+
+async def test_read_serves_callback_staged_write(client: FileClient):
+    async def writer() -> bytes:
+        return b"from-callback"
+
+    await client.stage_write("k.txt", writer)
+    assert await client.read("k.txt") == b"from-callback"
+
+
+async def test_staged_read_caches_callback_result(client: FileClient):
+    calls: list[int] = []
+
+    async def writer() -> bytes:
+        calls.append(1)
+        return b"v"
+
+    await client.stage_write("k.txt", writer)
+    assert await client.read("k.txt") == b"v"
+    assert await client.read("k.txt") == b"v"
+    # Repeated staged reads reuse the cached resolution.
+    assert calls == [1]
+
+
+async def test_restaging_invalidates_staged_read_cache(client: FileClient):
+    await client.stage_write("k.txt", b"first")
+    assert await client.read("k.txt") == b"first"
+
+    await client.stage_write("k.txt", b"second")
+    assert await client.read("k.txt") == b"second"
+
+
+async def test_clear_staged_discards_staged_read(client: FileClient):
+    await client.stage_write("k.txt", b"v")
+    assert await client.read("k.txt") == b"v"
+
+    await client.clear_staged()
+    assert await client.read("k.txt") is None
+
+
+async def test_read_falls_through_to_committed_file(client: FileClient):
+    await client.stage_write("k.txt", b"v")
+    await client.commit_staged()
+    assert await client.read("k.txt") == b"v"
