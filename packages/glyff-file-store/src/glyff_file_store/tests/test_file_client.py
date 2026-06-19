@@ -1,3 +1,4 @@
+import asyncio
 import os
 from pathlib import Path
 
@@ -441,3 +442,32 @@ async def test_read_falls_through_to_committed_file(client: FileClient):
     await client.stage_write("k.txt", b"v")
     await client.commit_staged()
     assert await client.read("k.txt") == b"v"
+
+
+async def test_concurrent_read_during_resolution_sees_staged_value(
+    client: FileClient,
+):
+    """While one task resolves a staged write callback, a concurrent read of
+    the same path from a *different* task must still observe the staged value
+    rather than falling back to the committed file (the ``_resolving`` guard is
+    per-task, not global)."""
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_writer() -> bytes:
+        started.set()
+        await release.wait()
+        return b"staged"
+
+    await client.stage_write("k.txt", slow_writer)
+    # No committed file exists, so a wrong fall-through would read as None.
+
+    task_a = asyncio.create_task(client.read("k.txt"))
+    await started.wait()  # task A is now inside the callback (path is resolving)
+
+    task_b = asyncio.create_task(client.read("k.txt"))
+    await asyncio.sleep(0)  # let task B reach its own await
+
+    release.set()
+    assert await task_b == b"staged"
+    assert await task_a == b"staged"
