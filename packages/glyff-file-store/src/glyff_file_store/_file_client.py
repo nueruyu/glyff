@@ -88,7 +88,36 @@ class FileClient:
     def resolve(self, path: str | Path) -> Path:
         return self._session_path / path
 
-    async def read(self, path: str | Path) -> bytes | None:
+    async def read(self, path: str | Path, *, staged: bool = True) -> bytes | None:
+        """Read the bytes for ``path``.
+
+        With ``staged=True`` (the default) the read is transaction-aware: a
+        staged write overrides the committed file, a staged delete reads as
+        ``None``, and otherwise the committed file is read from disk. With
+        ``staged=False`` only the committed file on disk is read, ignoring all
+        staged state.
+
+        A write callback that needs the existing content (e.g. append
+        semantics) must read with ``staged=False`` so it observes the
+        committed base rather than re-entering its own staged op. Serving a
+        staged write means invoking its commit-time callback, and the result
+        is intentionally **not** cached: a callback may close over mutable
+        state that keeps changing during the transaction (e.g. a store that
+        appends to an in-memory buffer and serializes it at commit), so each
+        read re-resolves the current staged value and commit sees the latest
+        state. Callbacks should therefore be free of observable side effects.
+
+        This does not hold ``self._lock``: the staged dicts are inspected
+        synchronously (an atomic snapshot under the single-threaded event
+        loop) and the write callback is awaited without the lock.
+        """
+        rel_str = str(path)
+        if staged:
+            if rel_str in self._staged_deletes:
+                return None
+            op = self._staged_ops.get(rel_str)
+            if op is not None:
+                return await op.write()
         try:
             return await asyncio.to_thread(self.resolve(path).read_bytes)
         except FileNotFoundError:
@@ -105,7 +134,7 @@ class FileClient:
         ``content`` is either raw bytes or an async callback that produces
         the bytes at commit time. Callers needing append semantics can
         implement them in a callback that reads the existing file content
-        and concatenates the new data.
+        with ``read(path, staged=False)`` and concatenates the new data.
 
         Staging the same path twice in one transaction replaces the
         earlier op; the displaced op's ``clear_callback`` is not invoked.
@@ -151,7 +180,10 @@ class FileClient:
 
             # Resolve all writer callbacks before touching disk. If any
             # raises, nothing has changed and the staged ops remain in
-            # place for retry.
+            # place for retry. Callbacks are resolved fresh here (results are
+            # never cached) so the committed bytes reflect the latest staged
+            # state, even when a callback closes over state that changed after
+            # an earlier read().
             resolved_writes: dict[str, bytes] = {}
             for rel_path, op in self._staged_ops.items():
                 resolved_writes[rel_path] = await op.write()
