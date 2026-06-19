@@ -408,7 +408,10 @@ async def test_read_serves_callback_staged_write(client: FileClient):
     assert await client.read("k.txt") == b"from-callback"
 
 
-async def test_staged_read_caches_callback_result(client: FileClient):
+async def test_staged_read_reresolves_callback_each_time(client: FileClient):
+    """A staged read invokes the callback fresh every time (results are not
+    cached), so a callback that closes over mutable state always reflects the
+    current state."""
     calls: list[int] = []
 
     async def writer() -> bytes:
@@ -418,11 +421,10 @@ async def test_staged_read_caches_callback_result(client: FileClient):
     await client.stage_write("k.txt", writer)
     assert await client.read("k.txt") == b"v"
     assert await client.read("k.txt") == b"v"
-    # Repeated staged reads reuse the cached resolution.
-    assert calls == [1]
+    assert calls == [1, 1]
 
 
-async def test_restaging_invalidates_staged_read_cache(client: FileClient):
+async def test_restaging_changes_staged_read(client: FileClient):
     await client.stage_write("k.txt", b"first")
     assert await client.read("k.txt") == b"first"
 
@@ -473,25 +475,28 @@ async def test_concurrent_read_during_resolution_sees_staged_value(
     assert await task_a == b"staged"
 
 
-async def test_read_then_commit_uses_same_bytes_for_nondeterministic_callback(
+async def test_commit_reflects_state_mutated_after_a_staged_read(
     client: FileClient,
 ):
-    """A read() that resolves a staged callback caches the result, and
-    commit_staged commits that same cached value. For a non-deterministic
-    callback this keeps what was read consistent with what lands on disk."""
-    counter = 0
+    """A staged write callback may close over mutable state that keeps
+    changing during the transaction (e.g. a store that buffers entries in
+    memory and serializes them at commit). Reading mid-transaction must not
+    freeze the value: a later mutation is still reflected by both subsequent
+    reads and the eventual commit."""
+    items: list[bytes] = [b"a"]
 
-    async def nondeterministic_writer() -> bytes:
-        nonlocal counter
-        counter += 1
-        return f"value-{counter}".encode()
+    async def writer() -> bytes:
+        return b",".join(items)
 
-    await client.stage_write("k.txt", nondeterministic_writer)
+    await client.stage_write("k.txt", writer)
 
-    observed = await client.read("k.txt")
-    assert observed == b"value-1"
+    # A mid-transaction read reflects the current state...
+    assert await client.read("k.txt") == b"a"
+
+    # ...then more state is appended without re-staging.
+    items.append(b"b")
+    assert await client.read("k.txt") == b"a,b"
 
     await client.commit_staged()
-    # The callback ran exactly once; the committed bytes match what read saw.
-    assert counter == 1
-    assert await client.read("k.txt") == observed
+    # The commit reflects the latest state, not the value frozen at first read.
+    assert await client.read("k.txt") == b"a,b"
