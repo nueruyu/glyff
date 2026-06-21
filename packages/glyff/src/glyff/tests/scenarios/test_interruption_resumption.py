@@ -1,11 +1,14 @@
 import pytest
 
 from glyff import ArgsHasher, Session, engrave
-from glyff.exceptions import YieldException
 from glyff.tests.types import StoreFactory
 
 _calls: list[str] = []
 _interrupt: bool = False
+
+
+class ApplicationYield(Exception):
+    pass
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +31,7 @@ async def ir_a() -> str:
 async def ir_b() -> str:
     _calls.append("b_start")
     if _interrupt:
-        raise YieldException()
+        raise ApplicationYield("waiting")
     _calls.append("b_end")
     return "B"
 
@@ -47,8 +50,13 @@ async def test_interrupted_session_engraves_completed_tasks(
     store = store_factory("ir-interrupt")
 
     _interrupt = True
-    with pytest.raises(YieldException):
-        async with Session(id="ir-interrupt", store=store, hasher=hasher):
+    with pytest.raises(ApplicationYield, match="waiting"):
+        async with Session(
+            id="ir-interrupt",
+            store=store,
+            hasher=hasher,
+            yield_on=(ApplicationYield,),
+        ):
             await ir_root()
 
     assert "a" in _calls
@@ -63,14 +71,24 @@ async def test_resumed_session_skips_completed_tasks(
     store = store_factory("ir-resume")
 
     _interrupt = True
-    with pytest.raises(YieldException):
-        async with Session(id="ir-resume", store=store, hasher=hasher):
+    with pytest.raises(ApplicationYield, match="waiting"):
+        async with Session(
+            id="ir-resume",
+            store=store,
+            hasher=hasher,
+            yield_on=(ApplicationYield,),
+        ):
             await ir_root()
 
     _calls.clear()
 
     _interrupt = False
-    async with Session(id="ir-resume", store=store, hasher=hasher):
+    async with Session(
+        id="ir-resume",
+        store=store,
+        hasher=hasher,
+        yield_on=(ApplicationYield,),
+    ):
         result = await ir_root()
 
     assert result == "A:B"

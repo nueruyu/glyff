@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from ._context import Context, TransactionScope, reset_context, set_context
 from ._event_system import EventEmitter
 from ._interfaces import ArgsHasher, SessionStore
@@ -16,11 +18,13 @@ class Session:
         store: SessionStore,
         hasher: ArgsHasher,
         event_emitter: EventEmitter | None = None,
+        yield_on: Sequence[type[Exception]] = (),
     ):
         self._id = id
         self._store = store
         self._hasher = hasher
         self._event_emitter = event_emitter or EventEmitter([])
+        self._yield_on = tuple(yield_on)
         self._context: Context | None = None
         self._context_token = None
 
@@ -40,8 +44,11 @@ class Session:
             store=self._store,
             sequencer=Sequencer(),
             hasher=self._hasher,
-            transaction_scope_factory=lambda: TransactionScope(self._store),
+            transaction_scope_factory=lambda: TransactionScope(
+                self._store, yield_on=self._yield_on
+            ),
             event_emitter=self._event_emitter,
+            yield_on=self._yield_on,
         )
         self._context_token = set_context(self._context)
         return self

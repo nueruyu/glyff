@@ -3,11 +3,14 @@ import asyncio
 import pytest
 
 from glyff import ArgsHasher, Session, engrave
-from glyff.exceptions import YieldException
 from glyff.tests.types import StoreFactory
 
 _calls: list[str] = []
 _interrupt_b: bool = False
+
+
+class ParallelYield(Exception):
+    pass
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +34,7 @@ async def par_a(delay: float) -> str:
 async def par_b(delay: float) -> str:
     await asyncio.sleep(delay)
     if _interrupt_b:
-        raise YieldException()
+        raise ParallelYield()
     _calls.append("b")
     return "B"
 
@@ -62,8 +65,13 @@ async def test_parallel_interrupted_task_is_retried_on_resume(
     store = store_factory("par-resume")
 
     _interrupt_b = True
-    with pytest.raises(YieldException):
-        async with Session(id="par-resume", store=store, hasher=hasher):
+    with pytest.raises(ParallelYield):
+        async with Session(
+            id="par-resume",
+            store=store,
+            hasher=hasher,
+            yield_on=(ParallelYield,),
+        ):
             await par_root(0.005, 0.01)
 
     assert "a" in _calls
@@ -72,7 +80,12 @@ async def test_parallel_interrupted_task_is_retried_on_resume(
     _calls.clear()
 
     _interrupt_b = False
-    async with Session(id="par-resume", store=store, hasher=hasher):
+    async with Session(
+        id="par-resume",
+        store=store,
+        hasher=hasher,
+        yield_on=(ParallelYield,),
+    ):
         result = await par_root(0.005, 0.01)
 
     assert result == "AB"

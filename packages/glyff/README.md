@@ -20,8 +20,9 @@ pip install glyff
 - Re-invoking the same call within the same session returns the recorded
   result instead of re-executing.
 - A call's outcome — success or failure — is permanent once recorded.
-- `YieldException` suspends execution at a function boundary; the session
-  can be resumed later by entering it again with the same session id.
+- Exception types configured with `Session(yield_on=...)` suspend execution at a
+  function boundary; the session can be resumed later by entering it again with
+  the same session id.
 
 ## Public API
 
@@ -35,7 +36,9 @@ pip install glyff
 | `SessionStore`    | Protocol for storage backends.                                  |
 | `Serializer`      | Protocol for value serialization.                               |
 | `ArgsHasher`      | Protocol for argument hashing.                                  |
-| `YieldException`  | Raised to suspend a session.                                    |
+
+`Session(yield_on=(...))` registers application exception types that should be
+treated as yield signals without making those exceptions inherit from glyff.
 
 ## Extending
 

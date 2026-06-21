@@ -9,9 +9,12 @@ and resuming them later from the same point.
 
 ```python
 import glyff
-import glyff.exceptions
 import glyff_file_store
 from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
+
+
+class UserInputRequired(Exception):
+    pass
 
 
 @glyff.engrave
@@ -19,7 +22,7 @@ async def ask_user(question: str, answer: str | None = None) -> str:
     """Ask the user a question. Yields if no answer has been provided."""
     if answer is None:
         print(f"[USER_INPUT_REQUIRED] {question}")
-        raise glyff.exceptions.YieldException()
+        raise UserInputRequired()
     return answer
 
 
@@ -44,13 +47,14 @@ async def main(session_id: str, answer: str | None = None):
         id=session_id,
         store=store,
         hasher=PydanticArgsHasher(),
+        yield_on=(UserInputRequired,),
     )
 
     try:
         async with session:
             result = await greet("Alice", answer=answer)
             print(result)
-    except glyff.exceptions.YieldException:
+    except UserInputRequired:
         print(
             f"Session paused. Resume with: --session-id {session_id} --answer <value>"
         )
@@ -76,8 +80,27 @@ of yielding again.
 - Re-invoking the same call within the same session returns the recorded
   result instead of re-executing.
 - A call's outcome — success or failure — is permanent once recorded.
-- `YieldException` suspends execution at a function boundary; the session
-  can be resumed later by entering it again with the same session id.
+- Exception types configured with `Session(yield_on=...)` suspend execution at a
+  function boundary; the session can be resumed later by entering it again with
+  the same session id.
+
+## Custom yield exceptions
+
+Register application exception types at the session boundary to treat them as
+yield signals without making those exceptions inherit from glyff:
+
+```python
+class UserInputRequired(Exception):
+    pass
+
+
+session = glyff.Session(
+    id=session_id,
+    store=store,
+    hasher=hasher,
+    yield_on=(UserInputRequired,),
+)
+```
 
 ## Pruning completed subtrees
 

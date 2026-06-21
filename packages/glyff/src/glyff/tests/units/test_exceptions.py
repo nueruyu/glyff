@@ -7,7 +7,6 @@ from glyff.exceptions import (
     SerializationError,
     TypeHintResolutionError,
     UnserializableArgumentError,
-    YieldException,
 )
 
 
@@ -24,11 +23,6 @@ def test_glyff_errors_share_base_error_class():
     for error_type in error_types:
         assert issubclass(error_type, GlyffError)
         assert issubclass(error_type, GlyffException)
-
-
-def test_yield_exception_is_control_signal_not_error():
-    assert issubclass(YieldException, GlyffException)
-    assert not issubclass(YieldException, GlyffError)
 
 
 def test_unserializable_argument_error_is_serialization_error():

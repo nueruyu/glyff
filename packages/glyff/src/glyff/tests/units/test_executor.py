@@ -7,7 +7,7 @@ from glyff._context import Context, TransactionScope, reset_context, set_context
 from glyff._executor import execute
 from glyff._sequencer import Sequencer
 from glyff.event_handlers import PruningEventHandler
-from glyff.exceptions import ExecutionFailedError, YieldException
+from glyff.exceptions import ExecutionFailedError
 from glyff.store._memory import _make_key
 from glyff.store.utils import execution_id_to_path
 from glyff.tests.stubs.store import StubSessionStore
@@ -244,17 +244,32 @@ async def test_failed_task_raises_error(
     assert not executed
 
 
-async def test_session_interrupted_skips_failure_staging(
+async def test_configured_yield_exception_skips_failure_staging(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,
-    test_context: Context,
+    hasher,
 ):
-    async def sample_func():
-        raise YieldException()
+    class CustomYield(Exception):
+        pass
 
-    with pytest.raises(YieldException):
+    ctx = Context(
+        session_id="configured-yield",
+        store=mock_store,
+        sequencer=Sequencer(),
+        hasher=hasher,
+        transaction_scope_factory=lambda: TransactionScope(
+            mock_store, yield_on=(CustomYield,)
+        ),
+        event_emitter=EventEmitter([]),
+        yield_on=(CustomYield,),
+    )
+
+    async def sample_func():
+        raise CustomYield("pause")
+
+    with pytest.raises(CustomYield, match="pause"):
         await execute(
-            ctx=test_context,
+            ctx=ctx,
             execution_id=base_execution_id,
             func=sample_func,
             args=(),
@@ -262,7 +277,7 @@ async def test_session_interrupted_skips_failure_staging(
             return_type=str,
         )
 
-    assert not test_context.tracer.call_stack
+    assert not ctx.tracer.call_stack
     assert not mock_store.get_calls("complete")
     assert not mock_store.get_calls("fail")
     assert len(mock_store.get_calls("commit")) == 1

@@ -3,7 +3,7 @@ from typing import Any, Callable
 
 from ._context import Context
 from .events import ExecutionCompleted, ExecutionFailed, ExecutionYielded
-from .exceptions import ExecutionFailedError, YieldException
+from .exceptions import ExecutionFailedError
 from ._models import ExecutionId, ExecutionStatus
 
 
@@ -50,14 +50,15 @@ async def execute(
                 ExecutionCompleted(context=ctx, execution_id=execution_id)
             )
             return result
-        except YieldException as y:
-            # Interruption is a graceful exit; don't stage failure.
-            # The state remains STARTED, allowing for resumption.
-            await ctx.event_emitter.emit(
-                ExecutionYielded(context=ctx, execution_id=execution_id)
-            )
-            raise y
         except Exception as e:
+            if ctx.is_yield_exception(e):
+                # Interruption is a graceful exit; don't stage failure.
+                # The state remains STARTED, allowing for resumption.
+                await ctx.event_emitter.emit(
+                    ExecutionYielded(context=ctx, execution_id=execution_id)
+                )
+                raise
+
             error_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
             await execution.fail(error_str)
             await ctx.event_emitter.emit(

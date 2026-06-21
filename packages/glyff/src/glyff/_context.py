@@ -5,10 +5,20 @@ from collections.abc import Iterator, Sequence
 from typing import Callable, overload
 
 from ._event_system import EventEmitter
-from .exceptions import ContextNotSetError, ExecutionFailedError, YieldException
+from .exceptions import ContextNotSetError, ExecutionFailedError
 from ._interfaces import ArgsHasher, SessionStore, Transaction
 from ._models import ExecutionId
 from ._sequencer import Sequencer
+
+
+def _normalize_yield_on(
+    yield_on: Sequence[type[Exception]],
+) -> tuple[type[Exception], ...]:
+    yield_exceptions = tuple(yield_on)
+    for exc_type in yield_exceptions:
+        if not isinstance(exc_type, type) or not issubclass(exc_type, Exception):
+            raise TypeError("yield_on must contain Exception subclasses.")
+    return yield_exceptions
 
 
 class Context:
@@ -22,6 +32,7 @@ class Context:
         hasher: ArgsHasher,
         transaction_scope_factory: Callable[[], TransactionScope],
         event_emitter: EventEmitter,
+        yield_on: Sequence[type[Exception]] = (),
     ) -> None:
         self._session_id = session_id
         self._store = store
@@ -29,6 +40,7 @@ class Context:
         self._hasher = hasher
         self._transaction_scope_factory = transaction_scope_factory
         self._event_emitter = event_emitter
+        self._yield_on = _normalize_yield_on(yield_on)
         self._tracer = ExecutionTracer()
         self._current_transaction_scope: TransactionScope | None = None
 
@@ -70,6 +82,9 @@ class Context:
         if self._current_transaction_scope is None:
             self._current_transaction_scope = self._transaction_scope_factory()
         return self._current_transaction_scope
+
+    def is_yield_exception(self, exc: BaseException) -> bool:
+        return isinstance(exc, self._yield_on)
 
 
 class CallStack(Sequence[ExecutionId]):
@@ -129,8 +144,13 @@ class TransactionScope:
     The actual commit/rollback only happens at the outermost scope.
     """
 
-    def __init__(self, store: SessionStore):
+    def __init__(
+        self,
+        store: SessionStore,
+        yield_on: Sequence[type[Exception]] = (),
+    ):
         self._store = store
+        self._yield_on = _normalize_yield_on(yield_on)
         self._level = 0
         self._transaction: Transaction | None = None
 
@@ -148,11 +168,13 @@ class TransactionScope:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self._level -= 1
         if self._level == 0 and self._transaction:
-            if exc_type is None or isinstance(
-                exc_val, (YieldException, ExecutionFailedError)
+            if (
+                exc_type is None
+                or isinstance(exc_val, ExecutionFailedError)
+                or (exc_val is not None and isinstance(exc_val, self._yield_on))
             ):
-                # On YieldException or ExecutionFailedError we still commit so that
-                # state (completed subtasks or the failure record) is durably saved.
+                # On yield or ExecutionFailedError we still commit so that state
+                # (completed subtasks or the failure record) is durably saved.
                 await self._transaction.commit()
             else:
                 await self._transaction.rollback()
