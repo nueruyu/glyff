@@ -26,14 +26,11 @@ def _key_to_path(key: str) -> str | None:
 
 
 class _MemoryTransaction(Transaction):
-    def __init__(self, client: MemoryClient):
-        self._client = client
-
     async def commit(self) -> None:
-        await self._client.commit_staged()
+        return None
 
     async def rollback(self) -> None:
-        self._client.clear_staged()
+        return None
 
 
 class _MemoryExecution(Execution):
@@ -49,17 +46,14 @@ class _MemoryExecution(Execution):
 
     async def complete(self, value: Any, return_type: type) -> None:
         path = execution_id_to_path(self._id)
-        self._client.stage_write(_make_key(path, "status"), ExecutionStatus.COMPLETED)
         serialized_result = await self._serializer.serialize(value, return_type)
-        self._client.stage_write(
-            _make_key(path, "result"),
-            serialized_result,
-        )
+        self._client.stage_write(_make_key(path, "result"), serialized_result)
+        self._client.stage_write(_make_key(path, "status"), ExecutionStatus.COMPLETED)
 
     async def fail(self, error: str) -> None:
         path = execution_id_to_path(self._id)
-        self._client.stage_write(_make_key(path, "status"), ExecutionStatus.FAILED)
         self._client.stage_write(_make_key(path, "error"), error)
+        self._client.stage_write(_make_key(path, "status"), ExecutionStatus.FAILED)
 
 
 class MemorySessionStore(SessionStore):
@@ -78,7 +72,7 @@ class MemorySessionStore(SessionStore):
         return _make_key(execution_id_to_path(id), part)
 
     async def begin_transaction(self) -> Transaction:
-        return _MemoryTransaction(self._client)
+        return _MemoryTransaction()
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         status_key = self._id_to_key(execution_id, "status")
