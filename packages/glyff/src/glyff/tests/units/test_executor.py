@@ -58,7 +58,8 @@ async def test_successful_execution(
     assert complete_calls[0].args == (base_execution_id, "hello", str)
 
     assert not mock_store.get_calls("fail")
-    assert len(mock_store.get_calls("commit")) == 1
+    # One commit for the START event, one for the COMPLETE event.
+    assert len(mock_store.get_calls("commit")) == 2
 
 
 async def test_completion_prunes_descendants_when_enabled(
@@ -301,7 +302,7 @@ async def test_general_exception_is_non_terminal(
     assert not mock_store.get_calls("rollback")
 
 
-async def test_base_exception_triggers_rollback(
+async def test_base_exception_after_start_keeps_started_record(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,
     test_context: Context,
@@ -319,7 +320,15 @@ async def test_base_exception_triggers_rollback(
             return_type=str,
         )
 
+    # The START record is committed in its own transaction before the function
+    # runs, so a BaseException raised during the body leaves it durably STARTED
+    # (retryable on resume) rather than rolling it back.
+    assert len(mock_store.get_calls("start_execution")) == 1
+    assert len(mock_store.get_calls("commit")) == 1
     assert not mock_store.get_calls("complete")
     assert not mock_store.get_calls("fail")
-    assert not mock_store.get_calls("commit")
-    assert len(mock_store.get_calls("rollback")) == 1
+    assert not mock_store.get_calls("rollback")
+
+    record = await mock_store.get_execution_record(base_execution_id, str)
+    assert record is not None
+    assert record.status == ExecutionStatus.STARTED

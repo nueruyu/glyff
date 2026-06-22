@@ -30,7 +30,6 @@ class Context:
         self._transaction_scope_factory = transaction_scope_factory
         self._event_emitter = event_emitter
         self._tracer = ExecutionTracer()
-        self._current_transaction_scope: TransactionScope | None = None
 
     @property
     def store(self) -> SessionStore:
@@ -62,14 +61,17 @@ class Context:
 
     @property
     def in_transaction(self) -> bool:
-        """Returns True if currently within a transaction scope."""
-        ts = self._current_transaction_scope
-        return ts is not None and ts.in_transaction
+        """Return False: durability is per execution event, not session-scoped."""
+        return False
 
     def get_transaction_scope(self) -> TransactionScope:
-        if self._current_transaction_scope is None:
-            self._current_transaction_scope = self._transaction_scope_factory()
-        return self._current_transaction_scope
+        """Return a fresh transaction scope.
+
+        The executor opens one of these per execution event (START, COMPLETE)
+        so each event becomes durable on its own, rather than sharing a single
+        session-wide transaction.
+        """
+        return self._transaction_scope_factory()
 
 
 class CallStack(Sequence[ExecutionId]):
