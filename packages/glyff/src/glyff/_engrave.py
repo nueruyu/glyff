@@ -3,9 +3,9 @@ import inspect
 from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
-from .exceptions import MissingTypeHintError, TypeHintResolutionError
 from ._executor import execute
 from ._models import ExecutionId
+from .exceptions import MissingTypeHintError, TypeHintResolutionError
 
 P = ParamSpec("P")
 R = TypeVar("R")

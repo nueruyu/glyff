@@ -14,7 +14,6 @@ class ExecutionId:
 
     parent_id: ExecutionId | None
     name: str
-    # Ordinal within the (parent_id, name, args_hash) counter scope.
     sequence: int
     args_hash: str
 

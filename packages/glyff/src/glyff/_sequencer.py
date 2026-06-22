@@ -17,9 +17,7 @@ class Sequencer:
         self._counters: dict[_SequenceKey, int] = defaultdict(int)
         self._meta_lock = asyncio.Lock()
 
-    async def next(
-        self, parent: ExecutionId | None, name: str, args_hash: str
-    ) -> int:
+    async def next(self, parent: ExecutionId | None, name: str, args_hash: str) -> int:
         """Returns the next sequence number for the given content scope."""
         key = (parent, name, args_hash)
 
