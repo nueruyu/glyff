@@ -8,18 +8,20 @@ from ._models import ExecutionId, ExecutionRecord
 
 class Transaction(ABC):
     """
-    A transaction context for a SessionStore.
-    Actual commit/rollback logic is delegated to this object.
+    Compatibility transaction hook for SessionStore implementations.
+
+    Runtime execution persists each event as the store method runs; commit and
+    rollback may therefore be no-ops for stores that no longer stage writes.
     """
 
     @abstractmethod
     async def commit(self) -> None:
-        """Commits the transaction."""
+        """Commits the transaction, if the store still stages writes."""
         ...
 
     @abstractmethod
     async def rollback(self) -> None:
-        """Rolls back the transaction."""
+        """Rolls back the transaction, if the store still stages writes."""
         ...
 
 
@@ -60,7 +62,7 @@ class ArgsHasher(ABC):
     def hash_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> str:
-        """Creates a deterministic hash from a function's arguments."""
+        """Creates a deterministic hash from function's arguments."""
         ...
 
 
@@ -71,14 +73,20 @@ class SessionStore(ABC):
 
     @abstractmethod
     async def begin_transaction(self) -> Transaction:
-        """Begins a transaction and returns a transaction object."""
+        """
+        Returns a compatibility transaction object.
+
+        Glyff's executor no longer uses a shared session-wide transaction; store
+        writes are expected to become durable when start_execution,
+        Execution.complete/fail, or delete_executions returns.
+        """
         ...
 
     @abstractmethod
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         """
         Records that a task has started and returns an execution object
-        to manage its outcome.
+        to manage its outcome. The START record is durable when this returns.
         """
         ...
 
@@ -108,10 +116,9 @@ class SessionStore(ABC):
         """
         Deletes the record(s) for exactly the given executions.
 
-        Deletion is staged within the current transaction and applied on commit
-        (and discarded on rollback), mirroring how writes are staged. The store
-        only deletes the executions it is given; it has no notion of children,
-        descendants, or pruning. Taking the ids as a batch lets the store stage
-        them in one pass rather than once per id.
+        Deletion is durable when this method returns. The store only deletes the
+        executions it is given; it has no notion of children, descendants, or
+        pruning. Taking the ids as a batch lets the store apply them in one pass
+        rather than once per id.
         """
         ...
