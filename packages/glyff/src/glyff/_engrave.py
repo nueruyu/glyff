@@ -42,8 +42,8 @@ async def _resolve_execution_id(
 ) -> ExecutionId:
     """Builds the deterministic ExecutionId for a single call."""
     parent_id = ctx.current_execution_id
-    seq = await ctx.sequencer.next(parent_id, task_name)
     args_hash = ctx.hasher.hash_args(func, sig, args, kwargs)
+    seq = await ctx.sequencer.next(parent_id, task_name, args_hash)
     return ExecutionId(
         parent_id=parent_id, name=task_name, sequence=seq, args_hash=args_hash
     )
