@@ -22,11 +22,3 @@ class ExecutionFailed(Event):
     context: Context
     execution_id: ExecutionId
     error: str
-
-
-@dataclass(frozen=True)
-class ExecutionYielded(Event):
-    """Event fired when an execution is gracefully interrupted."""
-
-    context: Context
-    execution_id: ExecutionId

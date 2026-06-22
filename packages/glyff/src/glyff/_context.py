@@ -148,9 +148,10 @@ class TransactionScope:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self._level -= 1
         if self._level == 0 and self._transaction:
-            if exc_type is None or (
-                exc_type is not None and issubclass(exc_type, Exception)
-            ):
+            # Commit on success or on any Exception: completed work stays
+            # durable and the interrupted call remains retryable. Roll back only
+            # on BaseException (KeyboardInterrupt, SystemExit, cancellation).
+            if exc_type is None or issubclass(exc_type, Exception):
                 await self._transaction.commit()
             else:
                 await self._transaction.rollback()

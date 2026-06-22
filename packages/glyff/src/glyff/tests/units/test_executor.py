@@ -7,7 +7,6 @@ from glyff._context import Context, TransactionScope, reset_context, set_context
 from glyff._executor import execute
 from glyff._sequencer import Sequencer
 from glyff.event_handlers import PruningEventHandler
-from glyff.exceptions import YieldException
 from glyff.store._memory import _make_key
 from glyff.store.utils import execution_id_to_path
 from glyff.tests.stubs.store import StubSessionStore
@@ -246,15 +245,18 @@ async def test_failed_record_is_retryable(
     assert executed
 
 
-async def test_session_interrupted_skips_failure_staging(
+async def test_interrupting_exception_skips_failure_staging(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,
     test_context: Context,
 ):
-    async def sample_func():
-        raise YieldException()
+    class ApplicationPause(Exception):
+        pass
 
-    with pytest.raises(YieldException):
+    async def sample_func():
+        raise ApplicationPause()
+
+    with pytest.raises(ApplicationPause):
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
