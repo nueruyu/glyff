@@ -59,11 +59,6 @@ class Context:
     def current_execution_id(self) -> ExecutionId | None:
         return self._tracer.current
 
-    @property
-    def in_transaction(self) -> bool:
-        """Return False: durability is per execution event, not session-scoped."""
-        return False
-
     def get_transaction_scope(self) -> TransactionScope:
         """Return a fresh transaction scope.
 

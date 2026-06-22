@@ -33,12 +33,11 @@ async def execute(
         if record.status == ExecutionStatus.COMPLETED:
             return record.result
 
-    # Reset child sequencers for deterministic re-execution.
-    await sequencer.reset_for_call(execution_id)
-
     # Persist the START record durably before running the function, so a
     # completed descendant is not lost if an ancestor is later interrupted.
     async with ctx.get_transaction_scope():
+        # Reset child sequencers for deterministic re-execution.
+        await sequencer.reset_for_call(execution_id)
         execution = await store.start_execution(execution_id)
 
     tracer.start(execution_id)
