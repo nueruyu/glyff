@@ -34,7 +34,7 @@ _VALID_SYNCHRONOUS_VALUES = {"OFF", "NORMAL", "FULL", "EXTRA"}
 class _SQLiteEvent:
     execution_id: ExecutionId
     status: ExecutionStatus
-    result: object | None = None
+    result: bytes | None = None
     error: str | None = None
 
 
@@ -69,12 +69,11 @@ class _SQLiteExecution(Execution):
 
     async def complete(self, value: object, return_type: type) -> None:
         serialized_bytes = await self._serializer.serialize(value, return_type)
-        persistable_result = json.loads(serialized_bytes)
         await self._append_event(
             _SQLiteEvent(
                 execution_id=self._execution_id,
                 status=ExecutionStatus.COMPLETED,
-                result=persistable_result,
+                result=serialized_bytes,
             )
         )
 
@@ -201,8 +200,10 @@ class SQLiteSessionStore(SessionStore):
         self, events: list[_SQLiteEvent], delete_keys: set[str]
     ) -> None:
         connection = self._connect()
+        in_transaction = False
         try:
             connection.execute("BEGIN IMMEDIATE")
+            in_transaction = True
             for key in delete_keys:
                 connection.execute("DELETE FROM executions WHERE key = ?", (key,))
 
@@ -212,12 +213,12 @@ class SQLiteSessionStore(SessionStore):
                     continue
 
                 call_stack = self._id_to_callstack(event.execution_id)
+                # The serializer already produced JSON bytes; decode them into
+                # the TEXT column without a parse/re-serialize round-trip.
                 result_json = (
                     None
                     if event.result is None
-                    else json.dumps(
-                        event.result, sort_keys=True, separators=JSON_SEPARATORS
-                    )
+                    else event.result.decode(DEFAULT_ENCODING)
                 )
                 connection.execute(
                     """
@@ -241,9 +242,14 @@ class SQLiteSessionStore(SessionStore):
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
-            connection.commit()
+            connection.execute("COMMIT")
+            in_transaction = False
         except Exception:
-            connection.rollback()
+            if in_transaction:
+                try:
+                    connection.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             raise
         finally:
             connection.close()
