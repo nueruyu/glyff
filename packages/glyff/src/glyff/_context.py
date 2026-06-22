@@ -5,7 +5,7 @@ from collections.abc import Iterator, Sequence
 from typing import Callable, overload
 
 from ._event_system import EventEmitter
-from .exceptions import ContextNotSetError, ExecutionFailedError, YieldException
+from .exceptions import ContextNotSetError
 from ._interfaces import ArgsHasher, SessionStore, Transaction
 from ._models import ExecutionId
 from ._sequencer import Sequencer
@@ -148,11 +148,9 @@ class TransactionScope:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self._level -= 1
         if self._level == 0 and self._transaction:
-            if exc_type is None or isinstance(
-                exc_val, (YieldException, ExecutionFailedError)
+            if exc_type is None or (
+                exc_type is not None and issubclass(exc_type, Exception)
             ):
-                # On YieldException or ExecutionFailedError we still commit so that
-                # state (completed subtasks or the failure record) is durably saved.
                 await self._transaction.commit()
             else:
                 await self._transaction.rollback()
