@@ -1,11 +1,14 @@
 import pytest
 
 from glyff import ArgsHasher, Session, engrave
-from glyff.exceptions import YieldException
 from glyff.tests.types import StoreFactory
 
 _calls: list[str] = []
 _interrupt: bool = False
+
+
+class ApplicationPause(Exception):
+    pass
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +31,7 @@ async def ir_a() -> str:
 async def ir_b() -> str:
     _calls.append("b_start")
     if _interrupt:
-        raise YieldException()
+        raise ApplicationPause("waiting")
     _calls.append("b_end")
     return "B"
 
@@ -47,7 +50,7 @@ async def test_interrupted_session_engraves_completed_tasks(
     store = store_factory("ir-interrupt")
 
     _interrupt = True
-    with pytest.raises(YieldException):
+    with pytest.raises(ApplicationPause, match="waiting"):
         async with Session(id="ir-interrupt", store=store, hasher=hasher):
             await ir_root()
 
@@ -63,7 +66,7 @@ async def test_resumed_session_skips_completed_tasks(
     store = store_factory("ir-resume")
 
     _interrupt = True
-    with pytest.raises(YieldException):
+    with pytest.raises(ApplicationPause, match="waiting"):
         async with Session(id="ir-resume", store=store, hasher=hasher):
             await ir_root()
 
