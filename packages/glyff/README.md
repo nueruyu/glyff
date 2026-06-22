@@ -17,11 +17,13 @@ pip install glyff
 
 - Marked function calls are recorded in a session-scoped store, keyed by
   function identity, arguments, and call position.
+- Execution events are persisted as they happen: a START record is written when
+  a call begins, and a COMPLETE record is written as soon as that call returns.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
 - Exceptions raised by a call are non-terminal by default: completed work is
-  committed, the interrupted call remains `STARTED`, and the original exception
-  propagates so the caller can decide whether to resume later.
+  already durable, the interrupted call remains `STARTED`, and the original
+  exception propagates so the caller can decide whether to resume later.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 
