@@ -16,7 +16,7 @@ async def execute(
 ) -> Any:
     """
     Orchestrates the execution of a regular (awaitable) task, including cache
-    checks, transaction management, state recording, and exception handling.
+    checks, per-event state recording, and exception handling.
     """
     store = ctx.store
     sequencer = ctx.sequencer
@@ -28,31 +28,30 @@ async def execute(
         if record.status == ExecutionStatus.COMPLETED:
             return record.result
 
-    async with ctx.get_transaction_scope():
-        # Reset child sequencers for deterministic re-execution.
-        await sequencer.reset_for_call(execution_id)
+    # Reset child sequencers for deterministic re-execution before recording
+    # this invocation. The START record is persisted immediately by the store.
+    await sequencer.reset_for_call(execution_id)
+    execution = await store.start_execution(execution_id)
+    tracer.start(execution_id)
 
-        execution = await store.start_execution(execution_id)
-        tracer.start(execution_id)
-
-        try:
-            result = await func(*args, **kwargs)
-            await execution.complete(result, return_type)
-            await ctx.event_emitter.emit(
-                ExecutionCompleted(context=ctx, execution_id=execution_id)
+    try:
+        result = await func(*args, **kwargs)
+        await execution.complete(result, return_type)
+        await ctx.event_emitter.emit(
+            ExecutionCompleted(context=ctx, execution_id=execution_id)
+        )
+        return result
+    except Exception as e:
+        error_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+        # Do not mark the execution as FAILED. Leaving it STARTED makes
+        # the call retryable on resume, matching crash/kill behavior.
+        await ctx.event_emitter.emit(
+            ExecutionFailed(
+                context=ctx,
+                execution_id=execution_id,
+                error=error_str,
             )
-            return result
-        except Exception as e:
-            error_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            # Do not mark the execution as FAILED. Leaving it STARTED makes
-            # the call retryable on resume, matching crash/kill behavior.
-            await ctx.event_emitter.emit(
-                ExecutionFailed(
-                    context=ctx,
-                    execution_id=execution_id,
-                    error=error_str,
-                )
-            )
-            raise
-        finally:
-            tracer.end()
+        )
+        raise
+    finally:
+        tracer.end()
