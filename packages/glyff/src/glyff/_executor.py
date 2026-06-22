@@ -2,8 +2,8 @@ import traceback
 from typing import Any, Callable
 
 from ._context import Context
-from .events import ExecutionCompleted, ExecutionFailed
 from ._models import ExecutionId, ExecutionStatus
+from .events import ExecutionCompleted, ExecutionFailed
 
 
 async def execute(

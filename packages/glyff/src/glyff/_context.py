@@ -5,10 +5,10 @@ from collections.abc import Iterator, Sequence
 from typing import Callable, overload
 
 from ._event_system import EventEmitter
-from .exceptions import ContextNotSetError
 from ._interfaces import ArgsHasher, SessionStore, Transaction
 from ._models import ExecutionId
 from ._sequencer import Sequencer
+from .exceptions import ContextNotSetError
 
 
 class Context:
