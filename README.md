@@ -9,17 +9,20 @@ and resuming them later from the same point.
 
 ```python
 import glyff
-import glyff.exceptions
 import glyff_file_store
 from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
 
 
+class UserInputRequired(Exception):
+    pass
+
+
 @glyff.engrave
 async def ask_user(question: str, answer: str | None = None) -> str:
-    """Ask the user a question. Yields if no answer has been provided."""
+    """Ask the user a question. Pauses if no answer has been provided."""
     if answer is None:
         print(f"[USER_INPUT_REQUIRED] {question}")
-        raise glyff.exceptions.YieldException()
+        raise UserInputRequired()
     return answer
 
 
@@ -50,14 +53,14 @@ async def main(session_id: str, answer: str | None = None):
         async with session:
             result = await greet("Alice", answer=answer)
             print(result)
-    except glyff.exceptions.YieldException:
+    except UserInputRequired:
         print(
             f"Session paused. Resume with: --session-id {session_id} --answer <value>"
         )
 
 
 if __name__ == "__main__":
-    # First run: yields when ask_user is reached.
+    # First run: pauses when ask_user is reached.
     # asyncio.run(main(session_id=str(uuid.uuid4())))
 
     # Resume run: provide the same session id and the user's answer.
@@ -65,19 +68,20 @@ if __name__ == "__main__":
     ...
 ```
 
-On the resume run, `greet` re-executes from the top, but `ask_user`'s recorded
-input on the second invocation returns the previously provided answer instead
-of yielding again.
+On the resume run, `greet` re-executes from the top, but `ask_user` receives
+the provided answer instead of pausing again.
 
 ## Behavior
 
 - Marked function calls are recorded in a session-scoped store, keyed by
   function identity, arguments, and call position.
-- Re-invoking the same call within the same session returns the recorded
-  result instead of re-executing.
-- A call's outcome — success or failure — is permanent once recorded.
-- `YieldException` suspends execution at a function boundary; the session
-  can be resumed later by entering it again with the same session id.
+- Re-invoking the same completed call within the same session returns the
+  recorded result instead of re-executing.
+- Exceptions raised by a call are non-terminal by default: completed work is
+  committed, the interrupted call remains `STARTED`, and the original exception
+  propagates so the caller can decide whether to resume later.
+- To pause a session intentionally, raise an application-owned exception and
+  catch it outside the `Session` block.
 
 ## Pruning completed subtrees
 
