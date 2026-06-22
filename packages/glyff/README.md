@@ -17,11 +17,13 @@ pip install glyff
 
 - Marked function calls are recorded in a session-scoped store, keyed by
   function identity, arguments, and call position.
-- Re-invoking the same call within the same session returns the recorded
-  result instead of re-executing.
-- A call's outcome — success or failure — is permanent once recorded.
-- `YieldException` suspends execution at a function boundary; the session
-  can be resumed later by entering it again with the same session id.
+- Re-invoking the same completed call within the same session returns the
+  recorded result instead of re-executing.
+- Exceptions raised by a call are non-terminal by default: completed work is
+  committed, the interrupted call remains `STARTED`, and the original exception
+  propagates so the caller can decide whether to resume later.
+- To pause a session intentionally, raise an application-owned exception and
+  catch it outside the `Session` block.
 
 ## Public API
 
@@ -35,7 +37,6 @@ pip install glyff
 | `SessionStore`    | Protocol for storage backends.                                  |
 | `Serializer`      | Protocol for value serialization.                               |
 | `ArgsHasher`      | Protocol for argument hashing.                                  |
-| `YieldException`  | Raised to suspend a session.                                    |
 
 ## Extending
 
