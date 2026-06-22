@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, TypedDict
+from typing import Any, Callable, TypedDict
 
 from glyff import (
     Execution,
@@ -23,8 +23,6 @@ from glyff.store.utils import execution_id_to_path, path_to_execution_id
 from ._file_client import FileClient
 
 logger = logging.getLogger(__name__)
-
-PostHook = Callable[[], Awaitable[None]]
 
 
 class LogEntry(TypedDict):
@@ -44,25 +42,11 @@ _EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
 
 
 class _FileTransaction(Transaction):
-    def __init__(
-        self,
-        client: FileClient,
-        on_commit: PostHook | None = None,
-        on_rollback: PostHook | None = None,
-    ):
-        self._client = client
-        self._on_commit = on_commit
-        self._on_rollback = on_rollback
-
     async def commit(self) -> None:
-        await self._client.commit_staged()
-        if self._on_commit is not None:
-            await self._on_commit()
+        return None
 
     async def rollback(self) -> None:
-        await self._client.clear_staged()
-        if self._on_rollback is not None:
-            await self._on_rollback()
+        return None
 
 
 class _FileExecution(Execution):
@@ -70,7 +54,7 @@ class _FileExecution(Execution):
         self,
         call_stack: list[str],
         serializer: Serializer,
-        append_entry: Callable[[LogEntry], Awaitable[None]],
+        append_entry: Callable[[LogEntry], Any],
     ):
         self._call_stack = call_stack
         self._serializer = serializer
@@ -105,10 +89,13 @@ class _FileExecution(Execution):
 
 class JsonFileSessionStore(SessionStore):
     """
-    A file-based SessionStore that logs events to a pretty-printed JSON file.
-    The entire log is loaded into memory at construction time and rewritten
-    atomically on each commit. Suitable for sessions whose log fits in memory;
-    for very large or high-throughput sessions prefer a database-backed store.
+    A file-based SessionStore that logs execution events to JSON.
+
+    Each START / COMPLETE / FAIL / delete mutation writes the log immediately,
+    so completed descendant calls survive a later root interruption or process
+    crash. The entire log is still loaded into memory and rewritten per event;
+    for very large or high-throughput sessions prefer an append- or
+    database-backed store.
     """
 
     def __init__(self, client: FileClient, serializer: Serializer):
@@ -116,20 +103,15 @@ class JsonFileSessionStore(SessionStore):
         self._serializer = serializer
         self._lock = asyncio.Lock()
         self._executions_path = Path("executions.json")
-        # Canonical, ordered list of committed log entries — the in-memory
-        # mirror of executions.json. Source of truth for both serialization
-        # and per-key lookup; ``_latest_index`` is a positional pointer into
-        # this list.
+        # Canonical, ordered list of durable log entries — the in-memory mirror
+        # of executions.json. Source of truth for both serialization and
+        # per-key lookup; ``_latest_index`` is a positional pointer into this
+        # list.
         self._log_entries: list[LogEntry] = []
-        # key → index of the latest log entry that defines the current
-        # state for that key. Indices are stable because we only append
-        # to ``_log_entries``, never remove.
+        # key → index of the latest log entry that defines the current state for
+        # that key. Indices are stable because we only append to ``_log_entries``
+        # except when pruning rewrites the list and rebuilds the index.
         self._latest_index: dict[str, int] = {}
-        # Entries staged by the current transaction, not yet committed.
-        self._staged_log_entries: list[LogEntry] = []
-        # Keys whose entries the current transaction should drop on commit.
-        self._staged_delete_keys: set[str] = set()
-        self._write_staged = False
         self._load_executions()
 
     # ------------------------------------------------------------------
@@ -192,88 +174,32 @@ class JsonFileSessionStore(SessionStore):
             self._latest_index[key] = i
 
     # ------------------------------------------------------------------
-    # Staging and commit
+    # Durable log mutation
     # ------------------------------------------------------------------
 
-    def _compute_committed_entries(self) -> list[LogEntry]:
-        """The entry list that this transaction will commit: committed plus
-        staged additions, minus any entries staged for deletion. Caller must
-        hold ``self._lock``. The same computation backs both the on-disk write
-        and the in-memory state so the two never diverge."""
-        all_entries = self._log_entries + self._staged_log_entries
-        if not self._staged_delete_keys:
-            return all_entries
-        deleted = self._staged_delete_keys
-        return [
-            e
-            for e in all_entries
-            if self._callstack_to_key(e["call_stack"]) not in deleted
-        ]
-
-    async def _on_write(self) -> bytes:
-        """Produce the new on-disk content from in-memory state. Called by
-        FileClient at commit time."""
-        async with self._lock:
-            all_entries = self._compute_committed_entries()
+    @staticmethod
+    def _serialize_entries(entries: list[LogEntry]) -> bytes:
         return json.dumps(
-            all_entries, indent=2, sort_keys=True, separators=JSON_SEPARATORS
+            entries, indent=2, sort_keys=True, separators=JSON_SEPARATORS
         ).encode(DEFAULT_ENCODING)
 
-    async def _on_transaction_commit(self) -> None:
-        async with self._lock:
-            if self._staged_delete_keys:
-                # Deletions remove entries from the middle of the list, breaking
-                # the positional-index invariant, so rebuild the index in full.
-                self._log_entries = self._compute_committed_entries()
-                self._staged_log_entries.clear()
-                self._staged_delete_keys.clear()
-                self._latest_index.clear()
-                self._index_new_entries(start_index=0)
-            else:
-                start_index = len(self._log_entries)
-                self._log_entries.extend(self._staged_log_entries)
-                self._index_new_entries(start_index=start_index)
-                self._staged_log_entries.clear()
-            self._write_staged = False
-
-    async def _on_transaction_rollback(self) -> None:
-        async with self._lock:
-            self._staged_log_entries.clear()
-            self._staged_delete_keys.clear()
-            self._write_staged = False
-
-    async def _stage_write_if_needed(self) -> None:
-        async with self._lock:
-            if self._write_staged:
-                return
-            self._write_staged = True
-
-        try:
-            await self._client.stage_write(self._executions_path, self._on_write)
-        except Exception:
-            async with self._lock:
-                self._write_staged = False
-            raise
-
     async def _add_log_entry(self, entry: LogEntry):
-        # Append under the store lock, then call stage_write outside the
-        # store lock to avoid a lock-ordering inversion against _on_write
-        # (which acquires the store lock during commit_staged).
         async with self._lock:
-            self._staged_log_entries.append(entry)
-
-        await self._stage_write_if_needed()
+            next_entries = [*self._log_entries, entry]
+            await self._client.write(
+                self._executions_path,
+                self._serialize_entries(next_entries),
+            )
+            start_index = len(self._log_entries)
+            self._log_entries = next_entries
+            self._index_new_entries(start_index=start_index)
 
     # ------------------------------------------------------------------
     # SessionStore interface
     # ------------------------------------------------------------------
 
     async def begin_transaction(self) -> Transaction:
-        return _FileTransaction(
-            self._client,
-            on_commit=self._on_transaction_commit,
-            on_rollback=self._on_transaction_rollback,
-        )
+        return _FileTransaction()
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         record = await self.get_execution_record(execution_id, type(None))
@@ -296,43 +222,51 @@ class JsonFileSessionStore(SessionStore):
         self, execution_id: ExecutionId, return_type: type
     ) -> ExecutionRecord | None:
         key = self._id_to_key(execution_id)
-        idx = self._latest_index.get(key)
-        if idx is None:
-            return None
-
-        entry = self._log_entries[idx]
-        status = _EVENT_TYPE_TO_STATUS[entry["event_type"]]
-        result: Any | None = None
-        error: str | None = None
-        if status == ExecutionStatus.COMPLETED:
+        async with self._lock:
+            idx = self._latest_index.get(key)
+            if idx is None:
+                return None
+            entry = self._log_entries[idx]
+            status = _EVENT_TYPE_TO_STATUS[entry["event_type"]]
             persistable_result = entry["result"]
-            if persistable_result is not None:
-                serialized_bytes = json.dumps(
-                    persistable_result, sort_keys=True, separators=JSON_SEPARATORS
-                ).encode(DEFAULT_ENCODING)
-                result = await self._serializer.deserialize(
-                    serialized_bytes, return_type
-                )
+            error = entry["error"]
+
+        result: Any | None = None
+        if status == ExecutionStatus.COMPLETED and persistable_result is not None:
+            serialized_bytes = json.dumps(
+                persistable_result, sort_keys=True, separators=JSON_SEPARATORS
+            ).encode(DEFAULT_ENCODING)
+            result = await self._serializer.deserialize(serialized_bytes, return_type)
         elif status == ExecutionStatus.FAILED:
-            error = entry["error"] or ""
+            error = error or ""
         return ExecutionRecord(status=status, result=result, error=error)
 
     async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         prefix = self._id_to_key(execution_id) + "/"
         async with self._lock:
-            all_entries = self._log_entries + self._staged_log_entries
-            deleted = self._staged_delete_keys
             keys: dict[str, list[str]] = {}
-            for entry in all_entries:
+            for entry in self._log_entries:
                 key = self._callstack_to_key(entry["call_stack"])
-                if key.startswith(prefix) and key not in deleted:
+                if key.startswith(prefix):
                     keys.setdefault(key, entry["call_stack"])
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
 
     async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
-        keys = [execution_id_to_path(eid) for eid in execution_ids]
+        keys = {execution_id_to_path(eid) for eid in execution_ids}
         if not keys:
             return
         async with self._lock:
-            self._staged_delete_keys.update(keys)
-        await self._stage_write_if_needed()
+            next_entries = [
+                entry
+                for entry in self._log_entries
+                if self._callstack_to_key(entry["call_stack"]) not in keys
+            ]
+            if len(next_entries) == len(self._log_entries):
+                return
+            await self._client.write(
+                self._executions_path,
+                self._serialize_entries(next_entries),
+            )
+            self._log_entries = next_entries
+            self._latest_index.clear()
+            self._index_new_entries(start_index=0)
