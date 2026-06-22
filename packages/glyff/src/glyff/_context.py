@@ -20,15 +20,15 @@ class Context:
         store: SessionStore,
         sequencer: Sequencer,
         hasher: ArgsHasher,
-        event_emitter: EventEmitter,
         transaction_scope_factory: Callable[[], TransactionScope] | None = None,
+        event_emitter: EventEmitter | None = None,
     ) -> None:
         self._session_id = session_id
         self._store = store
         self._sequencer = sequencer
         self._hasher = hasher
         self._transaction_scope_factory = transaction_scope_factory
-        self._event_emitter = event_emitter
+        self._event_emitter = event_emitter or EventEmitter([])
         self._tracer = ExecutionTracer()
 
     @property
