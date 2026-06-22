@@ -7,7 +7,6 @@ from glyff._context import Context, TransactionScope, reset_context, set_context
 from glyff._executor import execute
 from glyff._sequencer import Sequencer
 from glyff.event_handlers import PruningEventHandler
-from glyff.exceptions import ExecutionFailedError, YieldException
 from glyff.store._memory import _make_key
 from glyff.store.utils import execution_id_to_path
 from glyff.tests.stubs.store import StubSessionStore
@@ -214,7 +213,7 @@ async def test_completed_task_is_skipped(
     assert not mock_store.get_calls("commit")
 
 
-async def test_failed_task_raises_error(
+async def test_failed_record_is_retryable(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,
     test_context: Context,
@@ -224,35 +223,40 @@ async def test_failed_task_raises_error(
     async def sample_func():
         nonlocal executed
         executed = True
+        return "recovered"
 
-    # Setup the internal memory store to return a failed state
+    # A leftover FAILED record no longer gates re-execution; the call is retried.
     path = execution_id_to_path(base_execution_id)
     mock_store._mem_store._client.data[_make_key(path, "status")] = (
         ExecutionStatus.FAILED
     )
     mock_store._mem_store._client.data[_make_key(path, "error")] = "it broke"
 
-    with pytest.raises(ExecutionFailedError, match="failed previously"):
-        await execute(
-            ctx=test_context,
-            execution_id=base_execution_id,
-            func=sample_func,
-            args=(),
-            kwargs={},
-            return_type=str,
-        )
-    assert not executed
+    result = await execute(
+        ctx=test_context,
+        execution_id=base_execution_id,
+        func=sample_func,
+        args=(),
+        kwargs={},
+        return_type=str,
+    )
+
+    assert result == "recovered"
+    assert executed
 
 
-async def test_session_interrupted_skips_failure_staging(
+async def test_interrupting_exception_skips_failure_staging(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,
     test_context: Context,
 ):
-    async def sample_func():
-        raise YieldException()
+    class ApplicationPause(Exception):
+        pass
 
-    with pytest.raises(YieldException):
+    async def sample_func():
+        raise ApplicationPause()
+
+    with pytest.raises(ApplicationPause):
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
@@ -269,7 +273,7 @@ async def test_session_interrupted_skips_failure_staging(
     assert not mock_store.get_calls("rollback")
 
 
-async def test_general_exception_stages_failure(
+async def test_general_exception_is_non_terminal(
     mock_store: StubSessionStore,
     base_execution_id: ExecutionId,
     test_context: Context,
@@ -277,7 +281,8 @@ async def test_general_exception_stages_failure(
     async def sample_func():
         raise ValueError("oops")
 
-    with pytest.raises(ExecutionFailedError):
+    # The original exception propagates unwrapped (not ExecutionFailedError).
+    with pytest.raises(ValueError, match="oops"):
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
@@ -288,10 +293,10 @@ async def test_general_exception_stages_failure(
         )
 
     assert not test_context.tracer.call_stack
-    fail_calls = mock_store.get_calls("fail")
-    assert len(fail_calls) == 1
-    assert "ValueError" in fail_calls[0].args[1]
-
+    # No failure is staged; the call stays STARTED so it is retryable on resume.
+    assert not mock_store.get_calls("fail")
+    assert len(mock_store.get_calls("start_execution")) == 1
+    # Completed work is still committed (not rolled back).
     assert len(mock_store.get_calls("commit")) == 1
     assert not mock_store.get_calls("rollback")
 

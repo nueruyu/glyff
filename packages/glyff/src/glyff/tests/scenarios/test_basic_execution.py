@@ -1,7 +1,6 @@
 import pytest
 
 from glyff import ArgsHasher, Session, engrave
-from glyff.exceptions import ExecutionFailedError
 from glyff.tests.types import StoreFactory
 
 _calls: list[int] = []
@@ -78,24 +77,27 @@ async def test_nested_engrave_execution(
     assert _calls == [5, 10]
 
 
-async def test_failed_task_is_not_rerun_and_raises_task_failed_error(
+async def test_failed_task_is_retried_on_next_session(
     store_factory: StoreFactory, hasher: ArgsHasher
 ):
     global _should_fail
     store = store_factory("basic-fail-rerun")
     session_id = "basic-fail-rerun"
 
+    # A raised exception is non-terminal: it propagates unwrapped but does not
+    # permanently poison the call.
     _should_fail = True
-    with pytest.raises(ExecutionFailedError):
+    with pytest.raises(ValueError, match="Intentional failure"):
         async with Session(id=session_id, store=store, hasher=hasher):
             await basic_simple_func(10)
     assert _calls == [10]
 
     _calls.clear()
 
+    # On a later session the previously-interrupted call is retried from scratch.
     _should_fail = False
-    with pytest.raises(ExecutionFailedError):
-        async with Session(id=session_id, store=store, hasher=hasher):
-            await basic_simple_func(10)
+    async with Session(id=session_id, store=store, hasher=hasher):
+        result = await basic_simple_func(10)
 
-    assert not _calls
+    assert result == 20
+    assert _calls == [10]  # body re-executed

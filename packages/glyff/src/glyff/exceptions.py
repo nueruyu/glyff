@@ -1,6 +1,6 @@
 class GlyffException(Exception):
     """
-    Base class for all glyff-specific exceptions and control signals.
+    Base class for all glyff-specific exceptions.
     """
 
     pass
@@ -9,15 +9,6 @@ class GlyffException(Exception):
 class GlyffError(GlyffException):
     """
     Base class for glyff errors.
-    """
-
-    pass
-
-
-class YieldException(GlyffException):
-    """
-    A special exception to signal that the session should be interrupted gracefully.
-    This is not an error, but a signal to stop processing and engrave the state.
     """
 
     pass

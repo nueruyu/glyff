@@ -2,9 +2,8 @@ import traceback
 from typing import Any, Callable
 
 from ._context import Context
-from .events import ExecutionCompleted, ExecutionFailed, ExecutionYielded
-from .exceptions import ExecutionFailedError, YieldException
 from ._models import ExecutionId, ExecutionStatus
+from .events import ExecutionCompleted, ExecutionFailed
 
 
 async def execute(
@@ -28,13 +27,6 @@ async def execute(
     if record:
         if record.status == ExecutionStatus.COMPLETED:
             return record.result
-        if record.status == ExecutionStatus.FAILED:
-            original_error = Exception(
-                record.error or "Unknown previously failed error"
-            )
-            raise ExecutionFailedError(
-                f"Task {execution_id} failed previously and cannot be re-executed."
-            ) from original_error
 
     async with ctx.get_transaction_scope():
         # Reset child sequencers for deterministic re-execution.
@@ -50,16 +42,10 @@ async def execute(
                 ExecutionCompleted(context=ctx, execution_id=execution_id)
             )
             return result
-        except YieldException as y:
-            # Interruption is a graceful exit; don't stage failure.
-            # The state remains STARTED, allowing for resumption.
-            await ctx.event_emitter.emit(
-                ExecutionYielded(context=ctx, execution_id=execution_id)
-            )
-            raise y
         except Exception as e:
             error_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            await execution.fail(error_str)
+            # Do not mark the execution as FAILED. Leaving it STARTED makes
+            # the call retryable on resume, matching crash/kill behavior.
             await ctx.event_emitter.emit(
                 ExecutionFailed(
                     context=ctx,
@@ -67,8 +53,6 @@ async def execute(
                     error=error_str,
                 )
             )
-            raise ExecutionFailedError(
-                f"Task {execution_id} failed: {type(e).__name__}({e})"
-            ) from e
+            raise
         finally:
             tracer.end()

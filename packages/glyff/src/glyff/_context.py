@@ -5,10 +5,10 @@ from collections.abc import Iterator, Sequence
 from typing import Callable, overload
 
 from ._event_system import EventEmitter
-from .exceptions import ContextNotSetError, ExecutionFailedError, YieldException
 from ._interfaces import ArgsHasher, SessionStore, Transaction
 from ._models import ExecutionId
 from ._sequencer import Sequencer
+from .exceptions import ContextNotSetError
 
 
 class Context:
@@ -148,11 +148,10 @@ class TransactionScope:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         self._level -= 1
         if self._level == 0 and self._transaction:
-            if exc_type is None or isinstance(
-                exc_val, (YieldException, ExecutionFailedError)
-            ):
-                # On YieldException or ExecutionFailedError we still commit so that
-                # state (completed subtasks or the failure record) is durably saved.
+            # Commit on success or on any Exception: completed work stays
+            # durable and the interrupted call remains retryable. Roll back only
+            # on BaseException (KeyboardInterrupt, SystemExit, cancellation).
+            if exc_type is None or issubclass(exc_type, Exception):
                 await self._transaction.commit()
             else:
                 await self._transaction.rollback()

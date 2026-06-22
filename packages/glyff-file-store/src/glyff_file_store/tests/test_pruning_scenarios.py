@@ -5,9 +5,12 @@ of a task's descendants once it completes, without changing replay."""
 import pytest
 from glyff import ArgsHasher, EventEmitter, Serializer, Session, engrave
 from glyff.event_handlers import PruningEventHandler
-from glyff.exceptions import YieldException
 
 from glyff_file_store import FileClient, JsonFileSessionStore
+
+
+class PruningPause(Exception):
+    pass
 
 
 def _leaf_names(store: JsonFileSessionStore) -> list[str]:
@@ -148,7 +151,7 @@ async def sc_child_a() -> str:
 async def sc_child_b() -> str:
     _sc_runs.append("child_b_start")
     if _sc_interrupt:
-        raise YieldException()
+        raise PruningPause()
     _sc_runs.append("child_b_end")
     return "B"
 
@@ -173,7 +176,7 @@ async def test_nested_completion_prunes_mid_session(
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
     )
-    with pytest.raises(YieldException):
+    with pytest.raises(PruningPause):
         async with Session(
             id=sid, store=store, hasher=hasher, event_emitter=_pruning_emitter()
         ):
