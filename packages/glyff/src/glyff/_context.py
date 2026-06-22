@@ -20,8 +20,8 @@ class Context:
         store: SessionStore,
         sequencer: Sequencer,
         hasher: ArgsHasher,
-        transaction_scope_factory: Callable[[], TransactionScope],
         event_emitter: EventEmitter,
+        transaction_scope_factory: Callable[[], TransactionScope] | None = None,
     ) -> None:
         self._session_id = session_id
         self._store = store
@@ -30,7 +30,6 @@ class Context:
         self._transaction_scope_factory = transaction_scope_factory
         self._event_emitter = event_emitter
         self._tracer = ExecutionTracer()
-        self._current_transaction_scope: TransactionScope | None = None
 
     @property
     def store(self) -> SessionStore:
@@ -62,14 +61,19 @@ class Context:
 
     @property
     def in_transaction(self) -> bool:
-        """Returns True if currently within a transaction scope."""
-        ts = self._current_transaction_scope
-        return ts is not None and ts.in_transaction
+        """Return False; durability is per event, not session-scoped."""
+        return False
 
     def get_transaction_scope(self) -> TransactionScope:
-        if self._current_transaction_scope is None:
-            self._current_transaction_scope = self._transaction_scope_factory()
-        return self._current_transaction_scope
+        """Return a fresh compatibility transaction scope.
+
+        Runtime durability no longer depends on this method. It remains for
+        tests or third-party code that still constructs explicit transaction
+        scopes against a store.
+        """
+        if self._transaction_scope_factory is not None:
+            return self._transaction_scope_factory()
+        return TransactionScope(self._store)
 
 
 class CallStack(Sequence[ExecutionId]):
@@ -82,6 +86,7 @@ class CallStack(Sequence[ExecutionId]):
 
     @overload
     def __getitem__(self, index: int) -> ExecutionId: ...
+
     @overload
     def __getitem__(self, index: slice) -> list[ExecutionId]: ...
 
@@ -124,37 +129,38 @@ class ExecutionTracer:
 
 
 class TransactionScope:
-    """
-    Manages a transaction across a SessionStore, supporting nesting.
-    The actual commit/rollback only happens at the outermost scope.
+    """Compatibility wrapper around ``SessionStore.begin_transaction``.
+
+    Glyff records each execution event directly as it happens, so normal runtime
+    execution does not share a session-wide transaction scope. This class is
+    retained for callers that explicitly use the store transaction hook.
     """
 
     def __init__(self, store: SessionStore):
         self._store = store
-        self._level = 0
         self._transaction: Transaction | None = None
+        self._active = False
 
     @property
     def in_transaction(self) -> bool:
-        """Returns True if currently within a transaction scope."""
-        return self._level > 0
+        return self._active
 
     async def __aenter__(self):
-        if self._level == 0:
-            self._transaction = await self._store.begin_transaction()
-        self._level += 1
+        self._transaction = await self._store.begin_transaction()
+        self._active = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._level -= 1
-        if self._level == 0 and self._transaction:
-            # Commit on success or on any Exception: completed work stays
-            # durable and the interrupted call remains retryable. Roll back only
-            # on BaseException (KeyboardInterrupt, SystemExit, cancellation).
+        try:
+            if self._transaction is None:
+                return
             if exc_type is None or issubclass(exc_type, Exception):
                 await self._transaction.commit()
             else:
                 await self._transaction.rollback()
+        finally:
+            self._active = False
+            self._transaction = None
 
 
 _context_var: contextvars.ContextVar[Context] = contextvars.ContextVar("glyff_context")
