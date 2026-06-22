@@ -99,25 +99,34 @@ class CallStack(Sequence[ExecutionId]):
 
 
 class ExecutionTracer:
-    """Records the active call stack during workflow execution."""
+    """Records the active call stack during workflow execution.
+
+    The stack lives in a ``ContextVar`` holding an immutable tuple, so
+    concurrent tasks (parallel ``asyncio.gather`` branches) each see their own
+    call stack: a child spawned under a gather inherits the parent's stack
+    snapshot, but its own pushes do not leak to siblings. This keeps parent-id
+    resolution correct under parallel execution.
+    """
 
     def __init__(self) -> None:
-        self._stack: list[ExecutionId] = []
-        self._view = CallStack(self._stack)
+        self._stack: contextvars.ContextVar[tuple[ExecutionId, ...]] = (
+            contextvars.ContextVar("glyff_call_stack", default=())
+        )
 
     @property
     def call_stack(self) -> CallStack:
-        return self._view
+        return CallStack(list(self._stack.get()))
 
     @property
     def current(self) -> ExecutionId | None:
-        return self._stack[-1] if self._stack else None
+        stack = self._stack.get()
+        return stack[-1] if stack else None
 
     def start(self, execution_id: ExecutionId) -> None:
-        self._stack.append(execution_id)
+        self._stack.set((*self._stack.get(), execution_id))
 
     def end(self) -> None:
-        self._stack.pop()
+        self._stack.set(self._stack.get()[:-1])
 
 
 class TransactionScope:

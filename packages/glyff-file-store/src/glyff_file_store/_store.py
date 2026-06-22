@@ -109,6 +109,12 @@ class JsonFileSessionStore(SessionStore):
     The entire log is loaded into memory at construction time and rewritten
     atomically on each commit. Suitable for sessions whose log fits in memory;
     for very large or high-throughput sessions prefer a database-backed store.
+
+    This is a human-readable debug backend. Unlike ``SQLiteSessionStore`` it
+    does not isolate concurrent transactions (each commit rewrites the whole
+    file), so it is not suitable for parallel fan-out (e.g. ``asyncio.gather``
+    of engraved calls). Use ``SQLiteSessionStore`` for parallel and/or durable
+    workloads.
     """
 
     def __init__(self, client: FileClient, serializer: Serializer):

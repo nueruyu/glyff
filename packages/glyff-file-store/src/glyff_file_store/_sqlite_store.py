@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import sqlite3
 from collections.abc import Awaitable, Callable, Iterable
@@ -38,22 +39,40 @@ class _SQLiteEvent:
     error: str | None = None
 
 
+class _SQLiteStaging:
+    """A single transaction's pending events and deletes."""
+
+    __slots__ = ("events", "delete_keys")
+
+    def __init__(self) -> None:
+        self.events: list[_SQLiteEvent] = []
+        self.delete_keys: set[str] = set()
+
+
 class _SQLiteTransaction(Transaction):
     def __init__(self, store: SQLiteSessionStore):
         self._store = store
         self._closed = False
+        # Isolate this transaction's staging from any concurrent transaction.
+        self._token = store.begin_staging()
 
     async def commit(self) -> None:
         if self._closed:
             return
-        await self._store._commit_staged()
-        self._closed = True
+        try:
+            await self._store._commit_staged()
+        finally:
+            self._store.end_staging(self._token)
+            self._closed = True
 
     async def rollback(self) -> None:
         if self._closed:
             return
-        await self._store._clear_staged()
-        self._closed = True
+        try:
+            await self._store._clear_staged()
+        finally:
+            self._store.end_staging(self._token)
+            self._closed = True
 
 
 class _SQLiteExecution(Execution):
@@ -114,9 +133,26 @@ class SQLiteSessionStore(SessionStore):
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
         self._lock = asyncio.Lock()
-        self._staged_events: list[_SQLiteEvent] = []
-        self._staged_delete_keys: set[str] = set()
+        self._ambient = _SQLiteStaging()
+        # Per-instance so concurrent transactions (e.g. parallel gather
+        # branches, each in a copied context) stage in isolation.
+        self._current: contextvars.ContextVar[_SQLiteStaging | None] = (
+            contextvars.ContextVar("sqlite_staging", default=None)
+        )
         self._initialize_database()
+
+    def _staging(self) -> _SQLiteStaging:
+        """The staging buffer for the current transaction, or the ambient one."""
+        return self._current.get() or self._ambient
+
+    def begin_staging(self) -> contextvars.Token:
+        return self._current.set(_SQLiteStaging())
+
+    def end_staging(self, token: contextvars.Token) -> None:
+        try:
+            self._current.reset(token)
+        except (ValueError, LookupError):
+            pass
 
     # ------------------------------------------------------------------
     # SQLite helpers
@@ -178,23 +214,25 @@ class SQLiteSessionStore(SessionStore):
 
     async def _append_event(self, event: _SQLiteEvent) -> None:
         async with self._lock:
-            self._staged_events.append(event)
+            self._staging().events.append(event)
 
     async def _clear_staged(self) -> None:
         async with self._lock:
-            self._staged_events.clear()
-            self._staged_delete_keys.clear()
+            staging = self._staging()
+            staging.events.clear()
+            staging.delete_keys.clear()
 
     async def _commit_staged(self) -> None:
         async with self._lock:
-            events = list(self._staged_events)
-            delete_keys = set(self._staged_delete_keys)
+            staging = self._staging()
+            events = list(staging.events)
+            delete_keys = set(staging.delete_keys)
             if not events and not delete_keys:
                 return
 
             await asyncio.to_thread(self._write_committed, events, delete_keys)
-            self._staged_events.clear()
-            self._staged_delete_keys.clear()
+            staging.events.clear()
+            staging.delete_keys.clear()
 
     def _write_committed(
         self, events: list[_SQLiteEvent], delete_keys: set[str]
@@ -314,11 +352,12 @@ class SQLiteSessionStore(SessionStore):
             key: json.loads(call_stack_json) for key, call_stack_json in committed_rows
         }
         async with self._lock:
-            for key in self._staged_delete_keys:
+            staging = self._staging()
+            for key in staging.delete_keys:
                 keys.pop(key, None)
-            for event in self._staged_events:
+            for event in staging.events:
                 key = self._id_to_key(event.execution_id)
-                if key.startswith(prefix) and key not in self._staged_delete_keys:
+                if key.startswith(prefix) and key not in staging.delete_keys:
                     keys[key] = self._id_to_callstack(event.execution_id)
 
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
@@ -345,4 +384,4 @@ class SQLiteSessionStore(SessionStore):
         if not keys:
             return
         async with self._lock:
-            self._staged_delete_keys.update(keys)
+            self._staging().delete_keys.update(keys)
