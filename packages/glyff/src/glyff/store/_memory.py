@@ -28,20 +28,27 @@ def _key_to_path(key: str) -> str | None:
 class _MemoryTransaction(Transaction):
     def __init__(self, client: MemoryClient):
         self._client = client
+        self._closed = False
         # Isolate this transaction's staging from any concurrent transaction.
         self._token = client.begin_staging()
 
     async def commit(self) -> None:
+        if self._closed:
+            return
         try:
             await self._client.commit_staged()
         finally:
             self._client.end_staging(self._token)
+            self._closed = True
 
     async def rollback(self) -> None:
+        if self._closed:
+            return
         try:
             self._client.clear_staged()
         finally:
             self._client.end_staging(self._token)
+            self._closed = True
 
 
 class _MemoryExecution(Execution):
