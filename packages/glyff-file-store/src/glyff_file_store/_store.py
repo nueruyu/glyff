@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import logging
 from collections.abc import Iterable
@@ -24,8 +25,6 @@ from ._file_client import FileClient
 
 logger = logging.getLogger(__name__)
 
-PostHook = Callable[[], Awaitable[None]]
-
 
 class LogEntry(TypedDict):
     timestamp: str
@@ -43,26 +42,44 @@ _STATUS_TO_EVENT_TYPE = {
 _EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
 
 
+class _StagingBuffer:
+    """A single transaction's pending log entries and deletes."""
+
+    __slots__ = ("entries", "delete_keys")
+
+    def __init__(self) -> None:
+        self.entries: list[LogEntry] = []
+        self.delete_keys: set[str] = set()
+
+    def clear(self) -> None:
+        self.entries.clear()
+        self.delete_keys.clear()
+
+
 class _FileTransaction(Transaction):
-    def __init__(
-        self,
-        client: FileClient,
-        on_commit: PostHook | None = None,
-        on_rollback: PostHook | None = None,
-    ):
-        self._client = client
-        self._on_commit = on_commit
-        self._on_rollback = on_rollback
+    def __init__(self, store: JsonFileSessionStore):
+        self._store = store
+        self._closed = False
+        # Isolate this transaction's staging from any concurrent transaction.
+        self._token = store.begin_staging()
 
     async def commit(self) -> None:
-        await self._client.commit_staged()
-        if self._on_commit is not None:
-            await self._on_commit()
+        if self._closed:
+            return
+        try:
+            await self._store._commit_current()
+        finally:
+            self._store.end_staging(self._token)
+            self._closed = True
 
     async def rollback(self) -> None:
-        await self._client.clear_staged()
-        if self._on_rollback is not None:
-            await self._on_rollback()
+        if self._closed:
+            return
+        try:
+            await self._store._rollback_current()
+        finally:
+            self._store.end_staging(self._token)
+            self._closed = True
 
 
 class _FileExecution(Execution):
@@ -110,11 +127,12 @@ class JsonFileSessionStore(SessionStore):
     atomically on each commit. Suitable for sessions whose log fits in memory;
     for very large or high-throughput sessions prefer a database-backed store.
 
-    This is a human-readable debug backend. Unlike ``SQLiteSessionStore`` it
-    does not isolate concurrent transactions (each commit rewrites the whole
-    file), so it is not suitable for parallel fan-out (e.g. ``asyncio.gather``
-    of engraved calls). Use ``SQLiteSessionStore`` for parallel and/or durable
-    workloads.
+    This is a human-readable debug backend. Each transaction stages into its
+    own buffer (tracked per asyncio task via a ``ContextVar``), and commits are
+    serialized so the whole-file rewrite stays consistent under concurrent
+    transactions — so it is parallel-safe, but each commit still rewrites the
+    whole file (O(n) per commit). For large or high-throughput durable
+    workloads prefer ``SQLiteSessionStore``.
     """
 
     def __init__(self, client: FileClient, serializer: Serializer):
@@ -129,13 +147,15 @@ class JsonFileSessionStore(SessionStore):
         self._log_entries: list[LogEntry] = []
         # key → index of the latest log entry that defines the current
         # state for that key. Indices are stable because we only append
-        # to ``_log_entries``, never remove.
+        # to ``_log_entries`` except when a delete rebuilds the list.
         self._latest_index: dict[str, int] = {}
-        # Entries staged by the current transaction, not yet committed.
-        self._staged_log_entries: list[LogEntry] = []
-        # Keys whose entries the current transaction should drop on commit.
-        self._staged_delete_keys: set[str] = set()
-        self._write_staged = False
+        # Per-transaction staging, tracked per task so concurrent transactions
+        # (parallel gather branches) stay isolated. Outside a transaction,
+        # staging falls back to the ambient buffer.
+        self._ambient = _StagingBuffer()
+        self._current: contextvars.ContextVar[_StagingBuffer | None] = (
+            contextvars.ContextVar("json_store_staging", default=None)
+        )
         self._load_executions()
 
     # ------------------------------------------------------------------
@@ -198,88 +218,76 @@ class JsonFileSessionStore(SessionStore):
             self._latest_index[key] = i
 
     # ------------------------------------------------------------------
-    # Staging and commit
+    # Per-transaction staging and commit
     # ------------------------------------------------------------------
 
-    def _compute_committed_entries(self) -> list[LogEntry]:
-        """The entry list that this transaction will commit: committed plus
-        staged additions, minus any entries staged for deletion. Caller must
-        hold ``self._lock``. The same computation backs both the on-disk write
-        and the in-memory state so the two never diverge."""
-        all_entries = self._log_entries + self._staged_log_entries
-        if not self._staged_delete_keys:
-            return all_entries
-        deleted = self._staged_delete_keys
-        return [
-            e
-            for e in all_entries
-            if self._callstack_to_key(e["call_stack"]) not in deleted
-        ]
+    def _staging(self) -> _StagingBuffer:
+        """The staging buffer for the current transaction, or the ambient one."""
+        return self._current.get() or self._ambient
 
-    async def _on_write(self) -> bytes:
-        """Produce the new on-disk content from in-memory state. Called by
-        FileClient at commit time."""
-        async with self._lock:
-            all_entries = self._compute_committed_entries()
-        return json.dumps(
-            all_entries, indent=2, sort_keys=True, separators=JSON_SEPARATORS
-        ).encode(DEFAULT_ENCODING)
+    def begin_staging(self) -> contextvars.Token:
+        return self._current.set(_StagingBuffer())
 
-    async def _on_transaction_commit(self) -> None:
+    def end_staging(self, token: contextvars.Token) -> None:
+        try:
+            self._current.reset(token)
+        except (ValueError, LookupError):
+            pass
+
+    async def _add_log_entry(self, entry: LogEntry) -> None:
         async with self._lock:
-            if self._staged_delete_keys:
-                # Deletions remove entries from the middle of the list, breaking
-                # the positional-index invariant, so rebuild the index in full.
-                self._log_entries = self._compute_committed_entries()
-                self._staged_log_entries.clear()
-                self._staged_delete_keys.clear()
+            self._staging().entries.append(entry)
+
+    async def _commit_current(self) -> None:
+        async with self._lock:
+            staging = self._staging()
+            if not staging.entries and not staging.delete_keys:
+                return
+
+            if staging.delete_keys:
+                deleted = staging.delete_keys
+                merged = [
+                    e
+                    for e in (self._log_entries + staging.entries)
+                    if self._callstack_to_key(e["call_stack"]) not in deleted
+                ]
+                content = self._serialize_entries(merged)
+                # Write to disk first; only advance in-memory state on success.
+                await self._write_all(content)
+                self._log_entries = merged
                 self._latest_index.clear()
                 self._index_new_entries(start_index=0)
             else:
                 start_index = len(self._log_entries)
-                self._log_entries.extend(self._staged_log_entries)
+                merged = self._log_entries + staging.entries
+                content = self._serialize_entries(merged)
+                await self._write_all(content)
+                self._log_entries = merged
                 self._index_new_entries(start_index=start_index)
-                self._staged_log_entries.clear()
-            self._write_staged = False
 
-    async def _on_transaction_rollback(self) -> None:
+            staging.clear()
+
+    async def _rollback_current(self) -> None:
         async with self._lock:
-            self._staged_log_entries.clear()
-            self._staged_delete_keys.clear()
-            self._write_staged = False
+            self._staging().clear()
 
-    async def _stage_write_if_needed(self) -> None:
-        async with self._lock:
-            if self._write_staged:
-                return
-            self._write_staged = True
+    @staticmethod
+    def _serialize_entries(entries: list[LogEntry]) -> bytes:
+        return json.dumps(
+            entries, indent=2, sort_keys=True, separators=JSON_SEPARATORS
+        ).encode(DEFAULT_ENCODING)
 
-        try:
-            await self._client.stage_write(self._executions_path, self._on_write)
-        except Exception:
-            async with self._lock:
-                self._write_staged = False
-            raise
-
-    async def _add_log_entry(self, entry: LogEntry):
-        # Append under the store lock, then call stage_write outside the
-        # store lock to avoid a lock-ordering inversion against _on_write
-        # (which acquires the store lock during commit_staged).
-        async with self._lock:
-            self._staged_log_entries.append(entry)
-
-        await self._stage_write_if_needed()
+    async def _write_all(self, content: bytes) -> None:
+        """Rewrite the whole executions file atomically via the file client."""
+        await self._client.stage_write(self._executions_path, content)
+        await self._client.commit_staged()
 
     # ------------------------------------------------------------------
     # SessionStore interface
     # ------------------------------------------------------------------
 
     async def begin_transaction(self) -> Transaction:
-        return _FileTransaction(
-            self._client,
-            on_commit=self._on_transaction_commit,
-            on_rollback=self._on_transaction_rollback,
-        )
+        return _FileTransaction(self)
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         record = await self.get_execution_record(execution_id, type(None))
@@ -326,8 +334,9 @@ class JsonFileSessionStore(SessionStore):
     async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         prefix = self._id_to_key(execution_id) + "/"
         async with self._lock:
-            all_entries = self._log_entries + self._staged_log_entries
-            deleted = self._staged_delete_keys
+            staging = self._staging()
+            all_entries = self._log_entries + staging.entries
+            deleted = staging.delete_keys
             keys: dict[str, list[str]] = {}
             for entry in all_entries:
                 key = self._callstack_to_key(entry["call_stack"])
@@ -336,9 +345,8 @@ class JsonFileSessionStore(SessionStore):
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
 
     async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
-        keys = [execution_id_to_path(eid) for eid in execution_ids]
+        keys = {execution_id_to_path(eid) for eid in execution_ids}
         if not keys:
             return
         async with self._lock:
-            self._staged_delete_keys.update(keys)
-        await self._stage_write_if_needed()
+            self._staging().delete_keys.update(keys)
