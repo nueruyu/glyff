@@ -4,8 +4,7 @@ import asyncio
 import contextvars
 import json
 import sqlite3
-from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,79 +29,84 @@ _STATUS_TO_EVENT_TYPE = {
 _EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
 _VALID_SYNCHRONOUS_VALUES = {"OFF", "NORMAL", "FULL", "EXTRA"}
 
-
-@dataclass(frozen=True)
-class _SQLiteEvent:
-    execution_id: ExecutionId
-    status: ExecutionStatus
-    result: bytes | None = None
-    error: str | None = None
-
-
-class _SQLiteStaging:
-    """A single transaction's pending events and deletes."""
-
-    __slots__ = ("events", "delete_keys")
-
-    def __init__(self) -> None:
-        self.events: list[_SQLiteEvent] = []
-        self.delete_keys: set[str] = set()
+_ReadFn = Callable[[sqlite3.Connection], Any]
+_WriteFn = Callable[[sqlite3.Connection], None]
 
 
 class _SQLiteTransaction(Transaction):
-    def __init__(self, store: SQLiteSessionStore):
+    """A native SQLite transaction.
+
+    Staging is the database's own uncommitted state: each operation runs INSERT
+    / DELETE directly on this transaction's connection (inside ``BEGIN``), and
+    ``commit`` / ``rollback`` are native ``COMMIT`` / ``ROLLBACK``. Multiple
+    stagers (the store plus any external code holding this transaction) write to
+    the same connection and are committed atomically together; ``_lock``
+    serializes concurrent access to that single connection.
+    """
+
+    def __init__(self, store: SQLiteSessionStore, connection: sqlite3.Connection):
         self._store = store
+        self._connection = connection
+        self._lock = asyncio.Lock()
+        self._token: contextvars.Token | None = None
         self._closed = False
-        # Isolate this transaction's staging from any concurrent transaction.
-        self._token = store.begin_staging()
 
     async def commit(self) -> None:
         if self._closed:
             return
         try:
-            await self._store._commit_staged()
+            async with self._lock:
+                await asyncio.to_thread(self._commit_sync)
         finally:
-            self._store.end_staging(self._token)
-            self._closed = True
+            self._finish()
 
     async def rollback(self) -> None:
         if self._closed:
             return
         try:
-            await self._store._clear_staged()
+            async with self._lock:
+                await asyncio.to_thread(self._rollback_sync)
         finally:
-            self._store.end_staging(self._token)
-            self._closed = True
+            self._finish()
+
+    def _commit_sync(self) -> None:
+        try:
+            self._connection.execute("COMMIT")
+        finally:
+            self._connection.close()
+
+    def _rollback_sync(self) -> None:
+        try:
+            self._connection.execute("ROLLBACK")
+        finally:
+            self._connection.close()
+
+    def _finish(self) -> None:
+        self._closed = True
+        self._store._end_transaction(self._token)
 
 
 class _SQLiteExecution(Execution):
     def __init__(
         self,
+        store: SQLiteSessionStore,
         execution_id: ExecutionId,
         serializer: Serializer,
-        append_event: Callable[[_SQLiteEvent], Awaitable[None]],
     ):
+        self._store = store
         self._execution_id = execution_id
         self._serializer = serializer
-        self._append_event = append_event
 
     async def complete(self, value: object, return_type: type) -> None:
         serialized_bytes = await self._serializer.serialize(value, return_type)
-        await self._append_event(
-            _SQLiteEvent(
-                execution_id=self._execution_id,
-                status=ExecutionStatus.COMPLETED,
-                result=serialized_bytes,
-            )
+        result_json = serialized_bytes.decode(DEFAULT_ENCODING)
+        await self._store._upsert(
+            self._execution_id, ExecutionStatus.COMPLETED, result_json=result_json
         )
 
     async def fail(self, error: str) -> None:
-        await self._append_event(
-            _SQLiteEvent(
-                execution_id=self._execution_id,
-                status=ExecutionStatus.FAILED,
-                error=error,
-            )
+        await self._store._upsert(
+            self._execution_id, ExecutionStatus.FAILED, error=error
         )
 
 
@@ -110,8 +114,14 @@ class SQLiteSessionStore(SessionStore):
     """
     A SQLite-backed SessionStore for durable local persistence.
 
-    The store keeps one row per execution id and uses WAL mode for atomic,
-    indexed updates. It is the durable backend; JsonFileSessionStore remains the
+    The store keeps one row per execution id and uses native SQLite transactions
+    (no in-memory staging): ``begin_transaction`` opens a connection in ``BEGIN
+    IMMEDIATE`` and each ``start_execution`` / ``Execution.complete`` / ``fail`` /
+    ``delete_executions`` runs directly on it, becoming durable on ``commit``.
+    Multiple stores or application code sharing one transaction commit together
+    atomically.
+
+    It is the durable, parallel-safe backend; JsonFileSessionStore remains the
     human-readable debug format.
     """
 
@@ -132,30 +142,21 @@ class SQLiteSessionStore(SessionStore):
         self._serializer = serializer
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
-        self._lock = asyncio.Lock()
-        self._ambient = _SQLiteStaging()
-        # Per-instance so concurrent transactions (e.g. parallel gather
-        # branches, each in a copied context) stage in isolation.
-        self._current: contextvars.ContextVar[_SQLiteStaging | None] = (
-            contextvars.ContextVar("sqlite_staging", default=None)
+        # Serializes write transactions within this process: only one
+        # BEGIN IMMEDIATE runs at a time, so concurrent transactions never
+        # block worker threads waiting on the SQLite write lock (which could
+        # exhaust the thread pool). Cross-process contention is handled by
+        # busy_timeout. Released by the transaction on commit/rollback.
+        self._write_lock = asyncio.Lock()
+        # The transaction active in the current asyncio task, if any. Parallel
+        # gather branches run in copied contexts, so each sees its own.
+        self._current_tx: contextvars.ContextVar[_SQLiteTransaction | None] = (
+            contextvars.ContextVar("sqlite_current_tx", default=None)
         )
         self._initialize_database()
 
-    def _staging(self) -> _SQLiteStaging:
-        """The staging buffer for the current transaction, or the ambient one."""
-        return self._current.get() or self._ambient
-
-    def begin_staging(self) -> contextvars.Token:
-        return self._current.set(_SQLiteStaging())
-
-    def end_staging(self, token: contextvars.Token) -> None:
-        try:
-            self._current.reset(token)
-        except (ValueError, LookupError):
-            pass
-
     # ------------------------------------------------------------------
-    # SQLite helpers
+    # Connection helpers
     # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
@@ -163,10 +164,16 @@ class SQLiteSessionStore(SessionStore):
             self._database_path,
             isolation_level=None,
             timeout=self._busy_timeout_ms / 1000,
+            check_same_thread=False,
         )
         connection.execute(f"PRAGMA busy_timeout={self._busy_timeout_ms}")
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute(f"PRAGMA synchronous={self._synchronous}")
+        return connection
+
+    def _open_tx_connection(self) -> sqlite3.Connection:
+        connection = self._connect()
+        connection.execute("BEGIN IMMEDIATE")
         return connection
 
     def _initialize_database(self) -> None:
@@ -190,13 +197,54 @@ class SQLiteSessionStore(SessionStore):
         finally:
             connection.close()
 
+    def _end_transaction(self, token: contextvars.Token | None) -> None:
+        if token is not None:
+            try:
+                self._current_tx.reset(token)
+            except (ValueError, LookupError):
+                pass
+        if self._write_lock.locked():
+            self._write_lock.release()
+
+    # ------------------------------------------------------------------
+    # Read / write routing
+    # ------------------------------------------------------------------
+
+    async def _read(self, fn: _ReadFn) -> Any:
+        """Run a read against the current transaction's connection (so it sees
+        this transaction's uncommitted writes), or a fresh connection when there
+        is no active transaction (committed state only)."""
+        tx = self._current_tx.get()
+        if tx is not None:
+            async with tx._lock:
+                return await asyncio.to_thread(fn, tx._connection)
+        return await asyncio.to_thread(self._read_fresh, fn)
+
+    def _read_fresh(self, fn: _ReadFn) -> Any:
+        connection = self._connect()
+        try:
+            return fn(connection)
+        finally:
+            connection.close()
+
+    async def _write(self, fn: _WriteFn) -> None:
+        """Run a write on the current transaction's connection. Writes only
+        happen inside a transaction (the executor opens one per event)."""
+        tx = self._current_tx.get()
+        if tx is None:
+            raise RuntimeError(
+                "SQLiteSessionStore write attempted outside a transaction."
+            )
+        async with tx._lock:
+            await asyncio.to_thread(fn, tx._connection)
+
+    # ------------------------------------------------------------------
+    # Id / call-stack helpers
+    # ------------------------------------------------------------------
+
     @staticmethod
     def _escape_like(value: str) -> str:
         return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-    @staticmethod
-    def _callstack_to_key(call_stack: list[str]) -> str:
-        return "/".join(call_stack)
 
     @staticmethod
     def _callstack_to_id(call_stack: list[str]) -> ExecutionId:
@@ -208,117 +256,111 @@ class SQLiteSessionStore(SessionStore):
     def _id_to_key(self, execution_id: ExecutionId) -> str:
         return execution_id_to_path(execution_id)
 
-    # ------------------------------------------------------------------
-    # Staging and commit
-    # ------------------------------------------------------------------
-
-    async def _append_event(self, event: _SQLiteEvent) -> None:
-        async with self._lock:
-            self._staging().events.append(event)
-
-    async def _clear_staged(self) -> None:
-        async with self._lock:
-            staging = self._staging()
-            staging.events.clear()
-            staging.delete_keys.clear()
-
-    async def _commit_staged(self) -> None:
-        async with self._lock:
-            staging = self._staging()
-            events = list(staging.events)
-            delete_keys = set(staging.delete_keys)
-            if not events and not delete_keys:
-                return
-
-            await asyncio.to_thread(self._write_committed, events, delete_keys)
-            staging.events.clear()
-            staging.delete_keys.clear()
-
-    def _write_committed(
-        self, events: list[_SQLiteEvent], delete_keys: set[str]
+    def _write_row_sync(
+        self,
+        connection: sqlite3.Connection,
+        execution_id: ExecutionId,
+        status: ExecutionStatus,
+        result_json: str | None,
+        error: str | None,
+        *,
+        on_conflict_update: bool,
     ) -> None:
-        connection = self._connect()
-        in_transaction = False
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            in_transaction = True
-            for key in delete_keys:
-                connection.execute("DELETE FROM executions WHERE key = ?", (key,))
+        key = self._id_to_key(execution_id)
+        call_stack = self._id_to_callstack(execution_id)
+        conflict = (
+            """
+            ON CONFLICT(key) DO UPDATE SET
+                call_stack_json = excluded.call_stack_json,
+                status = excluded.status,
+                result_json = excluded.result_json,
+                error = excluded.error,
+                updated_at = excluded.updated_at
+            """
+            if on_conflict_update
+            else "ON CONFLICT(key) DO NOTHING"
+        )
+        connection.execute(
+            f"""
+            INSERT INTO executions (
+                key, call_stack_json, status, result_json, error, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            {conflict}
+            """,
+            (
+                key,
+                json.dumps(call_stack, separators=JSON_SEPARATORS),
+                _STATUS_TO_EVENT_TYPE[status],
+                result_json,
+                error,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
 
-            for event in events:
-                key = self._id_to_key(event.execution_id)
-                if key in delete_keys:
-                    continue
+    async def _upsert(
+        self,
+        execution_id: ExecutionId,
+        status: ExecutionStatus,
+        *,
+        result_json: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        def op(connection: sqlite3.Connection) -> None:
+            self._write_row_sync(
+                connection,
+                execution_id,
+                status,
+                result_json,
+                error,
+                on_conflict_update=True,
+            )
 
-                call_stack = self._id_to_callstack(event.execution_id)
-                # The serializer already produced JSON bytes; decode them into
-                # the TEXT column without a parse/re-serialize round-trip.
-                result_json = (
-                    None
-                    if event.result is None
-                    else event.result.decode(DEFAULT_ENCODING)
-                )
-                connection.execute(
-                    """
-                    INSERT INTO executions (
-                        key, call_stack_json, status, result_json, error, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(key) DO UPDATE SET
-                        call_stack_json = excluded.call_stack_json,
-                        status = excluded.status,
-                        result_json = excluded.result_json,
-                        error = excluded.error,
-                        updated_at = excluded.updated_at
-                    """,
-                    (
-                        key,
-                        json.dumps(call_stack, separators=JSON_SEPARATORS),
-                        _STATUS_TO_EVENT_TYPE[event.status],
-                        result_json,
-                        event.error,
-                        datetime.now(timezone.utc).isoformat(),
-                    ),
-                )
-            connection.execute("COMMIT")
-            in_transaction = False
-        except Exception:
-            if in_transaction:
-                try:
-                    connection.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-            raise
-        finally:
-            connection.close()
+        await self._write(op)
 
     # ------------------------------------------------------------------
     # SessionStore interface
     # ------------------------------------------------------------------
 
     async def begin_transaction(self) -> Transaction:
-        return _SQLiteTransaction(self)
+        await self._write_lock.acquire()
+        try:
+            connection = await asyncio.to_thread(self._open_tx_connection)
+        except BaseException:
+            self._write_lock.release()
+            raise
+        transaction = _SQLiteTransaction(self, connection)
+        transaction._token = self._current_tx.set(transaction)
+        return transaction
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
-        record = await self.get_execution_record(execution_id, type(None))
-        if record is None:
-            await self._append_event(
-                _SQLiteEvent(
-                    execution_id=execution_id,
-                    status=ExecutionStatus.STARTED,
-                )
+        def op(connection: sqlite3.Connection) -> None:
+            # Insert the STARTED row only if no record exists yet, so a prior
+            # COMPLETED/FAILED/STARTED record is never clobbered on replay.
+            self._write_row_sync(
+                connection,
+                execution_id,
+                ExecutionStatus.STARTED,
+                None,
+                None,
+                on_conflict_update=False,
             )
-        return _SQLiteExecution(
-            execution_id=execution_id,
-            serializer=self._serializer,
-            append_event=self._append_event,
-        )
+
+        await self._write(op)
+        return _SQLiteExecution(self, execution_id, self._serializer)
 
     async def get_execution_record(
         self, execution_id: ExecutionId, return_type: type
     ) -> ExecutionRecord | None:
         key = self._id_to_key(execution_id)
-        row = await asyncio.to_thread(self._read_record_row, key)
+
+        def read(connection: sqlite3.Connection):
+            return connection.execute(
+                "SELECT status, result_json, error FROM executions WHERE key = ?",
+                (key,),
+            ).fetchone()
+
+        row = await self._read(read)
         if row is None:
             return None
 
@@ -333,39 +375,11 @@ class SQLiteSessionStore(SessionStore):
             error = error or ""
         return ExecutionRecord(status=status, result=result, error=error)
 
-    def _read_record_row(self, key: str) -> tuple[str, str | None, str | None] | None:
-        connection = self._connect()
-        try:
-            row = connection.execute(
-                "SELECT status, result_json, error FROM executions WHERE key = ?",
-                (key,),
-            ).fetchone()
-            return row
-        finally:
-            connection.close()
-
     async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         prefix = self._id_to_key(execution_id) + "/"
-        committed_rows = await asyncio.to_thread(self._read_descendant_rows, prefix)
-
-        keys: dict[str, list[str]] = {
-            key: json.loads(call_stack_json) for key, call_stack_json in committed_rows
-        }
-        async with self._lock:
-            staging = self._staging()
-            for key in staging.delete_keys:
-                keys.pop(key, None)
-            for event in staging.events:
-                key = self._id_to_key(event.execution_id)
-                if key.startswith(prefix) and key not in staging.delete_keys:
-                    keys[key] = self._id_to_callstack(event.execution_id)
-
-        return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
-
-    def _read_descendant_rows(self, prefix: str) -> list[tuple[str, str]]:
         pattern = self._escape_like(prefix) + "%"
-        connection = self._connect()
-        try:
+
+        def read(connection: sqlite3.Connection) -> list[tuple[str, str]]:
             return list(
                 connection.execute(
                     """
@@ -376,12 +390,18 @@ class SQLiteSessionStore(SessionStore):
                     (pattern,),
                 )
             )
-        finally:
-            connection.close()
+
+        rows = await self._read(read)
+        return [self._callstack_to_id(json.loads(call_stack)) for _key, call_stack in rows]
 
     async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
         keys = [self._id_to_key(eid) for eid in execution_ids]
         if not keys:
             return
-        async with self._lock:
-            self._staging().delete_keys.update(keys)
+
+        def op(connection: sqlite3.Connection) -> None:
+            connection.executemany(
+                "DELETE FROM executions WHERE key = ?", [(key,) for key in keys]
+            )
+
+        await self._write(op)

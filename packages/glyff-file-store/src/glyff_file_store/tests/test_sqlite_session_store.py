@@ -136,3 +136,37 @@ async def test_sqlite_store_handles_parallel_completions(tmp_path: Path):
         assert record is not None
         assert record.status == ExecutionStatus.COMPLETED
         assert record.result == i
+
+
+async def test_multiple_writes_in_one_transaction_commit_atomically(tmp_path: Path):
+    # Several executions staged in a single transaction become durable together
+    # on commit — the basis for multiple stores / external code sharing one
+    # transaction.
+    a = make_execution_id("a", args_hash="a")
+    b = make_execution_id("b", args_hash="b")
+    store = make_store(tmp_path)
+
+    transaction = await store.begin_transaction()
+    for eid in (a, b):
+        execution = await store.start_execution(eid)
+        await execution.complete(eid.name, str)
+    await transaction.commit()
+
+    reloaded = make_store(tmp_path)
+    assert (await reloaded.get_execution_record(a, str)).result == "a"
+    assert (await reloaded.get_execution_record(b, str)).result == "b"
+
+
+async def test_multiple_writes_in_one_transaction_roll_back_atomically(tmp_path: Path):
+    a = make_execution_id("a", args_hash="a")
+    b = make_execution_id("b", args_hash="b")
+    store = make_store(tmp_path)
+
+    transaction = await store.begin_transaction()
+    for eid in (a, b):
+        execution = await store.start_execution(eid)
+        await execution.complete(eid.name, str)
+    await transaction.rollback()
+
+    assert await store.get_execution_record(a, str) is None
+    assert await store.get_execution_record(b, str) is None
