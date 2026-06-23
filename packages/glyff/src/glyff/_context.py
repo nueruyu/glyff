@@ -70,17 +70,21 @@ class Context:
 
 
 class CallStack(Sequence[ExecutionId]):
-    """Read-only view of the execution call stack. No allocation on access."""
+    """Read-only wrapper over a call-stack snapshot.
+
+    Holds the underlying sequence by reference (no copy); only the lightweight
+    wrapper itself is allocated on access.
+    """
 
     __slots__ = ("_data",)
 
-    def __init__(self, data: list[ExecutionId]) -> None:
+    def __init__(self, data: Sequence[ExecutionId]) -> None:
         self._data = data
 
     @overload
     def __getitem__(self, index: int) -> ExecutionId: ...
     @overload
-    def __getitem__(self, index: slice) -> list[ExecutionId]: ...
+    def __getitem__(self, index: slice) -> Sequence[ExecutionId]: ...
 
     def __getitem__(self, index):
         return self._data[index]
@@ -115,7 +119,7 @@ class ExecutionTracer:
 
     @property
     def call_stack(self) -> CallStack:
-        return CallStack(list(self._stack.get()))
+        return CallStack(self._stack.get())
 
     @property
     def current(self) -> ExecutionId | None:
