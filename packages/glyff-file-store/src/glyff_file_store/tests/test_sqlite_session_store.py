@@ -156,8 +156,12 @@ async def test_multiple_writes_in_one_transaction_commit_atomically(tmp_path: Pa
     await transaction.commit()
 
     reloaded = make_store(tmp_path)
-    assert (await reloaded.get_execution_record(a, str)).result == "a"
-    assert (await reloaded.get_execution_record(b, str)).result == "b"
+    a_record = await reloaded.get_execution_record(a, str)
+    b_record = await reloaded.get_execution_record(b, str)
+    assert a_record is not None
+    assert b_record is not None
+    assert a_record.result == "a"
+    assert b_record.result == "b"
 
 
 async def test_multiple_writes_in_one_transaction_roll_back_atomically(tmp_path: Path):
