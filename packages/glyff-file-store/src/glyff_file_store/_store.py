@@ -153,8 +153,8 @@ class JsonFileSessionStore(SessionStore):
         # to ``_log_entries`` except when a delete rebuilds the list.
         self._latest_index: dict[str, int] = {}
         # Per-transaction staging, tracked per task so concurrent transactions
-        # (parallel gather branches) stay isolated. Outside a transaction,
-        # staging falls back to the ambient buffer.
+        # (parallel gather branches) stay isolated. Writes require an active
+        # transaction; read helpers use the empty ambient buffer outside one.
         self._ambient = _StagingBuffer()
         self._current: contextvars.ContextVar[_StagingBuffer | None] = (
             contextvars.ContextVar("json_store_staging", default=None)
@@ -225,8 +225,16 @@ class JsonFileSessionStore(SessionStore):
     # ------------------------------------------------------------------
 
     def _staging(self) -> _StagingBuffer:
-        """The staging buffer for the current transaction, or the ambient one."""
+        """Current transaction staging, or an empty ambient read buffer."""
         return self._current.get() or self._ambient
+
+    def _require_staging(self) -> _StagingBuffer:
+        staging = self._current.get()
+        if staging is None:
+            raise RuntimeError(
+                "JsonFileSessionStore write attempted outside a transaction."
+            )
+        return staging
 
     def begin_staging(self) -> contextvars.Token:
         return self._current.set(_StagingBuffer())
@@ -238,12 +246,13 @@ class JsonFileSessionStore(SessionStore):
             pass
 
     async def _add_log_entry(self, entry: LogEntry) -> None:
+        staging = self._require_staging()
         async with self._lock:
-            self._staging().entries.append(entry)
+            staging.entries.append(entry)
 
     async def _commit_current(self) -> None:
+        staging = self._require_staging()
         async with self._lock:
-            staging = self._staging()
             if not staging.entries and not staging.delete_keys:
                 return
 
@@ -271,8 +280,9 @@ class JsonFileSessionStore(SessionStore):
             staging.clear()
 
     async def _rollback_current(self) -> None:
+        staging = self._require_staging()
         async with self._lock:
-            self._staging().clear()
+            staging.clear()
 
     @staticmethod
     def _serialize_entries(entries: list[LogEntry]) -> bytes:
@@ -351,5 +361,6 @@ class JsonFileSessionStore(SessionStore):
         keys = {execution_id_to_path(eid) for eid in execution_ids}
         if not keys:
             return
+        staging = self._require_staging()
         async with self._lock:
-            self._staging().delete_keys.update(keys)
+            staging.delete_keys.update(keys)
