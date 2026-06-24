@@ -60,26 +60,29 @@ class _FileTransaction(Transaction):
     def __init__(self, store: JsonFileSessionStore):
         self._store = store
         self._closed = False
+        self._lock = asyncio.Lock()
         # Isolate this transaction's staging from any concurrent transaction.
         self._token = store.begin_staging()
 
     async def commit(self) -> None:
-        if self._closed:
-            return
-        try:
-            await self._store._commit_current()
-        finally:
-            self._store.end_staging(self._token)
+        async with self._lock:
+            if self._closed:
+                return
             self._closed = True
+            try:
+                await self._store._commit_current()
+            finally:
+                self._store.end_staging(self._token)
 
     async def rollback(self) -> None:
-        if self._closed:
-            return
-        try:
-            await self._store._rollback_current()
-        finally:
-            self._store.end_staging(self._token)
+        async with self._lock:
+            if self._closed:
+                return
             self._closed = True
+            try:
+                await self._store._rollback_current()
+            finally:
+                self._store.end_staging(self._token)
 
 
 class _FileExecution(Execution):

@@ -52,22 +52,24 @@ class _SQLiteTransaction(Transaction):
         self._closed = False
 
     async def commit(self) -> None:
-        if self._closed:
-            return
-        try:
-            async with self._lock:
+        async with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
                 await asyncio.to_thread(self._commit_sync)
-        finally:
-            self._finish()
+            finally:
+                self._store._end_transaction(self._token)
 
     async def rollback(self) -> None:
-        if self._closed:
-            return
-        try:
-            async with self._lock:
+        async with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
                 await asyncio.to_thread(self._rollback_sync)
-        finally:
-            self._finish()
+            finally:
+                self._store._end_transaction(self._token)
 
     def _commit_sync(self) -> None:
         try:
@@ -80,10 +82,6 @@ class _SQLiteTransaction(Transaction):
             self._connection.execute("ROLLBACK")
         finally:
             self._connection.close()
-
-    def _finish(self) -> None:
-        self._closed = True
-        self._store._end_transaction(self._token)
 
 
 class _SQLiteExecution(Execution):
@@ -173,8 +171,12 @@ class SQLiteSessionStore(SessionStore):
 
     def _open_tx_connection(self) -> sqlite3.Connection:
         connection = self._connect()
-        connection.execute("BEGIN IMMEDIATE")
-        return connection
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            return connection
+        except BaseException:
+            connection.close()
+            raise
 
     def _initialize_database(self) -> None:
         self._database_path.parent.mkdir(parents=True, exist_ok=True)

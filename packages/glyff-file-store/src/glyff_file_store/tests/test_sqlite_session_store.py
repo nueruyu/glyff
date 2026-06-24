@@ -1,11 +1,14 @@
 import asyncio
+import threading
 from pathlib import Path
 
+import pytest
 from glyff import ExecutionId, ExecutionStatus
 from glyff.serialization import JsonSerializer
 from glyff.store.utils import execution_id_to_path
 
 from glyff_file_store import SQLiteSessionStore
+from glyff_file_store._sqlite_store import _SQLiteTransaction
 
 
 def make_execution_id(
@@ -170,3 +173,63 @@ async def test_multiple_writes_in_one_transaction_roll_back_atomically(tmp_path:
 
     assert await store.get_execution_record(a, str) is None
     assert await store.get_execution_record(b, str) is None
+
+
+async def test_sqlite_transaction_concurrent_close_finishes_once():
+    class FakeStore:
+        def __init__(self):
+            self.end_calls = 0
+
+        def _end_transaction(self, token) -> None:
+            self.end_calls += 1
+
+    store = FakeStore()
+    transaction = _SQLiteTransaction(store, object())  # type: ignore[arg-type]
+    calls: list[str] = []
+    commit_started = threading.Event()
+    release_commit = threading.Event()
+
+    def commit_sync() -> None:
+        calls.append("commit")
+        commit_started.set()
+        assert release_commit.wait(timeout=2)
+
+    def rollback_sync() -> None:
+        calls.append("rollback")
+
+    transaction._commit_sync = commit_sync  # type: ignore[method-assign]
+    transaction._rollback_sync = rollback_sync  # type: ignore[method-assign]
+
+    commit_task = asyncio.create_task(transaction.commit())
+    assert await asyncio.to_thread(commit_started.wait, 2)
+
+    rollback_task = asyncio.create_task(transaction.rollback())
+    await asyncio.sleep(0)
+    release_commit.set()
+
+    await asyncio.gather(commit_task, rollback_task)
+
+    assert calls == ["commit"]
+    assert store.end_calls == 1
+
+
+def test_open_tx_connection_closes_connection_if_begin_fails(tmp_path: Path):
+    class FailingConnection:
+        def __init__(self):
+            self.closed = False
+
+        def execute(self, statement: str) -> None:
+            assert statement == "BEGIN IMMEDIATE"
+            raise RuntimeError("begin failed")
+
+        def close(self) -> None:
+            self.closed = True
+
+    store = make_store(tmp_path)
+    connection = FailingConnection()
+    store._connect = lambda: connection  # type: ignore[method-assign,return-value]
+
+    with pytest.raises(RuntimeError, match="begin failed"):
+        store._open_tx_connection()
+
+    assert connection.closed

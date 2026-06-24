@@ -2,7 +2,10 @@
 an uncommitted transaction must observe the staged view, consistent with
 ``all_keys()``."""
 
+import asyncio
+
 from glyff.store import MemoryClient
+from glyff.store._memory import _MemoryTransaction
 
 
 async def test_read_observes_staged_write():
@@ -70,3 +73,41 @@ async def test_read_staged_false_returns_committed_ignoring_staged():
     client.stage_delete("k")
     assert await client.read("k") is None
     assert await client.read("k", staged=False) == b"committed"
+
+
+async def test_memory_transaction_concurrent_close_finishes_once():
+    class FakeClient:
+        def __init__(self):
+            self.calls: list[str] = []
+            self.end_calls = 0
+            self.commit_started = asyncio.Event()
+            self.release_commit = asyncio.Event()
+
+        def begin_staging(self):
+            return object()
+
+        def end_staging(self, token) -> None:
+            self.end_calls += 1
+
+        async def commit_staged(self) -> None:
+            self.calls.append("commit")
+            self.commit_started.set()
+            await self.release_commit.wait()
+
+        def clear_staged(self) -> None:
+            self.calls.append("rollback")
+
+    client = FakeClient()
+    transaction = _MemoryTransaction(client)  # type: ignore[arg-type]
+
+    commit_task = asyncio.create_task(transaction.commit())
+    await client.commit_started.wait()
+
+    rollback_task = asyncio.create_task(transaction.rollback())
+    await asyncio.sleep(0)
+    client.release_commit.set()
+
+    await asyncio.gather(commit_task, rollback_task)
+
+    assert client.calls == ["commit"]
+    assert client.end_calls == 1
