@@ -143,19 +143,12 @@ class JsonFileSessionStore(SessionStore):
         self._serializer = serializer
         self._lock = asyncio.Lock()
         self._executions_path = Path("executions.json")
-        # Canonical, ordered list of committed log entries — the in-memory
-        # mirror of executions.json. Source of truth for both serialization
-        # and per-key lookup; ``_latest_index`` is a positional pointer into
-        # this list.
+        # In-memory mirror of executions.json: the ordered entries plus a
+        # key -> latest-entry-index lookup rebuilt from them.
         self._log_entries: list[LogEntry] = []
-        # key → index of the latest log entry that defines the current
-        # state for that key. Indices are stable because we only append
-        # to ``_log_entries`` except when a delete rebuilds the list.
         self._latest_index: dict[str, int] = {}
-        # Per-transaction staging, tracked per task so concurrent transactions
-        # (parallel gather branches) stay isolated. Writes require an active
-        # transaction; read helpers use the empty ambient buffer outside one.
-        self._ambient = _StagingBuffer()
+        # Per-transaction staging, isolated per asyncio task (parallel gather
+        # branches each get their own). Writes require an active transaction.
         self._current: contextvars.ContextVar[_StagingBuffer | None] = (
             contextvars.ContextVar("json_store_staging", default=None)
         )
@@ -206,27 +199,21 @@ class JsonFileSessionStore(SessionStore):
             return
 
         self._log_entries = entries
-        self._index_new_entries(start_index=0)
+        self._rebuild_index()
 
-    def _index_new_entries(self, start_index: int) -> None:
-        """Update ``_latest_index`` for log entries at positions
-        ``[start_index, len(_log_entries))``. Each known event type
-        replaces any prior index for its key; entries with unrecognized
-        event types are ignored."""
-        for i in range(start_index, len(self._log_entries)):
-            entry = self._log_entries[i]
-            if entry["event_type"] not in _EVENT_TYPE_TO_STATUS:
-                continue
-            key = self._callstack_to_key(entry["call_stack"])
-            self._latest_index[key] = i
+    def _rebuild_index(self) -> None:
+        """Rebuild ``_latest_index`` (key → index of its latest log entry)
+        from ``_log_entries``; entries with unrecognized event types are
+        ignored."""
+        self._latest_index.clear()
+        for i, entry in enumerate(self._log_entries):
+            if entry["event_type"] in _EVENT_TYPE_TO_STATUS:
+                key = self._callstack_to_key(entry["call_stack"])
+                self._latest_index[key] = i
 
     # ------------------------------------------------------------------
     # Per-transaction staging and commit
     # ------------------------------------------------------------------
-
-    def _staging(self) -> _StagingBuffer:
-        """Current transaction staging, or an empty ambient read buffer."""
-        return self._current.get() or self._ambient
 
     def _require_staging(self) -> _StagingBuffer:
         staging = self._current.get()
@@ -256,27 +243,20 @@ class JsonFileSessionStore(SessionStore):
             if not staging.entries and not staging.delete_keys:
                 return
 
+            merged = self._log_entries + staging.entries
             if staging.delete_keys:
-                deleted = staging.delete_keys
                 merged = [
                     e
-                    for e in (self._log_entries + staging.entries)
-                    if self._callstack_to_key(e["call_stack"]) not in deleted
+                    for e in merged
+                    if self._callstack_to_key(e["call_stack"])
+                    not in staging.delete_keys
                 ]
-                content = self._serialize_entries(merged)
-                # Write to disk first; only advance in-memory state on success.
-                await self._write_all(content)
-                self._log_entries = merged
-                self._latest_index.clear()
-                self._index_new_entries(start_index=0)
-            else:
-                start_index = len(self._log_entries)
-                merged = self._log_entries + staging.entries
-                content = self._serialize_entries(merged)
-                await self._write_all(content)
-                self._log_entries = merged
-                self._index_new_entries(start_index=start_index)
-
+            # Write to disk first; only advance in-memory state on success.
+            # (The whole file is rewritten each commit, so a full index rebuild
+            # adds no extra order of work.)
+            await self._write_all(self._serialize_entries(merged))
+            self._log_entries = merged
+            self._rebuild_index()
             staging.clear()
 
     async def _rollback_current(self) -> None:
@@ -345,15 +325,16 @@ class JsonFileSessionStore(SessionStore):
         return ExecutionRecord(status=status, result=result, error=error)
 
     async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
+        # Reads committed state. The executor only prunes a call after its
+        # descendants have completed (and committed) in their own transactions,
+        # so an in-progress transaction's staged entries are never descendants
+        # of the call being pruned.
         prefix = self._id_to_key(execution_id) + "/"
         async with self._lock:
-            staging = self._staging()
-            all_entries = self._log_entries + staging.entries
-            deleted = staging.delete_keys
             keys: dict[str, list[str]] = {}
-            for entry in all_entries:
+            for entry in self._log_entries:
                 key = self._callstack_to_key(entry["call_stack"])
-                if key.startswith(prefix) and key not in deleted:
+                if key.startswith(prefix):
                     keys.setdefault(key, entry["call_stack"])
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
 
