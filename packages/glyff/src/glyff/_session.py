@@ -29,12 +29,10 @@ class Session:
 
     @property
     def id(self) -> str:
-        """Returns the ID of this Session."""
         return self._id
 
     @property
     def store(self) -> SessionStore:
-        """Returns the SessionStore used by this Session."""
         return self._store
 
     async def __aenter__(self) -> "Session":
