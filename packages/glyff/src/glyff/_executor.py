@@ -28,10 +28,8 @@ async def execute(
     tracer = ctx.tracer
 
     record = await store.get_execution_record(execution_id, return_type)
-
-    if record:
-        if record.status == ExecutionStatus.COMPLETED:
-            return record.result
+    if record and record.status == ExecutionStatus.COMPLETED:
+        return record.result
 
     # Persist the START record durably before running the function, so a
     # completed descendant is not lost if an ancestor is later interrupted.

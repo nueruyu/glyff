@@ -32,6 +32,10 @@ class Context:
         self._tracer = ExecutionTracer()
 
     @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
     def store(self) -> SessionStore:
         return self._store
 
@@ -134,37 +138,31 @@ class ExecutionTracer:
 
 
 class TransactionScope:
-    """
-    Manages a transaction across a SessionStore, supporting nesting.
-    The actual commit/rollback only happens at the outermost scope.
+    """A single-use transaction scope around a SessionStore.
+
+    Entering begins a store transaction; exiting commits it on success or on a
+    normal Exception (so completed work stays durable and an interrupted call
+    stays retryable) and rolls it back only on BaseException (KeyboardInterrupt,
+    SystemExit, cancellation). The executor opens a fresh scope per execution
+    event, so scopes are never nested.
     """
 
     def __init__(self, store: SessionStore):
         self._store = store
-        self._level = 0
         self._transaction: Transaction | None = None
 
-    @property
-    def in_transaction(self) -> bool:
-        """Returns True if currently within a transaction scope."""
-        return self._level > 0
-
-    async def __aenter__(self):
-        if self._level == 0:
-            self._transaction = await self._store.begin_transaction()
-        self._level += 1
+    async def __aenter__(self) -> "TransactionScope":
+        self._transaction = await self._store.begin_transaction()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._level -= 1
-        if self._level == 0 and self._transaction:
-            # Commit on success or on any Exception: completed work stays
-            # durable and the interrupted call remains retryable. Roll back only
-            # on BaseException (KeyboardInterrupt, SystemExit, cancellation).
-            if exc_type is None or issubclass(exc_type, Exception):
-                await self._transaction.commit()
-            else:
-                await self._transaction.rollback()
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        transaction, self._transaction = self._transaction, None
+        if transaction is None:
+            return
+        if exc_type is None or issubclass(exc_type, Exception):
+            await transaction.commit()
+        else:
+            await transaction.rollback()
 
 
 _context_var: contextvars.ContextVar[Context] = contextvars.ContextVar("glyff_context")

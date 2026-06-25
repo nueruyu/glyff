@@ -90,7 +90,6 @@ class MemorySessionStore(SessionStore):
     def __init__(self, client: MemoryClient, serializer: Serializer, **_):
         self._client = client
         self._serializer = serializer
-        self._lock = asyncio.Lock()
 
     def _id_to_key(self, id: ExecutionId, part: str) -> str:
         return _make_key(execution_id_to_path(id), part)
