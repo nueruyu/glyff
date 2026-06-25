@@ -219,7 +219,11 @@ class SQLiteSessionStore(SessionStore):
         tx = self._current_tx.get()
         if tx is not None:
             async with tx._lock:
-                return await asyncio.to_thread(fn, tx._connection)
+                # A concurrent commit/rollback may have closed the connection
+                # while we waited on the lock; fall back to a fresh read of
+                # committed state in that case.
+                if not tx._closed:
+                    return await asyncio.to_thread(fn, tx._connection)
         return await asyncio.to_thread(self._read_fresh, fn)
 
     def _read_fresh(self, fn: _ReadFn) -> Any:
@@ -238,6 +242,12 @@ class SQLiteSessionStore(SessionStore):
                 "SQLiteSessionStore write attempted outside a transaction."
             )
         async with tx._lock:
+            # The transaction may have been committed/rolled back (and its
+            # connection closed) while we waited on the lock.
+            if tx._closed:
+                raise RuntimeError(
+                    "SQLiteSessionStore write attempted on a closed transaction."
+                )
             await asyncio.to_thread(fn, tx._connection)
 
     # ------------------------------------------------------------------
