@@ -124,18 +124,13 @@ class _FileExecution(Execution):
 
 
 class JsonFileSessionStore(SessionStore):
-    """
-    A file-based SessionStore that logs events to a pretty-printed JSON file.
-    The entire log is loaded into memory at construction time and rewritten
-    atomically on each commit. Suitable for sessions whose log fits in memory;
-    for very large or high-throughput sessions prefer a database-backed store.
+    """Human-readable debug SessionStore backed by a pretty-printed JSON log.
 
-    This is a human-readable debug backend. Each transaction stages into its
-    own buffer (tracked per asyncio task via a ``ContextVar``), and commits are
-    serialized so the whole-file rewrite stays consistent under concurrent
-    transactions — so it is parallel-safe, but each commit still rewrites the
-    whole file (O(n) per commit). For large or high-throughput durable
-    workloads prefer ``SQLiteSessionStore``.
+    The whole log is kept in memory and rewritten atomically on each commit
+    (O(n) per commit), so it suits small sessions rather than large or
+    high-throughput ones — use ``SQLiteSessionStore`` for those. Each
+    transaction stages into its own per-task buffer and commits are serialized,
+    so it is parallel-safe.
     """
 
     def __init__(self, client: FileClient, serializer: Serializer):
@@ -163,7 +158,6 @@ class JsonFileSessionStore(SessionStore):
         return execution_id_to_path(execution_id).split("/")
 
     def _id_to_key(self, execution_id: ExecutionId) -> str:
-        """Convert an ExecutionId to a stable, unique string key."""
         return execution_id_to_path(execution_id)
 
     @staticmethod
@@ -251,9 +245,7 @@ class JsonFileSessionStore(SessionStore):
                     if self._callstack_to_key(e["call_stack"])
                     not in staging.delete_keys
                 ]
-            # Write to disk first; only advance in-memory state on success.
-            # (The whole file is rewritten each commit, so a full index rebuild
-            # adds no extra order of work.)
+            # Write to disk first; advance in-memory state only on success.
             await self._write_all(self._serialize_entries(merged))
             self._log_entries = merged
             self._rebuild_index()
@@ -325,10 +317,9 @@ class JsonFileSessionStore(SessionStore):
         return ExecutionRecord(status=status, result=result, error=error)
 
     async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        # Reads committed state. The executor only prunes a call after its
-        # descendants have completed (and committed) in their own transactions,
-        # so an in-progress transaction's staged entries are never descendants
-        # of the call being pruned.
+        # Committed state only: the executor prunes a call after its descendants
+        # have committed in their own transactions, so no in-progress staged
+        # entry is ever a descendant here.
         prefix = self._id_to_key(execution_id) + "/"
         async with self._lock:
             keys: dict[str, list[str]] = {}
