@@ -115,10 +115,7 @@ class SQLiteClient:
         return token, staging
 
     def end_staging(self, token: contextvars.Token) -> None:
-        try:
-            self._current.reset(token)
-        except (ValueError, LookupError):
-            pass
+        self._current.reset(token)
 
     def _require_staging(self) -> _SQLiteStagingBuffer:
         staging = self._current.get()

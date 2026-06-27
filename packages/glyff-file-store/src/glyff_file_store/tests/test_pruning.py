@@ -81,8 +81,7 @@ async def test_delete_execution_removes_only_that_id_and_reindexes(store_factory
 
     tx = await store.begin_transaction()
     await store.delete_executions([child])
-    # Not visible until commit.
-    assert (await store.get_execution_record(child, str)) is not None
+    assert await store.get_execution_record(child, str) is None
     await tx.commit()
 
     assert await store.get_execution_record(child, str) is None

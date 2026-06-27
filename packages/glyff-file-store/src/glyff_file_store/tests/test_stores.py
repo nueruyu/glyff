@@ -15,7 +15,9 @@ async def test_start_execution_stages_start_event(
     store: SessionStore = store_factory("test-start")
     tx = await store.begin_transaction()
     await store.start_execution(base_execution_id)
-    assert await store.get_execution_record(base_execution_id, dict) is None
+    staged = await store.get_execution_record(base_execution_id, dict)
+    assert staged is not None
+    assert staged.status == ExecutionStatus.STARTED
     await tx.commit()
     state = await store.get_execution_record(base_execution_id, dict)
     assert state is not None
@@ -29,7 +31,10 @@ async def test_commit_completion(store_factory, base_execution_id: ExecutionId):
     tx = await store.begin_transaction()
     execution = await store.start_execution(base_execution_id)
     await execution.complete(result_obj, dict)
-    assert await store.get_execution_record(base_execution_id, dict) is None
+    staged = await store.get_execution_record(base_execution_id, dict)
+    assert staged is not None
+    assert staged.status == ExecutionStatus.COMPLETED
+    assert staged.result == result_obj
     await tx.commit()
 
     state = await store.get_execution_record(base_execution_id, dict)
@@ -150,7 +155,7 @@ async def test_failed_commit_does_not_advance_state(
     execution = await store.start_execution(base_execution_id)
     await execution.complete({"value": 42}, dict)
 
-    assert await store.get_execution_record(base_execution_id, dict) is None
+    assert await store.get_execution_record(base_execution_id, dict) is not None
 
     # Force the client commit to fail.
     async def boom() -> None:
@@ -184,7 +189,9 @@ async def test_three_level_nested_transactions_restore_each_parent(
 ):
     root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
     child = ExecutionId(parent_id=root, name="child", sequence=0, args_hash="c")
-    grandchild = ExecutionId(parent_id=child, name="grandchild", sequence=0, args_hash="g")
+    grandchild = ExecutionId(
+        parent_id=child, name="grandchild", sequence=0, args_hash="g"
+    )
 
     store: SessionStore = store_factory("three-level-nesting")
 

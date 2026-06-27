@@ -83,6 +83,7 @@ class _FileTransaction(Transaction):
             self._closed = True
             try:
                 await self._store._commit_current()
+                await self._store._client.commit_staged()
             finally:
                 self._store._client.end_staging(self._client_token)
                 self._store.end_staging(self._store_token)
@@ -222,10 +223,7 @@ class JsonFileSessionStore(SessionStore):
         return token, staging
 
     def end_staging(self, token: contextvars.Token) -> None:
-        try:
-            self._current.reset(token)
-        except (ValueError, LookupError):
-            pass
+        self._current.reset(token)
 
     async def _add_log_entry(self, entry: LogEntry) -> None:
         staging = self._require_staging()
@@ -289,6 +287,15 @@ class JsonFileSessionStore(SessionStore):
         self, execution_id: ExecutionId, return_type: type
     ) -> ExecutionRecord | None:
         key = self._id_to_key(execution_id)
+
+        staging = self._current.get()
+        if staging is not None:
+            if key in staging.delete_keys:
+                return None
+            for entry in reversed(staging.entries):
+                if self._callstack_to_key(entry["call_stack"]) == key:
+                    return await self._entry_to_record(entry, return_type)
+
         idx = self._latest_index.get(key)
         if idx is None:
             return None
@@ -319,6 +326,17 @@ class JsonFileSessionStore(SessionStore):
             key = self._callstack_to_key(entry["call_stack"])
             if key.startswith(prefix):
                 keys.setdefault(key, entry["call_stack"])
+
+        staging = self._current.get()
+        if staging is not None:
+            for key in staging.delete_keys:
+                if key.startswith(prefix):
+                    keys.pop(key, None)
+            for entry in staging.entries:
+                key = self._callstack_to_key(entry["call_stack"])
+                if key.startswith(prefix):
+                    keys[key] = entry["call_stack"]
+
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
 
     async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
