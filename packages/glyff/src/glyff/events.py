@@ -21,4 +21,4 @@ class ExecutionFailed(Event):
 
     context: Context
     execution_id: ExecutionId
-    error: str
+    exception: Exception

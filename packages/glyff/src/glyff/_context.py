@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 from collections.abc import Iterator, Sequence
-from typing import Callable, overload
+from typing import overload
 
 from ._event_system import EventEmitter
 from ._interfaces import ArgsHasher, SessionStore, Transaction
@@ -20,17 +20,18 @@ class Context:
         store: SessionStore,
         sequencer: Sequencer,
         hasher: ArgsHasher,
-        transaction_scope_factory: Callable[[], TransactionScope],
         event_emitter: EventEmitter,
     ) -> None:
         self._session_id = session_id
         self._store = store
         self._sequencer = sequencer
         self._hasher = hasher
-        self._transaction_scope_factory = transaction_scope_factory
         self._event_emitter = event_emitter
         self._tracer = ExecutionTracer()
-        self._current_transaction_scope: TransactionScope | None = None
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
 
     @property
     def store(self) -> SessionStore:
@@ -60,30 +61,32 @@ class Context:
     def current_execution_id(self) -> ExecutionId | None:
         return self._tracer.current
 
-    @property
-    def in_transaction(self) -> bool:
-        """Returns True if currently within a transaction scope."""
-        ts = self._current_transaction_scope
-        return ts is not None and ts.in_transaction
-
     def get_transaction_scope(self) -> TransactionScope:
-        if self._current_transaction_scope is None:
-            self._current_transaction_scope = self._transaction_scope_factory()
-        return self._current_transaction_scope
+        """Return a fresh transaction scope.
+
+        The executor opens independent scopes for START, the function body,
+        and COMPLETE so each durable boundary can commit or roll back on its
+        own.
+        """
+        return TransactionScope(self._store)
 
 
 class CallStack(Sequence[ExecutionId]):
-    """Read-only view of the execution call stack. No allocation on access."""
+    """Read-only wrapper over a call-stack snapshot.
+
+    Holds the underlying sequence by reference (no copy); only the lightweight
+    wrapper itself is allocated on access.
+    """
 
     __slots__ = ("_data",)
 
-    def __init__(self, data: list[ExecutionId]) -> None:
+    def __init__(self, data: Sequence[ExecutionId]) -> None:
         self._data = data
 
     @overload
     def __getitem__(self, index: int) -> ExecutionId: ...
     @overload
-    def __getitem__(self, index: slice) -> list[ExecutionId]: ...
+    def __getitem__(self, index: slice) -> Sequence[ExecutionId]: ...
 
     def __getitem__(self, index):
         return self._data[index]
@@ -102,59 +105,73 @@ class CallStack(Sequence[ExecutionId]):
 
 
 class ExecutionTracer:
-    """Records the active call stack during workflow execution."""
+    """Records the active call stack during workflow execution.
+
+    The stack lives in a ``ContextVar`` holding an immutable tuple, so
+    concurrent tasks (parallel ``asyncio.gather`` branches) each see their own
+    call stack: a child spawned under a gather inherits the parent's stack
+    snapshot, but its own pushes do not leak to siblings. This keeps parent-id
+    resolution correct under parallel execution.
+    """
 
     def __init__(self) -> None:
-        self._stack: list[ExecutionId] = []
-        self._view = CallStack(self._stack)
+        self._stack: contextvars.ContextVar[tuple[ExecutionId, ...]] = (
+            contextvars.ContextVar("glyff_call_stack", default=())
+        )
 
     @property
     def call_stack(self) -> CallStack:
-        return self._view
+        return CallStack(self._stack.get())
 
     @property
     def current(self) -> ExecutionId | None:
-        return self._stack[-1] if self._stack else None
+        stack = self._stack.get()
+        return stack[-1] if stack else None
 
     def start(self, execution_id: ExecutionId) -> None:
-        self._stack.append(execution_id)
+        self._stack.set((*self._stack.get(), execution_id))
 
     def end(self) -> None:
-        self._stack.pop()
+        self._stack.set(self._stack.get()[:-1])
 
 
 class TransactionScope:
-    """
-    Manages a transaction across a SessionStore, supporting nesting.
-    The actual commit/rollback only happens at the outermost scope.
-    """
+    """A single-use transaction scope around a SessionStore."""
 
     def __init__(self, store: SessionStore):
         self._store = store
-        self._level = 0
         self._transaction: Transaction | None = None
+        self._closed = False
 
-    @property
-    def in_transaction(self) -> bool:
-        """Returns True if currently within a transaction scope."""
-        return self._level > 0
-
-    async def __aenter__(self):
-        if self._level == 0:
-            self._transaction = await self._store.begin_transaction()
-        self._level += 1
+    async def __aenter__(self) -> "TransactionScope":
+        if self._closed or self._transaction is not None:
+            raise RuntimeError("TransactionScope cannot be re-entered.")
+        self._transaction = await self._store.begin_transaction()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._level -= 1
-        if self._level == 0 and self._transaction:
-            # Commit on success or on any Exception: completed work stays
-            # durable and the interrupted call remains retryable. Roll back only
-            # on BaseException (KeyboardInterrupt, SystemExit, cancellation).
-            if exc_type is None or issubclass(exc_type, Exception):
-                await self._transaction.commit()
-            else:
-                await self._transaction.rollback()
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
+        if self._transaction is None:
+            return False
+        if exc_type is None:
+            await self.commit()
+        else:
+            await self.rollback()
+        return False
+
+    async def commit(self) -> None:
+        transaction = self._take_transaction()
+        await transaction.commit()
+
+    async def rollback(self) -> None:
+        transaction = self._take_transaction()
+        await transaction.rollback()
+
+    def _take_transaction(self) -> Transaction:
+        if self._closed or self._transaction is None:
+            raise RuntimeError("TransactionScope is already closed.")
+        transaction, self._transaction = self._transaction, None
+        self._closed = True
+        return transaction
 
 
 _context_var: contextvars.ContextVar[Context] = contextvars.ContextVar("glyff_context")

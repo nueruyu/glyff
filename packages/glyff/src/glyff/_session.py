@@ -1,4 +1,4 @@
-from ._context import Context, TransactionScope, reset_context, set_context
+from ._context import Context, reset_context, set_context
 from ._event_system import EventEmitter
 from ._interfaces import ArgsHasher, SessionStore
 from ._sequencer import Sequencer
@@ -7,7 +7,10 @@ from ._sequencer import Sequencer
 class Session:
     """
     Manages the lifecycle of a workflow execution.
-    It sets up the execution context and the top-level transaction.
+
+    It sets up the execution context. Stores persist execution events as they
+    happen (per event), so there is no session-wide transaction to commit at
+    exit.
     """
 
     def __init__(
@@ -40,17 +43,13 @@ class Session:
             store=self._store,
             sequencer=Sequencer(),
             hasher=self._hasher,
-            transaction_scope_factory=lambda: TransactionScope(self._store),
             event_emitter=self._event_emitter,
         )
         self._context_token = set_context(self._context)
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self._context and self._context_token:
-            # The top-level transaction is managed by the TransactionScope
-            # obtained via get_transaction_scope(). We just need to ensure
-            # its __aexit__ is called if it was created.
-            if top_level_scope := self._context.get_transaction_scope():
-                await top_level_scope.__aexit__(exc_type, exc_val, exc_tb)
+        # Execution events are persisted per event by the executor, so there is
+        # no session-wide transaction to commit or roll back here.
+        if self._context_token:
             reset_context(self._context_token)

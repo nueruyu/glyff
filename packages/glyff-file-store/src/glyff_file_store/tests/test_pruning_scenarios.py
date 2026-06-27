@@ -2,9 +2,13 @@
 file store. Proves that registering ``PruningEventHandler`` deletes the history
 of a task's descendants once it completes, without changing replay."""
 
+import json
+
 import pytest
-from glyff import ArgsHasher, EventEmitter, Serializer, Session, engrave
+from glyff import ArgsHasher, EventEmitter, Session, engrave
 from glyff.event_handlers import PruningEventHandler
+from glyff.serialization import JsonSerializer
+from glyff.serialization.constants import DEFAULT_ENCODING
 
 from glyff_file_store import FileClient, JsonFileSessionStore
 
@@ -13,9 +17,16 @@ class PruningPause(Exception):
     pass
 
 
-def _leaf_names(store: JsonFileSessionStore) -> list[str]:
-    """Innermost frame name of every committed entry."""
-    return [e["call_stack"][-1].split("#")[0] for e in store._log_entries]
+async def _read_executions(store: JsonFileSessionStore) -> dict[str, object]:
+    raw = await store._client.read("executions.json")
+    if raw is None:
+        return {}
+    return json.loads(raw.decode(DEFAULT_ENCODING))
+
+
+async def _leaf_names(store: JsonFileSessionStore) -> list[str]:
+    executions = await _read_executions(store)
+    return [eid.split("/")[-1].split("#")[0] for eid in executions]
 
 
 def _pruning_emitter() -> EventEmitter:
@@ -55,7 +66,7 @@ async def pr_root() -> int:
 
 
 async def test_fresh_run_prunes_whole_subtree(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id="prune-fresh"),
@@ -67,30 +78,30 @@ async def test_fresh_run_prunes_whole_subtree(
         result = await pr_root()
 
     assert result == (0 + 1) + (10 + 11)
-    # Everything ran this session...
     assert set(_runs) == {"root", "mid0", "mid10", "leaf0", "leaf1", "leaf10", "leaf11"}
-    # ...but only the root's own entries survive — every descendant is pruned.
-    assert all(len(e["call_stack"]) == 1 for e in store._log_entries)
-    assert set(_leaf_names(store)) == {"pr_root"}
+
+    executions = await _read_executions(store)
+    assert all("/" not in eid for eid in executions)
+    assert set(await _leaf_names(store)) == {"pr_root"}
 
 
 async def test_disabled_flag_retains_descendants(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id="prune-off"),
         serializer=serializer,
     )
-    async with Session(id="prune-off", store=store, hasher=hasher):  # default: off
+    async with Session(id="prune-off", store=store, hasher=hasher):
         await pr_root()
 
-    # Without pruning the nested history is kept.
-    assert any(len(e["call_stack"]) > 1 for e in store._log_entries)
-    assert "pr_leaf" in _leaf_names(store)
+    executions = await _read_executions(store)
+    assert any("/" in eid for eid in executions)
+    assert "pr_leaf" in await _leaf_names(store)
 
 
 async def test_replay_after_prune_is_correct(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     sid = "prune-replay"
     store = JsonFileSessionStore(
@@ -110,8 +121,6 @@ async def test_replay_after_prune_is_correct(
     ):
         second = await pr_root()
 
-    # Root replays from its own completed record; the pruned children are never
-    # needed, so nothing re-runs and the result is identical.
     assert second == first
     assert _runs == []
 
@@ -164,14 +173,11 @@ async def sc_root() -> str:
 
 
 async def test_nested_completion_prunes_mid_session(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     global _sc_interrupt
     sid = "prune-interrupt"
 
-    # Run 1: child_a completes mid-session and prunes its grandchild right away,
-    # even though the root is still running and is then interrupted in child_b.
-    # So sc_grand is already gone; child_a/child_b/root frames remain.
     _sc_interrupt = True
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
@@ -182,15 +188,12 @@ async def test_nested_completion_prunes_mid_session(
         ):
             await sc_root()
 
-    names = _leaf_names(store)
-    assert "sc_root" in names  # STARTED, retained
-    assert "sc_child_a" in names  # COMPLETED, retained
-    assert "sc_child_b" in names  # STARTED, retained
-    assert "sc_grand" not in names  # pruned the moment child_a completed
+    names = await _leaf_names(store)
+    assert "sc_root" in names
+    assert "sc_child_a" in names
+    assert "sc_child_b" in names
+    assert "sc_grand" not in names
 
-    # Run 2: resume. child_a is replayed from cache (never re-run), child_b
-    # finishes, the root completes -> the root's descendants are pruned,
-    # including the cache-replayed child_a/grand this session never re-executed.
     _sc_runs.clear()
     _sc_interrupt = False
     store2 = JsonFileSessionStore(
@@ -202,9 +205,10 @@ async def test_nested_completion_prunes_mid_session(
         result = await sc_root()
 
     assert result == "A:G/B"
-    assert "child_a" not in _sc_runs  # replayed from cache
+    assert "child_a" not in _sc_runs
     assert "grand" not in _sc_runs
     assert _sc_runs == ["child_b_start", "child_b_end"]
-    # Root completed -> entire subtree pruned, only the root frame remains.
-    assert all(len(e["call_stack"]) == 1 for e in store2._log_entries)
-    assert set(_leaf_names(store2)) == {"sc_root"}
+
+    executions = await _read_executions(store2)
+    assert all("/" not in eid for eid in executions)
+    assert set(await _leaf_names(store2)) == {"sc_root"}

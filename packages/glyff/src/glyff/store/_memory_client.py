@@ -1,58 +1,137 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
+
+MemoryUpdate = Callable[[Any | None], Any | None]
+
+
+@dataclass(frozen=True)
+class _Write:
+    value: Any
+
+
+@dataclass(frozen=True)
+class _Delete:
+    pass
+
+
+@dataclass(frozen=True)
+class _Update:
+    fn: MemoryUpdate
+
+
+_StagedOp = _Write | _Delete | _Update
+
+
+class _StagingBuffer:
+    __slots__ = ("ops",)
+
+    def __init__(self) -> None:
+        self.ops: dict[str, list[_StagedOp]] = {}
+
+    def clear(self) -> None:
+        self.ops.clear()
 
 
 class MemoryClient:
-    """A low-level in-memory data store with transactional capabilities."""
+    """A low-level in-memory data store with per-transaction staging."""
 
     def __init__(self):
         self._data: dict[str, Any] = {}
-        self._staged_writes: dict[str, Any] = {}
-        self._staged_deletes: set[str] = set()
+        self._current: contextvars.ContextVar[_StagingBuffer | None] = (
+            contextvars.ContextVar("memory_client_staging", default=None)
+        )
         self._lock = asyncio.Lock()
 
     @property
     def data(self) -> dict[str, Any]:
         return self._data
 
+    def _apply_ops(
+        self, initial: Any | None, ops: list[_StagedOp]
+    ) -> Any | None:
+        current = initial
+        for op in ops:
+            if isinstance(op, _Write):
+                current = op.value
+            elif isinstance(op, _Delete):
+                current = None
+            elif isinstance(op, _Update):
+                current = op.fn(current)
+            else:
+                raise TypeError(f"Unknown op: {op!r}")
+        return current
+
+    def _require_staging(self) -> _StagingBuffer:
+        staging = self._current.get()
+        if staging is None:
+            raise RuntimeError(
+                "MemoryClient write attempted outside a transaction."
+            )
+        return staging
+
+    def begin_staging(self) -> tuple[contextvars.Token, _StagingBuffer]:
+        staging = _StagingBuffer()
+        token = self._current.set(staging)
+        return token, staging
+
+    def end_staging(self, token: contextvars.Token) -> None:
+        self._current.reset(token)
+
+    def _require_current_staging(self, expected: _StagingBuffer) -> None:
+        if self._current.get() is not expected:
+            raise RuntimeError("Transaction closed out of order.")
+
     def all_keys(self) -> set[str]:
-        """All keys visible to the current transaction: committed keys plus
-        keys staged for writing, minus those staged for deletion."""
-        return (self._data.keys() | self._staged_writes.keys()) - self._staged_deletes
+        buffer = self._current.get()
+        if buffer is None:
+            return set(self._data.keys())
+
+        keys = set(self._data.keys())
+        for key, ops in buffer.ops.items():
+            current = self._data.get(key)
+            result = self._apply_ops(current, ops)
+            if result is None:
+                keys.discard(key)
+            else:
+                keys.add(key)
+        return keys
 
     def clear_staged(self) -> None:
-        self._staged_writes.clear()
-        self._staged_deletes.clear()
+        self._require_staging().clear()
 
     async def commit_staged(self) -> None:
+        buffer = self._require_staging()
         async with self._lock:
-            self._data.update(self._staged_writes)
-            for key in self._staged_deletes:
-                self._data.pop(key, None)
-        self.clear_staged()
+            for key, ops in buffer.ops.items():
+                result = self._apply_ops(self._data.get(key), ops)
+                if result is None:
+                    self._data.pop(key, None)
+                else:
+                    self._data[key] = result
+        buffer.clear()
 
     async def read(self, key: str, *, staged: bool = True) -> Any | None:
-        """Read the value for ``key``.
-
-        With ``staged=True`` (the default) the read is transaction-aware: a
-        staged write overrides the committed value, a staged delete reads as
-        ``None``, and otherwise the committed value is returned (mirroring the
-        staged view exposed by ``all_keys()``). With ``staged=False`` only the
-        committed value is returned, ignoring all staged state."""
         async with self._lock:
-            if staged:
-                if key in self._staged_deletes:
-                    return None
-                if key in self._staged_writes:
-                    return self._staged_writes[key]
+            buffer = self._current.get()
+            if staged and buffer is not None and key in buffer.ops:
+                return self._apply_ops(
+                    self._data.get(key), buffer.ops[key]
+                )
             return self._data.get(key)
 
     def stage_write(self, key: str, value: Any) -> None:
-        self._staged_writes[key] = value
-        self._staged_deletes.discard(key)
+        buffer = self._require_staging()
+        buffer.ops.setdefault(key, []).append(_Write(value))
 
     def stage_delete(self, key: str) -> None:
-        self._staged_deletes.add(key)
-        self._staged_writes.pop(key, None)
+        buffer = self._require_staging()
+        buffer.ops.setdefault(key, []).append(_Delete())
+
+    def stage_update(self, key: str, fn: MemoryUpdate) -> None:
+        buffer = self._require_staging()
+        buffer.ops.setdefault(key, []).append(_Update(fn))

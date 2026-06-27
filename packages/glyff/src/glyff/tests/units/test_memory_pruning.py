@@ -100,12 +100,20 @@ async def test_full_path_keys_avoid_cross_parent_collision(serializer):
 
 async def test_all_keys_includes_staged_excludes_deleted():
     client = MemoryClient()
-    client.stage_write("execution::a::status", 1)
-    await client.commit_staged()
-    client.stage_write("execution::b::status", 2)
-    client.stage_delete("execution::a::status")
-    # "a" is committed but staged for deletion; "b" is staged for write.
-    assert client.all_keys() == {"execution::b::status"}
+    token, _ = client.begin_staging()
+    try:
+        client.stage_write("execution::a::status", 1)
+        await client.commit_staged()
+    finally:
+        client.end_staging(token)
+
+    token, _ = client.begin_staging()
+    try:
+        client.stage_write("execution::b::status", 2)
+        client.stage_delete("execution::a::status")
+        assert client.all_keys() == {"execution::b::status"}
+    finally:
+        client.end_staging(token)
 
 
 def test_execution_path_roundtrip(base_execution_id: ExecutionId):

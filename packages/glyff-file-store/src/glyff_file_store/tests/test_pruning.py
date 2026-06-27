@@ -4,6 +4,7 @@ Pruning *policy* (when to call these) lives in the executor and is covered by
 the scenario tests."""
 
 from glyff import ExecutionId, ExecutionStatus
+from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 from glyff_file_store import JsonFileSessionStore
 
@@ -33,10 +34,9 @@ async def _fail(
 
 
 async def test_callstack_id_roundtrip(store_factory, base_execution_id: ExecutionId):
-    store: JsonFileSessionStore = store_factory("roundtrip")
     nested = _child(_child(base_execution_id, "mid", 2, "abc"), "leaf", 5, "def456")
-    call_stack = store._id_to_callstack(nested)
-    assert store._callstack_to_id(call_stack) == nested
+    path = execution_id_to_path(nested)
+    assert path_to_execution_id(path) == nested
 
 
 async def test_get_descendants_returns_strict_descendants(store_factory):
@@ -81,8 +81,7 @@ async def test_delete_execution_removes_only_that_id_and_reindexes(store_factory
 
     tx = await store.begin_transaction()
     await store.delete_executions([child])
-    # Not visible until commit.
-    assert (await store.get_execution_record(child, str)) is not None
+    assert await store.get_execution_record(child, str) is None
     await tx.commit()
 
     assert await store.get_execution_record(child, str) is None

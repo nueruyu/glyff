@@ -1,4 +1,3 @@
-import traceback
 from typing import Any, Callable
 
 from ._context import Context
@@ -15,44 +14,46 @@ async def execute(
     return_type: type,
 ) -> Any:
     """
-    Orchestrates the execution of a regular (awaitable) task, including cache
-    checks, transaction management, state recording, and exception handling.
+    Orchestrates the execution of a regular (awaitable) task: cache checks,
+    per-event durable recording, and exception handling.
+
+    START, the function body, and COMPLETE each use separate store transaction
+    scopes, so a completed descendant can commit while an ancestor body is
+    still running.
     """
     store = ctx.store
     sequencer = ctx.sequencer
     tracer = ctx.tracer
 
     record = await store.get_execution_record(execution_id, return_type)
-
-    if record:
-        if record.status == ExecutionStatus.COMPLETED:
-            return record.result
+    if record and record.status == ExecutionStatus.COMPLETED:
+        return record.result
 
     async with ctx.get_transaction_scope():
-        # Reset child sequencers for deterministic re-execution.
         await sequencer.reset_for_call(execution_id)
-
         execution = await store.start_execution(execution_id)
-        tracer.start(execution_id)
 
-        try:
-            result = await func(*args, **kwargs)
+    tracer.start(execution_id)
+    try:
+        async with ctx.get_transaction_scope() as scope:
+            try:
+                result = await func(*args, **kwargs)
+            except Exception as e:
+                await ctx.event_emitter.emit(
+                    ExecutionFailed(
+                        context=ctx,
+                        execution_id=execution_id,
+                        exception=e,
+                    )
+                )
+                await scope.commit()
+                raise
+
+        async with ctx.get_transaction_scope():
             await execution.complete(result, return_type)
             await ctx.event_emitter.emit(
                 ExecutionCompleted(context=ctx, execution_id=execution_id)
             )
-            return result
-        except Exception as e:
-            error_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            # Do not mark the execution as FAILED. Leaving it STARTED makes
-            # the call retryable on resume, matching crash/kill behavior.
-            await ctx.event_emitter.emit(
-                ExecutionFailed(
-                    context=ctx,
-                    execution_id=execution_id,
-                    error=error_str,
-                )
-            )
-            raise
-        finally:
-            tracer.end()
+        return result
+    finally:
+        tracer.end()

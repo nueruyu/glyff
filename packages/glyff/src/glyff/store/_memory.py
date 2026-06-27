@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from collections.abc import Iterable
 from typing import Any
 
@@ -18,7 +19,6 @@ def _make_key(path: str, part: str) -> str:
 
 
 def _key_to_path(key: str) -> str | None:
-    """Extract the path body from a full key, or None if not an execution key."""
     if not key.startswith(_KEY_PREFIX):
         return None
     body, _, _ = key[len(_KEY_PREFIX) :].rpartition("::")
@@ -28,12 +28,44 @@ def _key_to_path(key: str) -> str | None:
 class _MemoryTransaction(Transaction):
     def __init__(self, client: MemoryClient):
         self._client = client
+        self._closed = False
+        self._lock = asyncio.Lock()
+        self._token: contextvars.Token | None = None
+        self._staging = None
+
+    async def begin(self) -> _MemoryTransaction:
+        self._token, self._staging = self._client.begin_staging()
+        return self
 
     async def commit(self) -> None:
-        await self._client.commit_staged()
+        async with self._lock:
+            if self._closed:
+                return
+            if self._staging is None:
+                raise RuntimeError("transaction not started")
+            self._client._require_current_staging(self._staging)
+            self._closed = True
+            try:
+                await self._client.commit_staged()
+            finally:
+                if self._token is None:
+                    raise RuntimeError("transaction not started")
+                self._client.end_staging(self._token)
 
     async def rollback(self) -> None:
-        self._client.clear_staged()
+        async with self._lock:
+            if self._closed:
+                return
+            if self._staging is None:
+                raise RuntimeError("transaction not started")
+            self._client._require_current_staging(self._staging)
+            self._closed = True
+            try:
+                self._client.clear_staged()
+            finally:
+                if self._token is None:
+                    raise RuntimeError("transaction not started")
+                self._client.end_staging(self._token)
 
 
 class _MemoryExecution(Execution):
@@ -63,22 +95,17 @@ class _MemoryExecution(Execution):
 
 
 class MemorySessionStore(SessionStore):
-    """
-    An in-memory implementation of SessionStore for testing and development.
-    This implementation is not persistent across processes.
-    It serializes values to ensure independence, mimicking persisted stores.
-    """
+    """An in-memory SessionStore for testing and development."""
 
     def __init__(self, client: MemoryClient, serializer: Serializer, **_):
         self._client = client
         self._serializer = serializer
-        self._lock = asyncio.Lock()
 
     def _id_to_key(self, id: ExecutionId, part: str) -> str:
         return _make_key(execution_id_to_path(id), part)
 
     async def begin_transaction(self) -> Transaction:
-        return _MemoryTransaction(self._client)
+        return await _MemoryTransaction(self._client).begin()
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         status_key = self._id_to_key(execution_id, "status")

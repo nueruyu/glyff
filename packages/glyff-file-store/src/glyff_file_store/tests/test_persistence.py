@@ -1,4 +1,5 @@
-from glyff import ArgsHasher, Serializer, Session, engrave
+from glyff import ArgsHasher, Session, engrave
+from glyff.serialization import JsonSerializer
 
 from glyff_file_store import FileClient, JsonFileSessionStore
 
@@ -12,7 +13,7 @@ async def json_func(n: int) -> int:
 
 
 async def test_completed_record_replays_across_instances(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     """A completed entry persisted by one store instance must be replayed by
     a fresh instance reading the same on-disk file."""
@@ -45,7 +46,7 @@ async def multi_payload(seed: int) -> list[int]:
 
 
 async def test_multiple_completed_records_replay_across_instances(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     """Multiple completed entries with non-trivial payloads must each be
     replayable from a fresh store reading the same on-disk file."""

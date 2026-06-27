@@ -1,46 +1,63 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import shutil
 import tempfile
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Coroutine, NamedTuple, Union
-
-from .exceptions import InvalidStagedContentError
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-WriteCallback = Callable[[], Awaitable[bytes]]
-ClearCallback = Callable[[], Coroutine[Any, Any, None]]
-Content = Union[bytes, WriteCallback]
+FileUpdate = Callable[[bytes | None], bytes | None]
+
+
+@dataclass(frozen=True)
+class _Write:
+    data: bytes
+
+
+@dataclass(frozen=True)
+class _Delete:
+    pass
+
+
+@dataclass(frozen=True)
+class _Update:
+    fn: FileUpdate
+
+
+_FileOp = _Write | _Delete | _Update
 
 _BACKUP_SUFFIX = ".bak"
 _TEMP_PREFIX = ".commit-"
 _PERMISSION_RETRY_DELAYS = (0.01, 0.025, 0.05, 0.1, 0.2)
 
 
-class StagedOperation(NamedTuple):
-    write: WriteCallback
-    clear: ClearCallback | None
+class _FileStagingBuffer:
+    __slots__ = ("ops",)
+
+    def __init__(self) -> None:
+        self.ops: dict[str, list[_FileOp]] = {}
+
+    def clear(self) -> None:
+        self.ops.clear()
 
 
 class FileClient:
-    """A file-based data store with directory-level transactional staging.
+    """A file-based transactional key/value store.
 
-    Each ``commit_staged`` builds the full new session state in a sibling
-    temp directory and then swaps it into place with two renames (session
-    → backup, temp → session, drop backup). Either every staged op lands
-    on disk or none does, regardless of how many files were touched, and
-    a writer callback raising mid-commit leaves the on-disk session
-    unchanged.
+    Each transaction stages write/delete/update operations per path.
+    On commit, staged operations are applied to the latest committed file
+    content and flushed to disk atomically via directory swap.
 
-    Construction performs a small recovery sweep: any orphan ``.bak``
-    sibling left by a previously interrupted commit is either restored
-    (if the session itself is missing) or dropped, and any orphan
-    ``.commit-*`` temp directories are removed.
+    Staging is per-transaction via ContextVar, so nested transactions each
+    have their own isolated staging buffer.
     """
 
     def __init__(self, base_dir: str | Path, session_id: str):
@@ -49,29 +66,17 @@ class FileClient:
         self._session_path = Path(base_dir) / session_id
         self._recover_crashed_commit_sync()
         self._session_path.mkdir(parents=True, exist_ok=True)
-        # One staged write per path; staging the same path twice in a
-        # transaction replaces the earlier op (last write wins).
-        self._staged_ops: dict[str, StagedOperation] = {}
-        self._staged_deletes: set[str] = set()
+        self._current: contextvars.ContextVar[_FileStagingBuffer | None] = (
+            contextvars.ContextVar("file_client_staging", default=None)
+        )
         self._lock = asyncio.Lock()
 
-    # ------------------------------------------------------------------
-    # Crash recovery
-    # ------------------------------------------------------------------
-
     def _recover_crashed_commit_sync(self) -> None:
-        """Clean up orphan ``.bak`` / ``.commit-*`` siblings from a prior
-        crashed commit, restoring the session from a backup if the swap
-        was interrupted between the two renames."""
         backup = self._session_path.with_name(self._session_path.name + _BACKUP_SUFFIX)
         if backup.exists():
             if not self._session_path.exists():
-                # Crashed between rename-to-backup and rename-from-temp.
-                # The backup holds the only good copy; restore it.
                 self._rename_path_sync(backup, self._session_path)
             else:
-                # rename-from-temp succeeded but rmtree-backup was
-                # interrupted, or this is otherwise a stale backup.
                 self._remove_path_if_exists_sync(backup, ignore_errors=True)
 
         parent = self._session_path.parent
@@ -81,142 +86,145 @@ class FileClient:
                 if sibling.name.startswith(temp_prefix) and sibling.is_dir():
                     self._remove_path_if_exists_sync(sibling, ignore_errors=True)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def resolve(self, path: str | Path) -> Path:
         return self._session_path / path
 
+    # -- Staging context management -------------------------------------------
+
+    def begin_staging(self) -> tuple[contextvars.Token, _FileStagingBuffer]:
+        staging = _FileStagingBuffer()
+        token = self._current.set(staging)
+        return token, staging
+
+    def end_staging(self, token: contextvars.Token) -> None:
+        self._current.reset(token)
+
+    def _require_staging(self) -> _FileStagingBuffer:
+        staging = self._current.get()
+        if staging is None:
+            raise RuntimeError("FileClient write attempted outside a transaction.")
+        return staging
+
+    def _require_current_staging(self, expected: _FileStagingBuffer) -> None:
+        if self._current.get() is not expected:
+            raise RuntimeError("Transaction closed out of order.")
+
+    # -- Staging API ----------------------------------------------------------
+
+    def stage_write(self, path: str | Path, data: bytes) -> None:
+        rel = str(path)
+        staging = self._require_staging()
+        staging.ops.setdefault(rel, []).append(_Write(data))
+
+    def stage_delete(self, path: str | Path) -> None:
+        rel = str(path)
+        staging = self._require_staging()
+        staging.ops.setdefault(rel, []).append(_Delete())
+
+    def stage_update(self, path: str | Path, fn: FileUpdate) -> None:
+        rel = str(path)
+        staging = self._require_staging()
+        staging.ops.setdefault(rel, []).append(_Update(fn))
+
+    async def clear_staged(self) -> None:
+        self._require_staging().clear()
+
+    # -- Read / list_keys -----------------------------------------------------
+
     async def read(self, path: str | Path, *, staged: bool = True) -> bytes | None:
-        """Read the bytes for ``path``.
+        rel = str(path)
+        data = await asyncio.to_thread(self._read_committed_sync, rel)
 
-        With ``staged=True`` (the default) the read is transaction-aware: a
-        staged write overrides the committed file, a staged delete reads as
-        ``None``, and otherwise the committed file is read from disk. With
-        ``staged=False`` only the committed file on disk is read, ignoring all
-        staged state.
-
-        A write callback that needs the existing content (e.g. append
-        semantics) must read with ``staged=False`` so it observes the
-        committed base rather than re-entering its own staged op. Serving a
-        staged write means invoking its commit-time callback, and the result
-        is intentionally **not** cached: a callback may close over mutable
-        state that keeps changing during the transaction (e.g. a store that
-        appends to an in-memory buffer and serializes it at commit), so each
-        read re-resolves the current staged value and commit sees the latest
-        state. Callbacks should therefore be free of observable side effects.
-
-        This does not hold ``self._lock``: the staged dicts are inspected
-        synchronously (an atomic snapshot under the single-threaded event
-        loop) and the write callback is awaited without the lock.
-        """
-        rel_str = str(path)
         if staged:
-            if rel_str in self._staged_deletes:
-                return None
-            op = self._staged_ops.get(rel_str)
-            if op is not None:
-                return await op.write()
+            staging = self._current.get()
+            if staging is not None:
+                data = self._apply_ops(data, staging.ops.get(rel, []))
+
+        return data
+
+    def _read_committed_sync(self, path: str) -> bytes | None:
         try:
-            return await asyncio.to_thread(self.resolve(path).read_bytes)
+            return self.resolve(path).read_bytes()
         except FileNotFoundError:
             return None
 
-    async def stage_write(
-        self,
-        path: str | Path,
-        content: Content,
-        clear_callback: ClearCallback | None = None,
-    ) -> None:
-        """Stage a write of ``content`` to ``path`` for the next commit.
+    async def list_keys(self, prefix: str = "", *, staged: bool = True) -> set[str]:
+        base = await asyncio.to_thread(self._list_committed_keys_sync, prefix)
 
-        ``content`` is either raw bytes or an async callback that produces
-        the bytes at commit time. Callers needing append semantics can
-        implement them in a callback that reads the existing file content
-        with ``read(path, staged=False)`` and concatenates the new data.
+        if staged:
+            staging = self._current.get()
+            if staging is not None:
+                for key, ops in staging.ops.items():
+                    if not key.startswith(prefix):
+                        continue
+                    final = self._apply_ops(
+                        self._read_committed_sync(key), ops
+                    )
+                    if final is None:
+                        base.discard(key)
+                    else:
+                        base.add(key)
 
-        Staging the same path twice in one transaction replaces the
-        earlier op; the displaced op's ``clear_callback`` is not invoked.
-        """
+        return base
 
-        if isinstance(content, bytes):
+    def _list_committed_keys_sync(self, prefix: str = "") -> set[str]:
+        if not self._session_path.exists():
+            return set()
+        keys: set[str] = set()
+        for path in self._session_path.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(self._session_path).as_posix()
+            if rel.startswith(prefix):
+                keys.add(rel)
+        return keys
 
-            async def bytes_writer() -> bytes:
-                return content
+    @staticmethod
+    def _apply_ops(data: bytes | None, ops: list[_FileOp]) -> bytes | None:
+        current = data
+        for op in ops:
+            if isinstance(op, _Write):
+                current = op.data
+            elif isinstance(op, _Delete):
+                current = None
+            elif isinstance(op, _Update):
+                current = op.fn(current)
+            else:
+                raise TypeError(f"Unknown file op: {op!r}")
+        return current
 
-            callback = bytes_writer
-        elif callable(content):
-            callback = content
-        else:
-            raise InvalidStagedContentError("content must be bytes or a callable")
-        op = StagedOperation(write=callback, clear=clear_callback)
-
-        rel_str = str(path)
-        async with self._lock:
-            self._staged_ops[rel_str] = op
-            self._staged_deletes.discard(rel_str)
-
-    async def stage_delete(self, path: str | Path) -> None:
-        rel_str = str(path)
-        async with self._lock:
-            self._staged_deletes.add(rel_str)
-            cancelled = self._staged_ops.pop(rel_str, None)
-        # Run the cancelled op's clear callback outside the lock so a
-        # callback that re-enters FileClient cannot deadlock.
-        if cancelled is not None and cancelled.clear is not None:
-            await cancelled.clear()
-
-    async def clear_staged(self) -> None:
-        async with self._lock:
-            clear_tasks = self._clear_staged_under_lock()
-        if clear_tasks:
-            await asyncio.gather(*clear_tasks)
+    # -- Commit ---------------------------------------------------------------
 
     async def commit_staged(self) -> None:
+        staging = self._require_staging()
+
+        if not staging.ops:
+            return
+
         async with self._lock:
-            if not self._staged_ops and not self._staged_deletes:
-                return
-
-            # Resolve all writer callbacks before touching disk. If any
-            # raises, nothing has changed and the staged ops remain in
-            # place for retry. Callbacks are resolved fresh here (results are
-            # never cached) so the committed bytes reflect the latest staged
-            # state, even when a callback closes over state that changed after
-            # an earlier read().
             resolved_writes: dict[str, bytes] = {}
-            for rel_path, op in self._staged_ops.items():
-                resolved_writes[rel_path] = await op.write()
+            resolved_deletes: set[str] = set()
 
-            staged_deletes = set(self._staged_deletes)
+            for path, ops in staging.ops.items():
+                base = self._read_committed_sync(path)
+                final = self._apply_ops(base, ops)
+
+                if final is None:
+                    resolved_deletes.add(path)
+                    resolved_writes.pop(path, None)
+                else:
+                    resolved_writes[path] = final
+                    resolved_deletes.discard(path)
 
             await asyncio.to_thread(
-                self._commit_to_disk_sync, resolved_writes, staged_deletes
+                self._commit_to_disk_sync,
+                resolved_writes,
+                resolved_deletes,
             )
 
-            # Clear under the same lock so a concurrent stage_* between
-            # the disk swap and the clear cannot have its work silently
-            # discarded. Clear callbacks themselves are awaited outside
-            # the lock so a callback that re-enters FileClient cannot
-            # deadlock.
-            clear_tasks = self._clear_staged_under_lock()
-        if clear_tasks:
-            await asyncio.gather(*clear_tasks)
+            staging.clear()
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _clear_staged_under_lock(self) -> list[Coroutine[Any, Any, None]]:
-        """Clear all staged ops/deletes; return the clear callbacks so
-        the caller can await them outside the lock. Caller must hold
-        ``self._lock``."""
-        clear_tasks: list[Coroutine[Any, Any, None]] = [
-            op.clear() for op in self._staged_ops.values() if op.clear
-        ]
-        self._staged_ops.clear()
-        self._staged_deletes.clear()
-        return clear_tasks
+    # -- Disk helpers ---------------------------------------------------------
 
     def _commit_to_disk_sync(
         self,
@@ -241,7 +249,6 @@ class FileClient:
         resolved_writes: dict[str, bytes],
         staged_deletes: set[str],
     ) -> None:
-        # Mirror the existing session into temp_dir.
         if self._session_path.exists():
             shutil.copytree(self._session_path, temp_dir, dirs_exist_ok=True)
 
@@ -249,7 +256,6 @@ class FileClient:
             target = temp_dir / rel_path
             if target.is_symlink() or target.is_file():
                 target.unlink()
-            # Directory deletes aren't part of the API.
 
         for rel_path, content in resolved_writes.items():
             target = temp_dir / rel_path
@@ -259,7 +265,6 @@ class FileClient:
     def _swap_temp_into_place_sync(self, temp_dir: Path) -> None:
         backup = self._session_path.with_name(self._session_path.name + _BACKUP_SUFFIX)
         if backup.exists():
-            # Defensive: drop any stale backup from a prior crash.
             self._remove_path_if_exists_sync(backup)
 
         if self._session_path.exists():
@@ -268,7 +273,6 @@ class FileClient:
         try:
             self._rename_path_sync(temp_dir, self._session_path)
         except BaseException:
-            # Swap failed; restore the original from backup.
             if backup.exists() and not self._session_path.exists():
                 self._rename_path_sync(backup, self._session_path)
             raise
@@ -282,7 +286,6 @@ class FileClient:
         try:
             if not path.exists():
                 return
-
             if path.is_dir():
                 self._retry_permission_error_sync(
                     lambda: shutil.rmtree(path),
