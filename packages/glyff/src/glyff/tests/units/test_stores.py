@@ -1,3 +1,5 @@
+import pytest
+
 from glyff import ExecutionId, ExecutionStatus, SessionStore
 from glyff.tests.types import StoreFactory
 
@@ -72,3 +74,21 @@ async def test_rollback_discards_staged(
     await execution.complete({"result": 1}, dict)
     await tx.rollback()
     assert await store.get_execution_record(base_execution_id, dict) is None
+
+
+async def test_start_execution_requires_transaction(
+    store_factory: StoreFactory, base_execution_id: ExecutionId
+):
+    store: SessionStore = store_factory("test-start-without-transaction")
+
+    with pytest.raises(RuntimeError, match="write attempted outside a transaction"):
+        await store.start_execution(base_execution_id)
+
+
+async def test_delete_executions_requires_transaction(
+    store_factory: StoreFactory, base_execution_id: ExecutionId
+):
+    store: SessionStore = store_factory("test-delete-without-transaction")
+
+    with pytest.raises(RuntimeError, match="write attempted outside a transaction"):
+        await store.delete_executions([base_execution_id])
