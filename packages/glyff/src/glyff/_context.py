@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 from collections.abc import Iterator, Sequence
-from typing import Callable, overload
+from typing import overload
 
 from ._event_system import EventEmitter
 from ._interfaces import ArgsHasher, SessionStore, Transaction
@@ -20,14 +20,12 @@ class Context:
         store: SessionStore,
         sequencer: Sequencer,
         hasher: ArgsHasher,
-        transaction_scope_factory: Callable[[], TransactionScope],
         event_emitter: EventEmitter,
     ) -> None:
         self._session_id = session_id
         self._store = store
         self._sequencer = sequencer
         self._hasher = hasher
-        self._transaction_scope_factory = transaction_scope_factory
         self._event_emitter = event_emitter
         self._tracer = ExecutionTracer()
 
@@ -70,7 +68,7 @@ class Context:
         so each event becomes durable on its own, rather than sharing a single
         session-wide transaction.
         """
-        return self._transaction_scope_factory()
+        return TransactionScope(self._store)
 
 
 class CallStack(Sequence[ExecutionId]):

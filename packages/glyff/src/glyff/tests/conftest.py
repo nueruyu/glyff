@@ -3,7 +3,7 @@ import uuid
 import pytest
 
 from glyff import ArgsHasher, EventEmitter, ExecutionId, Serializer, SessionStore
-from glyff._context import Context, TransactionScope
+from glyff._context import Context
 from glyff._sequencer import Sequencer
 from glyff.serialization import (
     JsonArgsHasher,
@@ -63,6 +63,5 @@ def test_context(mock_store: StubSessionStore, hasher: ArgsHasher) -> Context:
         store=mock_store,
         sequencer=Sequencer(),
         hasher=hasher,
-        transaction_scope_factory=lambda: TransactionScope(mock_store),
         event_emitter=EventEmitter([]),
     )

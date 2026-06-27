@@ -4,8 +4,8 @@ import pytest
 
 from glyff import EventEmitter, ExecutionId, ExecutionStatus, Serializer
 from glyff._context import Context, TransactionScope, reset_context, set_context
-from glyff._executor import execute
 from glyff._event_system import EventHandler
+from glyff._executor import execute
 from glyff._sequencer import Sequencer
 from glyff.event_handlers import PruningEventHandler
 from glyff.events import ExecutionFailed
@@ -76,7 +76,6 @@ async def test_completion_prunes_descendants_when_enabled(
         store=mock_store,
         sequencer=Sequencer(),
         hasher=hasher,
-        transaction_scope_factory=lambda: TransactionScope(mock_store),
         event_emitter=emitter,
     )
     token = set_context(ctx)
@@ -128,7 +127,6 @@ async def test_nested_completion_prunes(
         store=mock_store,
         sequencer=Sequencer(),
         hasher=hasher,
-        transaction_scope_factory=lambda: TransactionScope(mock_store),
         event_emitter=emitter,
     )
     token = set_context(ctx)
@@ -325,7 +323,6 @@ async def test_failure_event_handlers_run_inside_transaction(
         store=mock_store,
         sequencer=Sequencer(),
         hasher=hasher,
-        transaction_scope_factory=lambda: TransactionScope(mock_store),
         event_emitter=EventEmitter([CleanupOnFailure()]),
     )
     token = set_context(ctx)

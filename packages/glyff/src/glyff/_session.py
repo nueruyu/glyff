@@ -1,4 +1,4 @@
-from ._context import Context, TransactionScope, reset_context, set_context
+from ._context import Context, reset_context, set_context
 from ._event_system import EventEmitter
 from ._interfaces import ArgsHasher, SessionStore
 from ._sequencer import Sequencer
@@ -29,10 +29,12 @@ class Session:
 
     @property
     def id(self) -> str:
+        """Returns the ID of this Session."""
         return self._id
 
     @property
     def store(self) -> SessionStore:
+        """Returns the SessionStore used by this Session."""
         return self._store
 
     async def __aenter__(self) -> "Session":
@@ -41,7 +43,6 @@ class Session:
             store=self._store,
             sequencer=Sequencer(),
             hasher=self._hasher,
-            transaction_scope_factory=lambda: TransactionScope(self._store),
             event_emitter=self._event_emitter,
         )
         self._context_token = set_context(self._context)
