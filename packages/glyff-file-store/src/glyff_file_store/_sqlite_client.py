@@ -61,6 +61,12 @@ class SQLiteClient:
             valid = ", ".join(sorted(_VALID_SYNCHRONOUS_VALUES))
             raise ValueError(f"synchronous must be one of: {valid}")
 
+        if str(database_path) == ":memory:":
+            raise ValueError(
+                "SQLiteClient does not support ':memory:' because it opens "
+                "a new connection per operation."
+            )
+
         self._database_path = Path(database_path)
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
@@ -89,8 +95,10 @@ class SQLiteClient:
 
     def _initialize_schema_sync(self) -> None:
         connection = self._connect()
+        in_transaction = False
         try:
             connection.execute("BEGIN IMMEDIATE")
+            in_transaction = True
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS records (
@@ -102,8 +110,13 @@ class SQLiteClient:
                 """
             )
             connection.execute("COMMIT")
+            in_transaction = False
         except BaseException:
-            connection.execute("ROLLBACK")
+            if in_transaction:
+                try:
+                    connection.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             raise
         finally:
             connection.close()
@@ -121,9 +134,7 @@ class SQLiteClient:
     def _require_staging(self) -> _SQLiteStagingBuffer:
         staging = self._current.get()
         if staging is None:
-            raise RuntimeError(
-                "SQLiteClient write attempted outside a transaction."
-            )
+            raise RuntimeError("SQLiteClient write attempted outside a transaction.")
         return staging
 
     def _require_current_staging(self, expected: _SQLiteStagingBuffer) -> None:
@@ -140,9 +151,7 @@ class SQLiteClient:
         staging = self._require_staging()
         staging.ops.setdefault((namespace, key), []).append(_Delete())
 
-    def stage_update(
-        self, namespace: str, key: str, fn: SQLiteUpdate
-    ) -> None:
+    def stage_update(self, namespace: str, key: str, fn: SQLiteUpdate) -> None:
         staging = self._require_staging()
         staging.ops.setdefault((namespace, key), []).append(_Update(fn))
 
@@ -164,9 +173,11 @@ class SQLiteClient:
 
     def _commit_staged_sync(self, staging: _SQLiteStagingBuffer) -> None:
         connection = self._connect()
-
-        connection.execute("BEGIN IMMEDIATE")
+        in_transaction = False
         try:
+            connection.execute("BEGIN IMMEDIATE")
+            in_transaction = True
+
             for (namespace, key), ops in staging.ops.items():
                 current = self._read_value_sync(connection, namespace, key)
                 result = self._apply_ops(current, ops)
@@ -185,8 +196,13 @@ class SQLiteClient:
                     )
 
             connection.execute("COMMIT")
+            in_transaction = False
         except BaseException:
-            connection.execute("ROLLBACK")
+            if in_transaction:
+                try:
+                    connection.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             raise
         finally:
             connection.close()
@@ -210,9 +226,7 @@ class SQLiteClient:
     async def read(
         self, namespace: str, key: str, *, staged: bool = True
     ) -> bytes | None:
-        committed = await asyncio.to_thread(
-            self._read_committed_sync, namespace, key
-        )
+        committed = await asyncio.to_thread(self._read_committed_sync, namespace, key)
 
         if staged:
             staging = self._current.get()
@@ -223,9 +237,7 @@ class SQLiteClient:
 
         return committed
 
-    def _read_committed_sync(
-        self, namespace: str, key: str
-    ) -> bytes | None:
+    def _read_committed_sync(self, namespace: str, key: str) -> bytes | None:
         connection = self._connect()
         try:
             return self._read_value_sync(connection, namespace, key)
@@ -268,16 +280,19 @@ class SQLiteClient:
 
         return committed
 
-    def _list_committed_keys_sync(
-        self, namespace: str, prefix: str = ""
-    ) -> set[str]:
+    def _list_committed_keys_sync(self, namespace: str, prefix: str = "") -> set[str]:
         connection = self._connect()
         try:
-            pattern = prefix + "%"
-            rows = connection.execute(
-                "SELECT key FROM records WHERE namespace = ? AND key LIKE ?",
-                (namespace, pattern),
-            ).fetchall()
+            if prefix:
+                rows = connection.execute(
+                    "SELECT key FROM records WHERE namespace = ? AND substr(key, 1, ?) = ?",
+                    (namespace, len(prefix), prefix),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT key FROM records WHERE namespace = ?",
+                    (namespace,),
+                ).fetchall()
             return {row[0] for row in rows}
         finally:
             connection.close()
@@ -298,16 +313,21 @@ class SQLiteClient:
         async with self._write_lock:
             await asyncio.to_thread(self._execute_sync, sql, params)
 
-    def _execute_sync(
-        self, sql: str, params: tuple[Any, ...]
-    ) -> None:
+    def _execute_sync(self, sql: str, params: tuple[Any, ...]) -> None:
         connection = self._connect()
+        in_transaction = False
         try:
             connection.execute("BEGIN IMMEDIATE")
+            in_transaction = True
             connection.execute(sql, params)
             connection.execute("COMMIT")
+            in_transaction = False
         except BaseException:
-            connection.execute("ROLLBACK")
+            if in_transaction:
+                try:
+                    connection.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
             raise
         finally:
             connection.close()

@@ -395,15 +395,19 @@ async def test_sqlite_begin_transaction_does_not_open_physical_connection(
 # -- Constructor variants ----------------------------------------------------
 
 
-async def test_sqlite_store_constructed_with_client(serializer):
-    client = SQLiteClient(":memory:")
+async def test_sqlite_store_constructed_with_client(tmp_path, serializer):
+    client = SQLiteClient(tmp_path / "test.sqlite3")
     store = SQLiteSessionStore(client=client, serializer=serializer)
     assert store.client is client
 
 
-async def test_sqlite_store_raises_on_both_path_and_client(serializer):
+async def test_sqlite_store_raises_on_both_path_and_client(tmp_path, serializer):
     with pytest.raises(TypeError, match="not both"):
-        SQLiteSessionStore(":memory:", serializer, client=SQLiteClient(":memory:"))
+        SQLiteSessionStore(
+            tmp_path / "a.sqlite3",
+            serializer,
+            client=SQLiteClient(tmp_path / "b.sqlite3"),
+        )
 
 
 async def test_sqlite_store_raises_on_no_path_or_client(serializer):
