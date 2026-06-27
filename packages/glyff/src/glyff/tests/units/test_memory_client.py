@@ -125,39 +125,43 @@ async def test_all_keys_without_staging_returns_committed_keys():
     assert client.all_keys() == {"k"}
 
 
-async def test_memory_transaction_concurrent_close_finishes_once():
-    class FakeClient:
-        def __init__(self):
-            self.calls: list[str] = []
-            self.end_calls = 0
-            self.commit_started = asyncio.Event()
-            self.release_commit = asyncio.Event()
+async def test_memory_transaction_concurrent_close_finishes_once(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client = MemoryClient()
+    calls: list[str] = []
+    end_calls = 0
+    commit_started = asyncio.Event()
+    release_commit = asyncio.Event()
+    original_end_staging = client.end_staging
 
-        def begin_staging(self):
-            return object()
+    def end_staging(token) -> None:
+        nonlocal end_calls
+        end_calls += 1
+        original_end_staging(token)
 
-        def end_staging(self, token) -> None:
-            self.end_calls += 1
+    async def commit_staged() -> None:
+        calls.append("commit")
+        commit_started.set()
+        await release_commit.wait()
 
-        async def commit_staged(self) -> None:
-            self.calls.append("commit")
-            self.commit_started.set()
-            await self.release_commit.wait()
+    def clear_staged() -> None:
+        calls.append("rollback")
 
-        def clear_staged(self) -> None:
-            self.calls.append("rollback")
+    monkeypatch.setattr(client, "end_staging", end_staging)
+    monkeypatch.setattr(client, "commit_staged", commit_staged)
+    monkeypatch.setattr(client, "clear_staged", clear_staged)
 
-    client = FakeClient()
-    transaction = _MemoryTransaction(client)  # type: ignore[arg-type]
+    transaction = _MemoryTransaction(client)
 
     commit_task = asyncio.create_task(transaction.commit())
-    await client.commit_started.wait()
+    await commit_started.wait()
 
     rollback_task = asyncio.create_task(transaction.rollback())
     await asyncio.sleep(0)
-    client.release_commit.set()
+    release_commit.set()
 
     await asyncio.gather(commit_task, rollback_task)
 
-    assert client.calls == ["commit"]
-    assert client.end_calls == 1
+    assert calls == ["commit"]
+    assert end_calls == 1

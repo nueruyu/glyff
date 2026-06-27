@@ -211,6 +211,7 @@ class JsonFileSessionStore(SessionStore):
 
     async def _add_log_entry(self, entry: LogEntry) -> None:
         staging = self._require_staging()
+        staging.delete_keys.discard(self._callstack_to_key(entry["call_stack"]))
         staging.entries.append(entry)
 
     async def _commit_current(self) -> None:
@@ -275,6 +276,11 @@ class JsonFileSessionStore(SessionStore):
             return None
 
         entry = self._log_entries[idx]
+        return await self._entry_to_record(entry, return_type)
+
+    async def _entry_to_record(
+        self, entry: LogEntry, return_type: type
+    ) -> ExecutionRecord:
         status = _EVENT_TYPE_TO_STATUS[entry["event_type"]]
         result: Any | None = None
         error: str | None = None

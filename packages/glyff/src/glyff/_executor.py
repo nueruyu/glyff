@@ -17,10 +17,9 @@ async def execute(
     Orchestrates the execution of a regular (awaitable) task: cache checks,
     per-event durable recording, and exception handling.
 
-    Each execution event is persisted in its own store transaction as it
-    happens — the START record before the function runs and the COMPLETE record
-    when it returns — so a completed descendant survives a later interruption or
-    crash of an ancestor.
+    START, the function body, and COMPLETE each use separate store transaction
+    scopes, so a completed descendant can commit while an ancestor body is
+    still running.
     """
     store = ctx.store
     sequencer = ctx.sequencer
@@ -36,7 +35,19 @@ async def execute(
 
     tracer.start(execution_id)
     try:
-        result = await func(*args, **kwargs)
+        async with ctx.get_transaction_scope() as scope:
+            try:
+                result = await func(*args, **kwargs)
+            except Exception as e:
+                await ctx.event_emitter.emit(
+                    ExecutionFailed(
+                        context=ctx,
+                        execution_id=execution_id,
+                        exception=e,
+                    )
+                )
+                await scope.commit()
+                raise
 
         async with ctx.get_transaction_scope():
             await execution.complete(result, return_type)
@@ -44,15 +55,5 @@ async def execute(
                 ExecutionCompleted(context=ctx, execution_id=execution_id)
             )
         return result
-    except Exception as e:
-        async with ctx.get_transaction_scope():
-            await ctx.event_emitter.emit(
-                ExecutionFailed(
-                    context=ctx,
-                    execution_id=execution_id,
-                    exception=e,
-                )
-            )
-        raise
     finally:
         tracer.end()

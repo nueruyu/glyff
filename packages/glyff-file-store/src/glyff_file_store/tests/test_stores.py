@@ -1,6 +1,8 @@
 import pytest
 from glyff import ExecutionId, ExecutionStatus, SessionStore
 
+from glyff_file_store import JsonFileSessionStore
+
 
 async def test_initial_state_is_none(store_factory, base_execution_id: ExecutionId):
     store: SessionStore = store_factory("test-initial")
@@ -76,31 +78,87 @@ async def test_delete_executions_requires_transaction(
         await store.delete_executions([base_execution_id])
 
 
-async def test_failed_commit_does_not_advance_state(
+async def test_nested_child_commit_is_independent_of_parent_staging(
     store_factory, base_execution_id: ExecutionId
 ):
+    child = ExecutionId(
+        parent_id=base_execution_id,
+        name="child",
+        sequence=0,
+        args_hash="child",
+    )
+    store: SessionStore = store_factory("test-nested-child-commit")
+
+    parent_tx = await store.begin_transaction()
+    await store.start_execution(base_execution_id)
+
+    child_tx = await store.begin_transaction()
+    child_execution = await store.start_execution(child)
+    await child_execution.complete("child", str)
+    await child_tx.commit()
+
+    child_record = await store.get_execution_record(child, str)
+    assert child_record is not None
+    assert child_record.status == ExecutionStatus.COMPLETED
+
+    await parent_tx.rollback()
+
+    assert await store.get_execution_record(base_execution_id, str) is None
+    child_record = await store.get_execution_record(child, str)
+    assert child_record is not None
+    assert child_record.status == ExecutionStatus.COMPLETED
+
+
+async def test_parent_staging_survives_nested_child_rollback(
+    store_factory, base_execution_id: ExecutionId
+):
+    child = ExecutionId(
+        parent_id=base_execution_id,
+        name="child",
+        sequence=0,
+        args_hash="child",
+    )
+    store: SessionStore = store_factory("test-nested-child-rollback")
+
+    parent_tx = await store.begin_transaction()
+    await store.start_execution(base_execution_id)
+
+    child_tx = await store.begin_transaction()
+    child_execution = await store.start_execution(child)
+    await child_execution.complete("child", str)
+    await child_tx.rollback()
+
+    assert await store.get_execution_record(child, str) is None
+
+    await parent_tx.commit()
+
+    parent_record = await store.get_execution_record(base_execution_id, str)
+    assert parent_record is not None
+    assert parent_record.status == ExecutionStatus.STARTED
+    assert await store.get_execution_record(child, str) is None
+
+
+async def test_failed_commit_does_not_advance_state(
+    store_factory, base_execution_id: ExecutionId, monkeypatch: pytest.MonkeyPatch
+):
     """If the underlying client write fails, the transaction's post-commit
-    hook must not run — so the in-memory state stays where it was before the
+    hook must not run, so the durable state stays where it was before the
     commit attempt."""
     store: SessionStore = store_factory("test-atomicity")
+    assert isinstance(store, JsonFileSessionStore)
     tx = await store.begin_transaction()
     execution = await store.start_execution(base_execution_id)
     await execution.complete({"value": 42}, dict)
 
-    # Sanity check: state is not visible before commit.
     assert await store.get_execution_record(base_execution_id, dict) is None
 
     # Force the client commit to fail.
     async def boom() -> None:
         raise RuntimeError("simulated disk failure")
 
-    original_commit = store._client.commit_staged  # type: ignore[attr-defined]
-    store._client.commit_staged = boom  # type: ignore[attr-defined]
-    try:
-        with pytest.raises(RuntimeError, match="simulated disk failure"):
-            await tx.commit()
-    finally:
-        store._client.commit_staged = original_commit  # type: ignore[attr-defined]
+    monkeypatch.setattr(store._client, "commit_staged", boom)
+    with pytest.raises(RuntimeError, match="simulated disk failure"):
+        await tx.commit()
 
-    # In-memory state must not have advanced.
+    # Durable state must not have advanced.
     assert await store.get_execution_record(base_execution_id, dict) is None

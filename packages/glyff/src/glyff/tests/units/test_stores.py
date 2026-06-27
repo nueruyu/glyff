@@ -92,3 +92,69 @@ async def test_delete_executions_requires_transaction(
 
     with pytest.raises(RuntimeError, match="write attempted outside a transaction"):
         await store.delete_executions([base_execution_id])
+
+
+async def test_nested_child_commit_is_independent_of_parent_staging(
+    store_factory: StoreFactory, base_execution_id: ExecutionId
+):
+    child = ExecutionId(
+        parent_id=base_execution_id,
+        name="child",
+        sequence=0,
+        args_hash="child",
+    )
+    store: SessionStore = store_factory("test-nested-child-commit")
+
+    parent_tx = await store.begin_transaction()
+    await store.start_execution(base_execution_id)
+
+    child_tx = await store.begin_transaction()
+    child_execution = await store.start_execution(child)
+    await child_execution.complete("child", str)
+    await child_tx.commit()
+
+    parent_record = await store.get_execution_record(base_execution_id, str)
+    assert parent_record is not None
+    assert parent_record.status == ExecutionStatus.STARTED
+    child_record = await store.get_execution_record(child, str)
+    assert child_record is not None
+    assert child_record.status == ExecutionStatus.COMPLETED
+
+    await parent_tx.rollback()
+
+    assert await store.get_execution_record(base_execution_id, str) is None
+    child_record = await store.get_execution_record(child, str)
+    assert child_record is not None
+    assert child_record.status == ExecutionStatus.COMPLETED
+
+
+async def test_parent_staging_survives_nested_child_rollback(
+    store_factory: StoreFactory, base_execution_id: ExecutionId
+):
+    child = ExecutionId(
+        parent_id=base_execution_id,
+        name="child",
+        sequence=0,
+        args_hash="child",
+    )
+    store: SessionStore = store_factory("test-nested-child-rollback")
+
+    parent_tx = await store.begin_transaction()
+    await store.start_execution(base_execution_id)
+
+    child_tx = await store.begin_transaction()
+    child_execution = await store.start_execution(child)
+    await child_execution.complete("child", str)
+    await child_tx.rollback()
+
+    parent_record = await store.get_execution_record(base_execution_id, str)
+    assert parent_record is not None
+    assert parent_record.status == ExecutionStatus.STARTED
+    assert await store.get_execution_record(child, str) is None
+
+    await parent_tx.commit()
+
+    parent_record = await store.get_execution_record(base_execution_id, str)
+    assert parent_record is not None
+    assert parent_record.status == ExecutionStatus.STARTED
+    assert await store.get_execution_record(child, str) is None

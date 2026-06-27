@@ -64,9 +64,9 @@ class Context:
     def get_transaction_scope(self) -> TransactionScope:
         """Return a fresh transaction scope.
 
-        The executor opens one of these per execution event (START, COMPLETE)
-        so each event becomes durable on its own, rather than sharing a single
-        session-wide transaction.
+        The executor opens independent scopes for START, the function body,
+        and COMPLETE so each durable boundary can commit or roll back on its
+        own.
         """
         return TransactionScope(self._store)
 
@@ -136,31 +136,42 @@ class ExecutionTracer:
 
 
 class TransactionScope:
-    """A single-use transaction scope around a SessionStore.
-
-    Entering begins a store transaction; exiting commits it on success or on a
-    normal Exception (so completed work stays durable and an interrupted call
-    stays retryable) and rolls it back only on BaseException (KeyboardInterrupt,
-    SystemExit, cancellation). The executor opens a fresh scope per execution
-    event, so scopes are never nested.
-    """
+    """A single-use transaction scope around a SessionStore."""
 
     def __init__(self, store: SessionStore):
         self._store = store
         self._transaction: Transaction | None = None
+        self._closed = False
 
     async def __aenter__(self) -> "TransactionScope":
+        if self._closed or self._transaction is not None:
+            raise RuntimeError("TransactionScope cannot be re-entered.")
         self._transaction = await self._store.begin_transaction()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        transaction, self._transaction = self._transaction, None
-        if transaction is None:
-            return
-        if exc_type is None or issubclass(exc_type, Exception):
-            await transaction.commit()
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
+        if self._transaction is None:
+            return False
+        if exc_type is None:
+            await self.commit()
         else:
-            await transaction.rollback()
+            await self.rollback()
+        return False
+
+    async def commit(self) -> None:
+        transaction = self._take_transaction()
+        await transaction.commit()
+
+    async def rollback(self) -> None:
+        transaction = self._take_transaction()
+        await transaction.rollback()
+
+    def _take_transaction(self) -> Transaction:
+        if self._closed or self._transaction is None:
+            raise RuntimeError("TransactionScope is already closed.")
+        transaction, self._transaction = self._transaction, None
+        self._closed = True
+        return transaction
 
 
 _context_var: contextvars.ContextVar[Context] = contextvars.ContextVar("glyff_context")

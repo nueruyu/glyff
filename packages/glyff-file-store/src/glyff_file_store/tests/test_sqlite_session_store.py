@@ -1,5 +1,4 @@
 import asyncio
-import threading
 from pathlib import Path
 
 import pytest
@@ -8,7 +7,7 @@ from glyff.serialization import JsonSerializer
 from glyff.store.utils import execution_id_to_path
 
 from glyff_file_store import SQLiteSessionStore
-from glyff_file_store._sqlite_store import _SQLiteTransaction
+from glyff_file_store._sqlite_store import _SQLiteStagingBuffer, _SQLiteTransaction
 
 
 def make_execution_id(
@@ -179,33 +178,87 @@ async def test_multiple_writes_in_one_transaction_roll_back_atomically(tmp_path:
     assert await store.get_execution_record(b, str) is None
 
 
-async def test_sqlite_transaction_concurrent_close_finishes_once():
-    class FakeStore:
-        def __init__(self):
-            self.end_calls = 0
+async def test_sqlite_nested_child_commit_is_independent_of_parent_staging(
+    tmp_path: Path,
+):
+    parent = make_execution_id("parent")
+    child = make_execution_id("child", parent_id=parent)
+    store = make_store(tmp_path)
 
-        def _end_transaction(self, token) -> None:
-            self.end_calls += 1
+    parent_tx = await store.begin_transaction()
+    await store.start_execution(parent)
 
-    store = FakeStore()
-    transaction = _SQLiteTransaction(store, object())  # type: ignore[arg-type]
+    child_tx = await store.begin_transaction()
+    child_execution = await store.start_execution(child)
+    await child_execution.complete("child", str)
+    await child_tx.commit()
+
+    parent_record = await store.get_execution_record(parent, str)
+    assert parent_record is not None
+    assert parent_record.status == ExecutionStatus.STARTED
+    child_record = await store.get_execution_record(child, str)
+    assert child_record is not None
+    assert child_record.status == ExecutionStatus.COMPLETED
+
+    await parent_tx.rollback()
+
+    assert await store.get_execution_record(parent, str) is None
+    child_record = await store.get_execution_record(child, str)
+    assert child_record is not None
+    assert child_record.status == ExecutionStatus.COMPLETED
+
+
+async def test_sqlite_parent_staging_survives_nested_child_rollback(tmp_path: Path):
+    parent = make_execution_id("parent")
+    child = make_execution_id("child", parent_id=parent)
+    store = make_store(tmp_path)
+
+    parent_tx = await store.begin_transaction()
+    await store.start_execution(parent)
+
+    child_tx = await store.begin_transaction()
+    child_execution = await store.start_execution(child)
+    await child_execution.complete("child", str)
+    await child_tx.rollback()
+
+    parent_record = await store.get_execution_record(parent, str)
+    assert parent_record is not None
+    assert parent_record.status == ExecutionStatus.STARTED
+    assert await store.get_execution_record(child, str) is None
+
+    await parent_tx.commit()
+
+    parent_record = await store.get_execution_record(parent, str)
+    assert parent_record is not None
+    assert parent_record.status == ExecutionStatus.STARTED
+    assert await store.get_execution_record(child, str) is None
+
+
+async def test_sqlite_transaction_concurrent_close_finishes_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    store = make_store(tmp_path)
     calls: list[str] = []
-    commit_started = threading.Event()
-    release_commit = threading.Event()
+    commit_started = asyncio.Event()
+    release_commit = asyncio.Event()
+    end_calls = 0
 
-    def commit_sync() -> None:
+    async def commit_staged(staging: _SQLiteStagingBuffer) -> None:
         calls.append("commit")
         commit_started.set()
-        assert release_commit.wait(timeout=2)
+        await release_commit.wait()
 
-    def rollback_sync() -> None:
-        calls.append("rollback")
+    def end_transaction(token) -> None:
+        nonlocal end_calls
+        end_calls += 1
 
-    transaction._commit_sync = commit_sync  # type: ignore[method-assign]
-    transaction._rollback_sync = rollback_sync  # type: ignore[method-assign]
+    monkeypatch.setattr(store, "_commit_staged", commit_staged)
+    monkeypatch.setattr(store, "_end_transaction", end_transaction)
+
+    transaction = _SQLiteTransaction(store, _SQLiteStagingBuffer())
 
     commit_task = asyncio.create_task(transaction.commit())
-    assert await asyncio.to_thread(commit_started.wait, 2)
+    await asyncio.wait_for(commit_started.wait(), timeout=2)
 
     rollback_task = asyncio.create_task(transaction.rollback())
     await asyncio.sleep(0)
@@ -214,26 +267,17 @@ async def test_sqlite_transaction_concurrent_close_finishes_once():
     await asyncio.gather(commit_task, rollback_task)
 
     assert calls == ["commit"]
-    assert store.end_calls == 1
+    assert end_calls == 1
 
 
-def test_open_tx_connection_closes_connection_if_begin_fails(tmp_path: Path):
-    class FailingConnection:
-        def __init__(self):
-            self.closed = False
-
-        def execute(self, statement: str) -> None:
-            assert statement == "BEGIN IMMEDIATE"
-            raise RuntimeError("begin failed")
-
-        def close(self) -> None:
-            self.closed = True
-
+async def test_sqlite_begin_transaction_does_not_open_physical_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     store = make_store(tmp_path)
-    connection = FailingConnection()
-    store._connect = lambda: connection  # type: ignore[method-assign,return-value]
 
-    with pytest.raises(RuntimeError, match="begin failed"):
-        store._open_tx_connection()
+    def fail_connect():
+        raise AssertionError("begin_transaction should not connect")
 
-    assert connection.closed
+    monkeypatch.setattr(store, "_connect", fail_connect)
+    transaction = await store.begin_transaction()
+    await transaction.rollback()
