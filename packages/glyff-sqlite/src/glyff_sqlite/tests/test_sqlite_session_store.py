@@ -6,7 +6,7 @@ from glyff import ExecutionId, ExecutionStatus
 from glyff.serialization import JsonSerializer
 from glyff.store.utils import execution_id_to_path
 
-from glyff_file_store import SQLiteClient, SQLiteSessionStore
+from glyff_sqlite import SQLiteClient, SQLiteSessionStore
 
 
 def make_execution_id(
@@ -294,7 +294,7 @@ async def test_sqlite_execution_and_external_metadata_commit_together(
     execution = await store.start_execution(execution_id)
     await execution.complete("ok", str)
 
-    client.stage_write("metadata", "root", b"external-value")
+    store.stage_write("metadata", "root", b"external-value")
 
     await tx.commit()
 
@@ -325,7 +325,7 @@ async def test_sqlite_execution_and_external_metadata_rollback_together(
     execution = await store.start_execution(execution_id)
     await execution.complete("ok", str)
 
-    client.stage_write("metadata", "root", b"external-value")
+    store.stage_write("metadata", "root", b"external-value")
 
     await tx.rollback()
 
@@ -346,12 +346,12 @@ async def test_sqlite_child_commit_does_not_commit_parent_metadata(
     parent_tx = await store.begin_transaction()
     await store.start_execution(parent)
 
-    client.stage_write("metadata", "parent", b"parent-value")
+    store.stage_write("metadata", "parent", b"parent-value")
 
     child_tx = await store.begin_transaction()
     child_execution = await store.start_execution(child)
     await child_execution.complete("child", str)
-    client.stage_write("metadata", "child", b"child-value")
+    store.stage_write("metadata", "child", b"child-value")
     await child_tx.commit()
 
     child_record = await store.get_execution_record(child, str)
@@ -454,3 +454,21 @@ async def test_sqlite_three_level_nested_transactions(tmp_path):
     grandchild_record = await store.get_execution_record(grandchild, str)
     assert grandchild_record is not None
     assert grandchild_record.status == ExecutionStatus.COMPLETED
+
+
+# -- External metadata via store.stage_delete --------------------------------
+
+
+async def test_sqlite_store_stage_delete_external_metadata(tmp_path, serializer):
+    client = SQLiteClient(tmp_path / "session.sqlite3")
+    store = SQLiteSessionStore(client=client, serializer=serializer)
+
+    tx = await store.begin_transaction()
+    store.stage_write("metadata", "to-delete", b"value")
+    await tx.commit()
+
+    tx = await store.begin_transaction()
+    store.stage_delete("metadata", "to-delete")
+    await tx.commit()
+
+    assert await client.read("metadata", "to-delete") is None

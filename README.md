@@ -118,12 +118,14 @@ Early development. APIs may change before v1.0.
 | Package                                           | Description                                                    |
 | ------------------------------------------------- | -------------------------------------------------------------- |
 | [`glyff`](./packages/glyff)                       | Core primitive. In-memory only, standard library dependencies. |
-| [`glyff-file-store`](./packages/glyff-file-store) | Append-only file-backed session store.                         |
+| [`glyff-file-store`](./packages/glyff-file-store) | Append-only file-backed session store (debug).                 |
+| [`glyff-sqlite`](./packages/glyff-sqlite)         | SQLite-backed durable session store (production).              |
 | [`glyff-pydantic`](./packages/glyff-pydantic)     | Pydantic-typed serialization and arg hashing.                  |
 
 ```bash
 pip install glyff
 pip install glyff-file-store
+pip install glyff-sqlite
 pip install glyff-pydantic
 ```
 

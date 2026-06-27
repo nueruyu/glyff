@@ -10,7 +10,7 @@ import pytest
 from glyff import ArgsHasher, Session, engrave
 from glyff.serialization import JsonSerializer
 
-from glyff_file_store import SQLiteSessionStore
+from glyff_sqlite import SQLiteSessionStore
 
 _ran: set[int] = set()
 _interrupt_root: bool = False

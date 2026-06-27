@@ -7,6 +7,7 @@ members = [
     "glyff",
     "glyff-file-store",
     "glyff-pydantic",
+    "glyff-sqlite",
 ]
 
 [[package]]
@@ -88,6 +89,28 @@ requires-dist = [
     { name = "glyff", editable = "packages/glyff" },
     { name = "pydantic", specifier = ">=2.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
+]
+
+[[package]]
+name = "glyff-sqlite"
+source = { editable = "packages/glyff-sqlite" }
+dependencies = [
+    { name = "glyff" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "glyff", editable = "packages/glyff" }]
 
 [package.metadata.requires-dev]
 dev = [

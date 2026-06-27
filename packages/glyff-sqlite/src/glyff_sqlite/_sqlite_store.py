@@ -180,6 +180,23 @@ class SQLiteSessionStore(SessionStore):
     def client(self) -> SQLiteClient:
         return self._client
 
+    # -- Public staging API for external metadata ------------------------------
+
+    def stage_write(self, namespace: str, key: str, value: bytes) -> None:
+        """Stage a write to the current transaction.
+
+        External/application code can persist metadata rows alongside execution
+        records and commit or roll back atomically together.
+
+        Must be called within an active transaction (between
+        ``begin_transaction`` and ``commit``/``rollback``).
+        """
+        self._client.stage_write(namespace, key, value)
+
+    def stage_delete(self, namespace: str, key: str) -> None:
+        """Stage a deletion to the current transaction."""
+        self._client.stage_delete(namespace, key)
+
     # -- SessionStore API ------------------------------------------------------
 
     async def begin_transaction(self) -> Transaction:

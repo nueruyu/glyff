@@ -3,6 +3,7 @@ members = [
     "packages/glyff",
     "packages/glyff-file-store",
     "packages/glyff-pydantic",
+    "packages/glyff-sqlite",
 ]
 
 [tool.pytest.ini_options]
@@ -14,6 +15,7 @@ include = [
     "packages/glyff/src",
     "packages/glyff-pydantic/src",
     "packages/glyff-file-store/src",
+    "packages/glyff-sqlite/src",
 ]
 venvPath = "."
 venv = ".venv"
