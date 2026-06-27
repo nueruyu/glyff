@@ -5,8 +5,10 @@ import pytest
 from glyff import EventEmitter, ExecutionId, ExecutionStatus, Serializer
 from glyff._context import Context, TransactionScope, reset_context, set_context
 from glyff._executor import execute
+from glyff._event_system import EventHandler
 from glyff._sequencer import Sequencer
 from glyff.event_handlers import PruningEventHandler
+from glyff.events import ExecutionFailed
 from glyff.store._memory import _make_key
 from glyff.store.utils import execution_id_to_path
 from glyff.tests.stubs.store import StubSessionStore
@@ -270,7 +272,8 @@ async def test_interrupting_exception_skips_failure_staging(
     assert not test_context.tracer.call_stack
     assert not mock_store.get_calls("complete")
     assert not mock_store.get_calls("fail")
-    assert len(mock_store.get_calls("commit")) == 1
+    # One commit for START, one transaction around ExecutionFailed handlers.
+    assert len(mock_store.get_calls("commit")) == 2
     assert not mock_store.get_calls("rollback")
 
 
@@ -297,9 +300,65 @@ async def test_general_exception_is_non_terminal(
     # No failure is staged; the call stays STARTED so it is retryable on resume.
     assert not mock_store.get_calls("fail")
     assert len(mock_store.get_calls("start_execution")) == 1
-    # Completed work is still committed (not rolled back).
-    assert len(mock_store.get_calls("commit")) == 1
+    record = await mock_store.get_execution_record(base_execution_id, str)
+    assert record is not None
+    assert record.status == ExecutionStatus.STARTED
+    assert len(mock_store.get_calls("commit")) == 2
     assert not mock_store.get_calls("rollback")
+
+
+async def test_failure_event_handlers_run_inside_transaction(
+    mock_store: StubSessionStore,
+    base_execution_id: ExecutionId,
+    nested_execution_id: ExecutionId,
+    hasher,
+):
+    seen_exceptions: list[Exception] = []
+
+    class CleanupOnFailure(EventHandler[ExecutionFailed]):
+        async def handle(self, event: ExecutionFailed) -> None:
+            seen_exceptions.append(event.exception)
+            await event.context.store.delete_executions([nested_execution_id])
+
+    ctx = Context(
+        session_id="failure-handler-tx",
+        store=mock_store,
+        sequencer=Sequencer(),
+        hasher=hasher,
+        transaction_scope_factory=lambda: TransactionScope(mock_store),
+        event_emitter=EventEmitter([CleanupOnFailure()]),
+    )
+    token = set_context(ctx)
+    try:
+        async with ctx.get_transaction_scope():
+            execution = await mock_store.start_execution(nested_execution_id)
+            await execution.complete("child", str)
+
+        async def sample_func():
+            raise ValueError("oops")
+
+        with pytest.raises(ValueError, match="oops"):
+            await execute(
+                ctx=ctx,
+                execution_id=base_execution_id,
+                func=sample_func,
+                args=(),
+                kwargs={},
+                return_type=str,
+            )
+    finally:
+        reset_context(token)
+
+    delete_calls = mock_store.get_calls("delete_executions")
+    assert len(delete_calls) == 1
+    assert delete_calls[0].args[0] == [nested_execution_id]
+    assert len(seen_exceptions) == 1
+    assert isinstance(seen_exceptions[0], ValueError)
+    assert str(seen_exceptions[0]) == "oops"
+    assert await mock_store.get_execution_record(nested_execution_id, str) is None
+    record = await mock_store.get_execution_record(base_execution_id, str)
+    assert record is not None
+    assert record.status == ExecutionStatus.STARTED
 
 
 async def test_base_exception_after_start_keeps_started_record(
