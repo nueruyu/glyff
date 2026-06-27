@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from glyff import ArgsHasher, ExecutionId, Serializer, SessionStore
+from glyff import ArgsHasher, ExecutionId, SessionStore
 from glyff.serialization import JsonArgsHasher, JsonSerializer
 
 from glyff_file_store import FileClient, JsonFileSessionStore
@@ -15,7 +15,7 @@ def base_execution_id() -> ExecutionId:
 
 
 @pytest.fixture
-def serializer() -> Serializer:
+def serializer() -> JsonSerializer:
     return JsonSerializer()
 
 
@@ -25,7 +25,7 @@ def hasher() -> ArgsHasher:
 
 
 @pytest.fixture
-def store_factory(tmp_path: Path, serializer: Serializer):
+def store_factory(tmp_path: Path, serializer: JsonSerializer):
     def factory(session_id: str) -> SessionStore:
         client = FileClient(base_dir=tmp_path, session_id=session_id)
         return JsonFileSessionStore(client=client, serializer=serializer)

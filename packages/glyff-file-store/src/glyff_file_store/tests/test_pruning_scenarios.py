@@ -3,8 +3,9 @@ file store. Proves that registering ``PruningEventHandler`` deletes the history
 of a task's descendants once it completes, without changing replay."""
 
 import pytest
-from glyff import ArgsHasher, EventEmitter, Serializer, Session, engrave
+from glyff import ArgsHasher, EventEmitter, Session, engrave
 from glyff.event_handlers import PruningEventHandler
+from glyff.serialization import JsonSerializer
 
 from glyff_file_store import FileClient, JsonFileSessionStore
 
@@ -55,7 +56,7 @@ async def pr_root() -> int:
 
 
 async def test_fresh_run_prunes_whole_subtree(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id="prune-fresh"),
@@ -75,7 +76,7 @@ async def test_fresh_run_prunes_whole_subtree(
 
 
 async def test_disabled_flag_retains_descendants(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     store = JsonFileSessionStore(
         client=FileClient(base_dir=tmp_path, session_id="prune-off"),
@@ -90,7 +91,7 @@ async def test_disabled_flag_retains_descendants(
 
 
 async def test_replay_after_prune_is_correct(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     sid = "prune-replay"
     store = JsonFileSessionStore(
@@ -164,7 +165,7 @@ async def sc_root() -> str:
 
 
 async def test_nested_completion_prunes_mid_session(
-    tmp_path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     global _sc_interrupt
     sid = "prune-interrupt"

@@ -14,10 +14,10 @@ from glyff import (
     ExecutionId,
     ExecutionRecord,
     ExecutionStatus,
-    Serializer,
     SessionStore,
     Transaction,
 )
+from glyff.serialization import JsonSerializer
 from glyff.serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
@@ -40,6 +40,16 @@ _STATUS_TO_EVENT_TYPE = {
     ExecutionStatus.FAILED: "fail",
 }
 _EVENT_TYPE_TO_STATUS = {v: k for k, v in _STATUS_TO_EVENT_TYPE.items()}
+
+
+def _serialized_result_to_log_value(serialized: bytes) -> object:
+    return json.loads(serialized.decode(DEFAULT_ENCODING))
+
+
+def _log_value_to_serialized_result(value: object) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=JSON_SEPARATORS).encode(
+        DEFAULT_ENCODING
+    )
 
 
 class _StagingBuffer:
@@ -89,7 +99,7 @@ class _FileExecution(Execution):
     def __init__(
         self,
         call_stack: list[str],
-        serializer: Serializer,
+        serializer: JsonSerializer,
         append_entry: Callable[[LogEntry], Awaitable[None]],
     ):
         self._call_stack = call_stack
@@ -112,7 +122,7 @@ class _FileExecution(Execution):
 
     async def complete(self, value: object, return_type: type) -> None:
         serialized_bytes = await self._serializer.serialize(value, return_type)
-        persistable_result = json.loads(serialized_bytes)
+        persistable_result = _serialized_result_to_log_value(serialized_bytes)
         entry = self._create_log_entry(
             ExecutionStatus.COMPLETED, result=persistable_result
         )
@@ -133,7 +143,7 @@ class JsonFileSessionStore(SessionStore):
     so it is parallel-safe.
     """
 
-    def __init__(self, client: FileClient, serializer: Serializer):
+    def __init__(self, client: FileClient, serializer: JsonSerializer):
         self._client = client
         self._serializer = serializer
         self._lock = asyncio.Lock()
@@ -306,11 +316,8 @@ class JsonFileSessionStore(SessionStore):
         if status == ExecutionStatus.COMPLETED:
             persistable_result = entry["result"]
             if persistable_result is not None:
-                serialized_bytes = json.dumps(
-                    persistable_result, sort_keys=True, separators=JSON_SEPARATORS
-                ).encode(DEFAULT_ENCODING)
                 result = await self._serializer.deserialize(
-                    serialized_bytes, return_type
+                    _log_value_to_serialized_result(persistable_result), return_type
                 )
         elif status == ExecutionStatus.FAILED:
             error = entry["error"] or ""
