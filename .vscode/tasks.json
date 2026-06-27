@@ -6,19 +6,29 @@
     {
       "label": "repomix: Generate Markdown & Copy to Clipboard",
       "type": "shell",
-      // Run Windows PowerShell
-      "command": "powershell",
-      "args": [
-        // Recommended PowerShell options for script execution
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        // Script file to execute
-        "-File",
-        "${workspaceFolder}/.vscode/scripts/run-repomix.ps1",
-        // Argument passed to the script (path of the selected config file)
-        "${workspaceFolder}/.vscode/repomix/${input:repomixConfig}"
-      ],
+      // OS-specific configurations will be defined below
+      "windows": {
+        // On Windows, run the PowerShell script
+        "command": "powershell",
+        "args": [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          "${workspaceFolder}/.vscode/scripts/run_repomix.ps1",
+          "${workspaceFolder}/.vscode/repomix/${input:repomixConfig}"
+        ]
+      },
+      "linux": {
+        // On Linux, run the shell script
+        "command": "${workspaceFolder}/.vscode/scripts/run_repomix.sh",
+        "args": ["${workspaceFolder}/.vscode/repomix/${input:repomixConfig}"]
+      },
+      "osx": {
+        // On macOS, also run the shell script
+        "command": "${workspaceFolder}/.vscode/scripts/run_repomix.sh",
+        "args": ["${workspaceFolder}/.vscode/repomix/${input:repomixConfig}"]
+      },
       "group": "build",
       "presentation": {
         "echo": true,
