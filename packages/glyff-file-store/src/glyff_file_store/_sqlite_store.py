@@ -14,10 +14,10 @@ from glyff import (
     ExecutionId,
     ExecutionRecord,
     ExecutionStatus,
-    Serializer,
     SessionStore,
     Transaction,
 )
+from glyff.serialization import JsonSerializer
 from glyff.serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
@@ -81,7 +81,7 @@ class _SQLiteExecution(Execution):
         self,
         store: SQLiteSessionStore,
         execution_id: ExecutionId,
-        serializer: Serializer,
+        serializer: JsonSerializer,
     ):
         self._store = store
         self._execution_id = execution_id
@@ -106,7 +106,7 @@ class SQLiteSessionStore(SessionStore):
     def __init__(
         self,
         database_path: str | Path,
-        serializer: Serializer,
+        serializer: JsonSerializer,
         *,
         busy_timeout_ms: int = 30_000,
         synchronous: str = "FULL",
@@ -349,7 +349,9 @@ class SQLiteSessionStore(SessionStore):
             )
 
         rows = await self._read(read)
-        return [self._callstack_to_id(json.loads(call_stack)) for _key, call_stack in rows]
+        return [
+            self._callstack_to_id(json.loads(call_stack)) for _key, call_stack in rows
+        ]
 
     async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
         keys = [self._id_to_key(eid) for eid in execution_ids]

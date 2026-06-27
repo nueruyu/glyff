@@ -7,7 +7,8 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from glyff import ArgsHasher, Serializer, Session, engrave
+from glyff import ArgsHasher, Session, engrave
+from glyff.serialization import JsonSerializer
 
 from glyff_file_store import SQLiteSessionStore
 
@@ -47,7 +48,7 @@ async def sqp_root() -> int:
 
 
 async def test_sqlite_parallel_children_durable_after_root_interrupt(
-    tmp_path: Path, serializer: Serializer, hasher: ArgsHasher
+    tmp_path: Path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     global _interrupt_root
     db = tmp_path / "executions.sqlite3"
