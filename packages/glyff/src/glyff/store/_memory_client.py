@@ -37,14 +37,20 @@ class MemoryClient:
             raise RuntimeError("MemoryClient write attempted outside a transaction.")
         return staging
 
-    def begin_staging(self) -> contextvars.Token:
-        return self._current.set(_StagingBuffer())
+    def begin_staging(self) -> tuple[contextvars.Token, _StagingBuffer]:
+        staging = _StagingBuffer()
+        token = self._current.set(staging)
+        return token, staging
 
     def end_staging(self, token: contextvars.Token) -> None:
         try:
             self._current.reset(token)
         except (ValueError, LookupError):
             pass
+
+    def _require_current_staging(self, expected: _StagingBuffer) -> None:
+        if self._current.get() is not expected:
+            raise RuntimeError("Transaction closed out of order.")
 
     def all_keys(self) -> set[str]:
         buffer = self._current.get()

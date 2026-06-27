@@ -11,7 +11,7 @@ from glyff.store._memory import _MemoryTransaction
 
 
 async def _commit_write(client: MemoryClient, key: str, value: bytes) -> None:
-    token = client.begin_staging()
+    token, _ = client.begin_staging()
     try:
         client.stage_write(key, value)
         await client.commit_staged()
@@ -21,7 +21,7 @@ async def _commit_write(client: MemoryClient, key: str, value: bytes) -> None:
 
 async def test_read_observes_staged_write():
     client = MemoryClient()
-    token = client.begin_staging()
+    token, _ = client.begin_staging()
     try:
         client.stage_write("k", b"v")
         assert await client.read("k") == b"v"
@@ -33,11 +33,10 @@ async def test_staged_write_overrides_committed_value():
     client = MemoryClient()
     await _commit_write(client, "k", b"old")
 
-    token = client.begin_staging()
+    token, _ = client.begin_staging()
     try:
         client.stage_write("k", b"new")
         assert await client.read("k") == b"new"
-        # Until commit, the committed value is untouched.
         assert client.data["k"] == b"old"
     finally:
         client.end_staging(token)
@@ -47,7 +46,7 @@ async def test_read_observes_staged_delete():
     client = MemoryClient()
     await _commit_write(client, "k", b"v")
 
-    token = client.begin_staging()
+    token, _ = client.begin_staging()
     try:
         client.stage_delete("k")
         assert await client.read("k") is None
@@ -63,7 +62,7 @@ async def test_read_falls_through_to_committed_value():
 
 async def test_clear_staged_discards_staged_view():
     client = MemoryClient()
-    token = client.begin_staging()
+    token, _ = client.begin_staging()
     try:
         client.stage_write("k", b"v")
         client.clear_staged()
@@ -76,7 +75,7 @@ async def test_read_consistent_with_all_keys():
     client = MemoryClient()
     await _commit_write(client, "committed", b"c")
 
-    token = client.begin_staging()
+    token, _ = client.begin_staging()
     try:
         client.stage_write("staged", b"s")
         client.stage_delete("committed")
@@ -92,7 +91,7 @@ async def test_read_staged_false_returns_committed_ignoring_staged():
     client = MemoryClient()
     await _commit_write(client, "k", b"committed")
 
-    token = client.begin_staging()
+    token, _ = client.begin_staging()
     try:
         client.stage_write("k", b"staged")
         assert await client.read("k") == b"staged"

@@ -19,12 +19,18 @@ async def test_file_transaction_concurrent_close_finishes_once(
     end_calls = 0
     commit_started = asyncio.Event()
     release_commit = asyncio.Event()
-    original_end_staging = store.end_staging
+    original_store_end = store.end_staging
+    original_client_end = store._client.end_staging
 
     def end_staging(token) -> None:
         nonlocal end_calls
         end_calls += 1
-        original_end_staging(token)
+        original_store_end(token)
+
+    def client_end_staging(token) -> None:
+        nonlocal end_calls
+        end_calls += 1
+        original_client_end(token)
 
     async def commit_current() -> None:
         calls.append("commit")
@@ -35,6 +41,7 @@ async def test_file_transaction_concurrent_close_finishes_once(
         calls.append("rollback")
 
     monkeypatch.setattr(store, "end_staging", end_staging)
+    monkeypatch.setattr(store._client, "end_staging", client_end_staging)
     monkeypatch.setattr(store, "_commit_current", commit_current)
     monkeypatch.setattr(store, "_rollback_current", rollback_current)
 
@@ -50,4 +57,4 @@ async def test_file_transaction_concurrent_close_finishes_once(
     await asyncio.gather(commit_task, rollback_task)
 
     assert calls == ["commit"]
-    assert end_calls == 1
+    assert end_calls == 2

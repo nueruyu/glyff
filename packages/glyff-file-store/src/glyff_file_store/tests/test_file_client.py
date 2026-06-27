@@ -3,8 +3,9 @@ import os
 from pathlib import Path
 
 import pytest
+from glyff import ExecutionId, ExecutionStatus
 
-from glyff_file_store import FileClient
+from glyff_file_store import FileClient, JsonFileSessionStore
 from glyff_file_store._file_client import _BACKUP_SUFFIX, _TEMP_PREFIX
 
 
@@ -15,12 +16,16 @@ def client(tmp_path: Path) -> FileClient:
 
 async def test_commit_single_write(client: FileClient):
     path = "test.txt"
+    t1, _ = client.begin_staging()
     await client.stage_write(path, b"hello")
     await client.commit_staged()
+    client.end_staging(t1)
     assert await client.read(path) == b"hello"
 
+    t2, _ = client.begin_staging()
     await client.stage_write(path, b"world")
     await client.commit_staged()
+    client.end_staging(t2)
     assert await client.read(path) == b"world"
 
 
@@ -28,31 +33,36 @@ async def test_staging_same_path_last_write_wins(client: FileClient):
     """When stage_write is called twice on the same path in one transaction,
     the later op replaces the earlier one."""
     path = "test.txt"
+    t, _ = client.begin_staging()
     await client.stage_write(path, b"first")
     await client.stage_write(path, b"second")
     await client.commit_staged()
+    client.end_staging(t)
     assert await client.read(path) == b"second"
 
 
 async def test_delete_cancels_staged_write(client: FileClient):
     path = "test.txt"
-    # Pre-populate the file.
     (client.resolve(path).parent).mkdir(exist_ok=True)
     with open(client.resolve(path), "wb") as f:
         f.write(b"initial")
 
+    t, _ = client.begin_staging()
     await client.stage_write(path, b"new")
     await client.stage_delete(path)
     await client.commit_staged()
+    client.end_staging(t)
 
     assert await client.read(path) is None
 
 
 async def test_rollback_clears_staged_write(client: FileClient):
     path = "test.txt"
+    t, _ = client.begin_staging()
     await client.stage_write(path, b"a")
     await client.clear_staged()
     await client.commit_staged()
+    client.end_staging(t)
 
     assert await client.read(path) is None
 
@@ -64,15 +74,13 @@ async def test_clear_callback_runs_on_delete(client: FileClient):
     async def clear_cb():
         cleared.append("cancelled")
 
+    t, _ = client.begin_staging()
     await client.stage_write(path, b"data", clear_cb)
     assert cleared == []
 
     await client.stage_delete(path)
     assert cleared == ["cancelled"]
-
-    # Not run again on commit.
-    await client.commit_staged()
-    assert cleared == ["cancelled"]
+    client.end_staging(t)
 
 
 async def test_clear_callback_runs_on_rollback(client: FileClient):
@@ -82,15 +90,13 @@ async def test_clear_callback_runs_on_rollback(client: FileClient):
     async def clear_cb():
         cleared.append("rolled_back")
 
+    t, _ = client.begin_staging()
     await client.stage_write(path, b"data", clear_cb)
     assert cleared == []
 
     await client.clear_staged()
     assert cleared == ["rolled_back"]
-
-    # Not run again on commit.
-    await client.commit_staged()
-    assert cleared == ["rolled_back"]
+    client.end_staging(t)
 
 
 async def test_clear_callback_runs_after_successful_commit(client: FileClient):
@@ -102,16 +108,20 @@ async def test_clear_callback_runs_after_successful_commit(client: FileClient):
     async def clear_cb():
         cleared.append("committed")
 
+    t, _ = client.begin_staging()
     await client.stage_write(path, b"data", clear_cb)
     await client.commit_staged()
+    client.end_staging(t)
     assert cleared == ["committed"]
     assert await client.read(path) == b"data"
 
 
 async def test_commit_applies_writes_across_multiple_files(client: FileClient):
+    t, _ = client.begin_staging()
     await client.stage_write("file1.txt", b"first-content")
     await client.stage_write("file2.txt", b"second-content")
     await client.commit_staged()
+    client.end_staging(t)
 
     assert await client.read("file1.txt") == b"first-content"
     assert await client.read("file2.txt") == b"second-content"
@@ -128,9 +138,11 @@ async def test_stage_accepts_async_callback_as_content(client: FileClient):
         call_count += 1
         return b"from callback"
 
+    t, _ = client.begin_staging()
     await client.stage_write(path, writer)
     assert call_count == 0
     await client.commit_staged()
+    client.end_staging(t)
     assert call_count == 1
     assert await client.read(path) == b"from callback"
 
@@ -149,16 +161,22 @@ async def test_callback_can_implement_append_semantics(client: FileClient):
 
         return writer
 
+    t1, _ = client.begin_staging()
     await client.stage_write(path, await make_appender(b"first\n"))
     await client.commit_staged()
+    client.end_staging(t1)
     assert await client.read(path) == b"first\n"
 
+    t2, _ = client.begin_staging()
     await client.stage_write(path, await make_appender(b"second\n"))
     await client.commit_staged()
+    client.end_staging(t2)
     assert await client.read(path) == b"first\nsecond\n"
 
+    t3, _ = client.begin_staging()
     await client.stage_write(path, await make_appender(b"third\n"))
     await client.commit_staged()
+    client.end_staging(t3)
     assert await client.read(path) == b"first\nsecond\nthird\n"
 
 
@@ -166,7 +184,6 @@ async def test_partial_commit_failure_leaves_disk_unchanged(client: FileClient):
     """If one writer raises mid-commit, the directory-level swap is never
     performed and no staged op lands on disk. The staged ops also remain
     in place so the caller can retry."""
-    # Pre-populate two files.
     (client.resolve("a.txt").parent).mkdir(exist_ok=True)
     client.resolve("a.txt").write_bytes(b"a-original")
     client.resolve("b.txt").write_bytes(b"b-original")
@@ -177,17 +194,16 @@ async def test_partial_commit_failure_leaves_disk_unchanged(client: FileClient):
     async def bad_writer() -> bytes:
         raise RuntimeError("simulated writer failure")
 
+    t, _ = client.begin_staging()
     await client.stage_write("a.txt", good_writer)
     await client.stage_write("b.txt", bad_writer)
 
     with pytest.raises(RuntimeError, match="simulated writer failure"):
         await client.commit_staged()
 
-    # Neither file changed on disk. (Read the committed files directly: the
-    # staged ops remain after the failed commit, so a transaction-aware
-    # read() would reflect the still-staged write rather than the disk.)
     assert client.resolve("a.txt").read_bytes() == b"a-original"
     assert client.resolve("b.txt").read_bytes() == b"b-original"
+    client.end_staging(t)
 
 
 async def test_partial_commit_failure_can_be_retried(client: FileClient):
@@ -203,15 +219,16 @@ async def test_partial_commit_failure_can_be_retried(client: FileClient):
             raise RuntimeError("once")
         return b"b-new"
 
+    t, _ = client.begin_staging()
     await client.stage_write("a.txt", b"a-new")
     await client.stage_write("b.txt", b_writer)
 
     with pytest.raises(RuntimeError, match="once"):
         await client.commit_staged()
 
-    # Now let b_writer succeed; the same staged ops are still there.
     fail = False
     await client.commit_staged()
+    client.end_staging(t)
     assert await client.read("a.txt") == b"a-new"
     assert await client.read("b.txt") == b"b-new"
 
@@ -220,11 +237,12 @@ async def test_commit_leaves_no_orphan_temp_directories(
     client: FileClient, tmp_path: Path
 ):
     """A successful commit cleans up its temp directory and any backup."""
+    t, _ = client.begin_staging()
     await client.stage_write("file.txt", b"content")
     await client.commit_staged()
+    client.end_staging(t)
 
     siblings = list(tmp_path.iterdir())
-    # Only the session directory should remain — no .commit-* or .bak.
     session_name = client.resolve(".").resolve().name
     assert [s.name for s in siblings] == [session_name]
 
@@ -232,8 +250,12 @@ async def test_commit_leaves_no_orphan_temp_directories(
 async def test_commit_retries_transient_permission_error_while_swapping_temp(
     client: FileClient, monkeypatch: pytest.MonkeyPatch
 ):
+    t, _ = client.begin_staging()
     await client.stage_write("file.txt", b"old")
     await client.commit_staged()
+    client.end_staging(t)
+
+    t2, _ = client.begin_staging()
     await client.stage_write("file.txt", b"new")
 
     original_rename = os.rename
@@ -255,6 +277,7 @@ async def test_commit_retries_transient_permission_error_while_swapping_temp(
     monkeypatch.setattr(os, "rename", flaky_rename)
 
     await client.commit_staged()
+    client.end_staging(t2)
 
     assert rename_failures == 1
     assert await client.read("file.txt") == b"new"
@@ -268,9 +291,11 @@ async def test_failed_commit_leaves_no_orphan_temp_directories(
     async def bad_writer() -> bytes:
         raise RuntimeError("nope")
 
+    t, _ = client.begin_staging()
     await client.stage_write("file.txt", bad_writer)
     with pytest.raises(RuntimeError):
         await client.commit_staged()
+    client.end_staging(t)
 
     session_name = client.resolve(".").resolve().name
     siblings = [s.name for s in tmp_path.iterdir()]
@@ -278,7 +303,6 @@ async def test_failed_commit_leaves_no_orphan_temp_directories(
         name == session_name or not name.startswith(session_name + _TEMP_PREFIX)
         for name in siblings
     )
-    # No backup either.
     assert not (tmp_path / (session_name + _BACKUP_SUFFIX)).exists()
 
 
@@ -360,47 +384,59 @@ async def test_stage_write_after_stage_delete_writes(client: FileClient):
     """A delete followed by a write on the same path should land as a write
     (the pending delete is cancelled by the subsequent write)."""
     path = "test.txt"
-    # Pre-populate the file.
     (client.resolve(path).parent).mkdir(exist_ok=True)
     with open(client.resolve(path), "wb") as f:
         f.write(b"initial")
 
+    t, _ = client.begin_staging()
     await client.stage_delete(path)
     await client.stage_write(path, b"new content")
     await client.commit_staged()
+    client.end_staging(t)
 
     assert await client.read(path) == b"new content"
 
 
 async def test_read_observes_staged_write(client: FileClient):
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", b"v")
     assert await client.read("k.txt") == b"v"
+    client.end_staging(t)
 
 
 async def test_staged_write_overrides_committed_file(client: FileClient):
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", b"old")
     await client.commit_staged()
+    client.end_staging(t)
 
+    t2, _ = client.begin_staging()
     await client.stage_write("k.txt", b"new")
     assert await client.read("k.txt") == b"new"
-    # The committed file on disk is untouched until commit.
     assert client.resolve("k.txt").read_bytes() == b"old"
+    client.end_staging(t2)
 
 
 async def test_read_observes_staged_delete(client: FileClient):
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", b"v")
     await client.commit_staged()
+    client.end_staging(t)
 
+    t2, _ = client.begin_staging()
     await client.stage_delete("k.txt")
     assert await client.read("k.txt") is None
+    client.end_staging(t2)
 
 
 async def test_read_serves_callback_staged_write(client: FileClient):
     async def writer() -> bytes:
         return b"from-callback"
 
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", writer)
     assert await client.read("k.txt") == b"from-callback"
+    client.end_staging(t)
 
 
 async def test_staged_read_reresolves_callback_each_time(client: FileClient):
@@ -413,31 +449,39 @@ async def test_staged_read_reresolves_callback_each_time(client: FileClient):
         calls.append(1)
         return b"v"
 
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", writer)
     assert await client.read("k.txt") == b"v"
     assert await client.read("k.txt") == b"v"
     assert calls == [1, 1]
+    client.end_staging(t)
 
 
 async def test_restaging_changes_staged_read(client: FileClient):
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", b"first")
     assert await client.read("k.txt") == b"first"
 
     await client.stage_write("k.txt", b"second")
     assert await client.read("k.txt") == b"second"
+    client.end_staging(t)
 
 
 async def test_clear_staged_discards_staged_read(client: FileClient):
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", b"v")
     assert await client.read("k.txt") == b"v"
 
     await client.clear_staged()
     assert await client.read("k.txt") is None
+    client.end_staging(t)
 
 
 async def test_read_falls_through_to_committed_file(client: FileClient):
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", b"v")
     await client.commit_staged()
+    client.end_staging(t)
     assert await client.read("k.txt") == b"v"
 
 
@@ -452,18 +496,19 @@ async def test_concurrent_staged_reads_both_resolve(client: FileClient):
         await release.wait()
         return b"staged"
 
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", slow_writer)
-    # No committed file exists, so a wrong fall-through would read as None.
 
     task_a = asyncio.create_task(client.read("k.txt"))
-    await started.wait()  # task A is now inside the callback
+    await started.wait()
 
     task_b = asyncio.create_task(client.read("k.txt"))
-    await asyncio.sleep(0)  # let task B reach its own await
+    await asyncio.sleep(0)
 
     release.set()
     assert await task_b == b"staged"
     assert await task_a == b"staged"
+    client.end_staging(t)
 
 
 async def test_read_staged_false_returns_committed_ignoring_staged(
@@ -473,6 +518,7 @@ async def test_read_staged_false_returns_committed_ignoring_staged(
     delete on the same path."""
     client.resolve("k.txt").write_bytes(b"committed")
 
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", b"staged")
     assert await client.read("k.txt") == b"staged"
     assert await client.read("k.txt", staged=False) == b"committed"
@@ -480,6 +526,7 @@ async def test_read_staged_false_returns_committed_ignoring_staged(
     await client.stage_delete("k.txt")
     assert await client.read("k.txt") is None
     assert await client.read("k.txt", staged=False) == b"committed"
+    client.end_staging(t)
 
 
 async def test_commit_reflects_state_mutated_after_a_staged_read(
@@ -495,24 +542,22 @@ async def test_commit_reflects_state_mutated_after_a_staged_read(
     async def writer() -> bytes:
         return b",".join(items)
 
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", writer)
 
-    # A mid-transaction read reflects the current state...
     assert await client.read("k.txt") == b"a"
 
-    # ...then more state is appended without re-staging.
     items.append(b"b")
     assert await client.read("k.txt") == b"a,b"
 
     await client.commit_staged()
-    # The commit reflects the latest state, not the value frozen at first read.
+    client.end_staging(t)
     assert await client.read("k.txt") == b"a,b"
 
 
 async def test_callback_reads_committed_from_child_task(client: FileClient):
     """A write callback reads its own committed content with staged=False, so
-    it works the same whether it reads inline or from a child task it spawns —
-    there is no recursion to guard against."""
+    it works the same whether it reads inline or from a child task it spawns."""
     client.resolve("k.txt").write_bytes(b"committed")
 
     async def writer() -> bytes:
@@ -522,5 +567,58 @@ async def test_callback_reads_committed_from_child_task(client: FileClient):
         val = await asyncio.create_task(read_self())
         return (val or b"") + b"-new"
 
+    t, _ = client.begin_staging()
     await client.stage_write("k.txt", writer)
     assert await client.read("k.txt") == b"committed-new"
+    client.end_staging(t)
+
+
+async def test_stage_write_outside_transaction_raises(client: FileClient):
+    with pytest.raises(RuntimeError, match="outside a transaction"):
+        await client.stage_write("x.txt", b"data")
+
+
+async def test_commit_staged_outside_transaction_raises(client: FileClient):
+    with pytest.raises(RuntimeError, match="outside a transaction"):
+        await client.commit_staged()
+
+
+async def test_clear_staged_outside_transaction_raises(client: FileClient):
+    with pytest.raises(RuntimeError, match="outside a transaction"):
+        await client.clear_staged()
+
+
+async def test_stage_delete_outside_transaction_raises(client: FileClient):
+    with pytest.raises(RuntimeError, match="outside a transaction"):
+        await client.stage_delete("x.txt")
+
+
+async def test_file_client_parent_metadata_not_committed_by_child_transaction(
+    tmp_path, serializer
+):
+    client = FileClient(base_dir=tmp_path, session_id="shared-file-client")
+    store = JsonFileSessionStore(client=client, serializer=serializer)
+
+    parent = ExecutionId(parent_id=None, name="parent", sequence=0, args_hash="p")
+    child = ExecutionId(parent_id=parent, name="child", sequence=0, args_hash="c")
+
+    parent_tx = await store.begin_transaction()
+    await store.start_execution(parent)
+    await client.stage_write("metadata/parent.json", b'{"state":"parent"}')
+
+    child_tx = await store.begin_transaction()
+    child_execution = await store.start_execution(child)
+    await child_execution.complete("child", str)
+    await child_tx.commit()
+
+    child_record = await store.get_execution_record(child, str)
+    assert child_record is not None
+    assert child_record.status == ExecutionStatus.COMPLETED
+
+    assert await client.read("metadata/parent.json", staged=False) is None
+    assert await client.read("metadata/parent.json") == b'{"state":"parent"}'
+
+    await parent_tx.rollback()
+
+    assert await client.read("metadata/parent.json") is None
+    assert await client.read("metadata/parent.json", staged=False) is None

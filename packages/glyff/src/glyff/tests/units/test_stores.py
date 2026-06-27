@@ -158,3 +158,54 @@ async def test_parent_staging_survives_nested_child_rollback(
     assert parent_record is not None
     assert parent_record.status == ExecutionStatus.STARTED
     assert await store.get_execution_record(child, str) is None
+
+
+async def test_out_of_order_transaction_close_raises(
+    store_factory: StoreFactory, base_execution_id: ExecutionId
+):
+    store: SessionStore = store_factory("out-of-order")
+
+    parent = await store.begin_transaction()
+    child = await store.begin_transaction()
+
+    with pytest.raises(RuntimeError, match="out of order"):
+        await parent.commit()
+
+    await child.rollback()
+    await parent.rollback()
+
+
+async def test_three_level_nested_transactions_restore_each_parent(
+    store_factory: StoreFactory,
+):
+    root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
+    child = ExecutionId(parent_id=root, name="child", sequence=0, args_hash="c")
+    grandchild = ExecutionId(parent_id=child, name="grandchild", sequence=0, args_hash="g")
+
+    store: SessionStore = store_factory("three-level-nesting")
+
+    root_tx = await store.begin_transaction()
+    await store.start_execution(root)
+
+    child_tx = await store.begin_transaction()
+    child_execution = await store.start_execution(child)
+
+    grandchild_tx = await store.begin_transaction()
+    grandchild_execution = await store.start_execution(grandchild)
+    await grandchild_execution.complete("grandchild", str)
+    await grandchild_tx.commit()
+
+    await child_execution.complete("child", str)
+    await child_tx.commit()
+
+    await root_tx.rollback()
+
+    assert await store.get_execution_record(root, str) is None
+
+    child_record = await store.get_execution_record(child, str)
+    assert child_record is not None
+    assert child_record.status == ExecutionStatus.COMPLETED
+
+    grandchild_record = await store.get_execution_record(grandchild, str)
+    assert grandchild_record is not None
+    assert grandchild_record.status == ExecutionStatus.COMPLETED

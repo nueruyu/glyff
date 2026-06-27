@@ -29,12 +29,13 @@ class _MemoryTransaction(Transaction):
         self._client = client
         self._closed = False
         self._lock = asyncio.Lock()
-        self._token = client.begin_staging()
+        self._token, self._staging = client.begin_staging()
 
     async def commit(self) -> None:
         async with self._lock:
             if self._closed:
                 return
+            self._client._require_current_staging(self._staging)
             self._closed = True
             try:
                 await self._client.commit_staged()
@@ -45,6 +46,7 @@ class _MemoryTransaction(Transaction):
         async with self._lock:
             if self._closed:
                 return
+            self._client._require_current_staging(self._staging)
             self._closed = True
             try:
                 self._client.clear_staged()

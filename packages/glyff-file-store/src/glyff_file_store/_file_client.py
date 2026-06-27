@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import shutil
@@ -25,11 +26,28 @@ class StagedOperation(NamedTuple):
     clear: ClearCallback | None
 
 
+class _FileStagingBuffer:
+    __slots__ = ("ops", "deletes")
+
+    def __init__(self) -> None:
+        self.ops: dict[str, StagedOperation] = {}
+        self.deletes: set[str] = set()
+
+    def clear(self) -> list[Coroutine[Any, Any, None]]:
+        clear_tasks = [op.clear() for op in self.ops.values() if op.clear]
+        self.ops.clear()
+        self.deletes.clear()
+        return clear_tasks
+
+
 class FileClient:
     """A file-based data store with directory-level transactional staging.
 
     Commits build a replacement session directory and swap it into place
     atomically, with startup recovery for interrupted swaps.
+
+    Staging is per-transaction via ContextVar, so nested transactions each
+    have their own isolated staging buffer.
     """
 
     def __init__(self, base_dir: str | Path, session_id: str):
@@ -38,8 +56,9 @@ class FileClient:
         self._session_path = Path(base_dir) / session_id
         self._recover_crashed_commit_sync()
         self._session_path.mkdir(parents=True, exist_ok=True)
-        self._staged_ops: dict[str, StagedOperation] = {}
-        self._staged_deletes: set[str] = set()
+        self._current: contextvars.ContextVar[_FileStagingBuffer | None] = (
+            contextvars.ContextVar("file_client_staging", default=None)
+        )
         self._lock = asyncio.Lock()
 
     def _recover_crashed_commit_sync(self) -> None:
@@ -61,20 +80,43 @@ class FileClient:
     def resolve(self, path: str | Path) -> Path:
         return self._session_path / path
 
-    async def read(self, path: str | Path, *, staged: bool = True) -> bytes | None:
-        """Read the bytes for ``path``.
+    # -- Staging context management -------------------------------------------
 
-        With ``staged=True`` (the default) the read is transaction-aware: a
-        staged write overrides the committed file and a staged delete reads
-        as ``None``. With ``staged=False`` only committed state is read.
-        """
+    def begin_staging(self) -> tuple[contextvars.Token, _FileStagingBuffer]:
+        staging = _FileStagingBuffer()
+        token = self._current.set(staging)
+        return token, staging
+
+    def end_staging(self, token: contextvars.Token) -> None:
+        try:
+            self._current.reset(token)
+        except (ValueError, LookupError):
+            pass
+
+    def _require_staging(self) -> _FileStagingBuffer:
+        staging = self._current.get()
+        if staging is None:
+            raise RuntimeError("FileClient write attempted outside a transaction.")
+        return staging
+
+    def _require_current_staging(self, expected: _FileStagingBuffer) -> None:
+        if self._current.get() is not expected:
+            raise RuntimeError("Transaction closed out of order.")
+
+    # -- Public API -----------------------------------------------------------
+
+    async def read(self, path: str | Path, *, staged: bool = True) -> bytes | None:
         rel_str = str(path)
+
         if staged:
-            if rel_str in self._staged_deletes:
-                return None
-            op = self._staged_ops.get(rel_str)
-            if op is not None:
-                return await op.write()
+            staging = self._current.get()
+            if staging is not None:
+                if rel_str in staging.deletes:
+                    return None
+                op = staging.ops.get(rel_str)
+                if op is not None:
+                    return await op.write()
+
         try:
             return await asyncio.to_thread(self.resolve(path).read_bytes)
         except FileNotFoundError:
@@ -86,12 +128,6 @@ class FileClient:
         content: Content,
         clear_callback: ClearCallback | None = None,
     ) -> None:
-        """Stage a write of ``content`` to ``path`` for the next commit.
-
-        ``content`` is either raw bytes or an async callback that produces
-        the bytes at commit time.
-        """
-
         if isinstance(content, bytes):
 
             async def bytes_writer() -> bytes:
@@ -100,54 +136,60 @@ class FileClient:
             callback = bytes_writer
         else:
             callback = content
-        op = StagedOperation(write=callback, clear=clear_callback)
 
+        op = StagedOperation(write=callback, clear=clear_callback)
         rel_str = str(path)
+        staging = self._require_staging()
+
         async with self._lock:
-            self._staged_ops[rel_str] = op
-            self._staged_deletes.discard(rel_str)
+            staging.ops[rel_str] = op
+            staging.deletes.discard(rel_str)
 
     async def stage_delete(self, path: str | Path) -> None:
         rel_str = str(path)
+        staging = self._require_staging()
+
         async with self._lock:
-            self._staged_deletes.add(rel_str)
-            cancelled = self._staged_ops.pop(rel_str, None)
+            staging.deletes.add(rel_str)
+            cancelled = staging.ops.pop(rel_str, None)
+
         if cancelled is not None and cancelled.clear is not None:
             await cancelled.clear()
 
     async def clear_staged(self) -> None:
+        staging = self._require_staging()
+
         async with self._lock:
-            clear_tasks = self._clear_staged_under_lock()
+            clear_tasks = staging.clear()
+
         if clear_tasks:
             await asyncio.gather(*clear_tasks)
 
     async def commit_staged(self) -> None:
+        staging = self._require_staging()
+
         async with self._lock:
-            if not self._staged_ops and not self._staged_deletes:
+            if not staging.ops and not staging.deletes:
                 return
 
             resolved_writes: dict[str, bytes] = {}
-            for rel_path, op in self._staged_ops.items():
+            for rel_path, op in staging.ops.items():
                 resolved_writes[rel_path] = await op.write()
 
-            staged_deletes = set(self._staged_deletes)
+            staged_deletes = set(staging.deletes)
 
             await asyncio.to_thread(
-                self._commit_to_disk_sync, resolved_writes, staged_deletes
+                self._commit_to_disk_sync,
+                resolved_writes,
+                staged_deletes,
             )
 
-            clear_tasks = self._clear_staged_under_lock()
+            clear_tasks = staging.clear()
+
         if clear_tasks:
             await asyncio.gather(*clear_tasks)
 
-    def _clear_staged_under_lock(self) -> list[Coroutine[Any, Any, None]]:
-        """Clear staged ops/deletes and return clear callbacks."""
-        clear_tasks: list[Coroutine[Any, Any, None]] = [
-            op.clear() for op in self._staged_ops.values() if op.clear
-        ]
-        self._staged_ops.clear()
-        self._staged_deletes.clear()
-        return clear_tasks
+    # -- Internal helpers -----------------------------------------------------
 
     def _commit_to_disk_sync(
         self,

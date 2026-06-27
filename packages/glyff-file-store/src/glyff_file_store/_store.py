@@ -4,10 +4,10 @@ import asyncio
 import contextvars
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Awaitable, Callable, TypedDict
+from typing import Any, TypedDict
 
 from glyff import (
     Execution,
@@ -69,27 +69,39 @@ class _FileTransaction(Transaction):
         self._store = store
         self._closed = False
         self._lock = asyncio.Lock()
-        self._token = store.begin_staging()
+        self._store_token, self._store_staging = store.begin_staging()
+        self._client_token, self._client_staging = store._client.begin_staging()
 
     async def commit(self) -> None:
         async with self._lock:
             if self._closed:
                 return
+
+            self._store._require_current_staging(self._store_staging)
+            self._store._client._require_current_staging(self._client_staging)
+
             self._closed = True
             try:
                 await self._store._commit_current()
             finally:
-                self._store.end_staging(self._token)
+                self._store._client.end_staging(self._client_token)
+                self._store.end_staging(self._store_token)
 
     async def rollback(self) -> None:
         async with self._lock:
             if self._closed:
                 return
+
+            self._store._require_current_staging(self._store_staging)
+            self._store._client._require_current_staging(self._client_staging)
+
             self._closed = True
             try:
                 await self._store._rollback_current()
+                await self._store._client.clear_staged()
             finally:
-                self._store.end_staging(self._token)
+                self._store._client.end_staging(self._client_token)
+                self._store.end_staging(self._store_token)
 
 
 class _FileExecution(Execution):
@@ -200,8 +212,14 @@ class JsonFileSessionStore(SessionStore):
             )
         return staging
 
-    def begin_staging(self) -> contextvars.Token:
-        return self._current.set(_StagingBuffer())
+    def _require_current_staging(self, expected: _StagingBuffer) -> None:
+        if self._current.get() is not expected:
+            raise RuntimeError("Transaction closed out of order.")
+
+    def begin_staging(self) -> tuple[contextvars.Token, _StagingBuffer]:
+        staging = _StagingBuffer()
+        token = self._current.set(staging)
+        return token, staging
 
     def end_staging(self, token: contextvars.Token) -> None:
         try:
