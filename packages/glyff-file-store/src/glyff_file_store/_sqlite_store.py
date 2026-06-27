@@ -5,6 +5,7 @@ import contextvars
 import json
 import sqlite3
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -32,37 +33,19 @@ _VALID_SYNCHRONOUS_VALUES = {"OFF", "NORMAL", "FULL", "EXTRA"}
 _ReadFn = Callable[[sqlite3.Connection], Any]
 
 
+@dataclass(slots=True)
 class _SQLiteStagedRow:
-    __slots__ = (
-        "execution_id",
-        "status",
-        "result_json",
-        "error",
-        "on_conflict_update",
-    )
-
-    def __init__(
-        self,
-        execution_id: ExecutionId,
-        status: ExecutionStatus,
-        result_json: str | None,
-        error: str | None,
-        *,
-        on_conflict_update: bool,
-    ) -> None:
-        self.execution_id = execution_id
-        self.status = status
-        self.result_json = result_json
-        self.error = error
-        self.on_conflict_update = on_conflict_update
+    execution_id: ExecutionId
+    status: ExecutionStatus
+    result_json: str | None
+    error: str | None
+    on_conflict_update: bool
 
 
+@dataclass(slots=True)
 class _SQLiteStagingBuffer:
-    __slots__ = ("writes", "delete_keys")
-
-    def __init__(self) -> None:
-        self.writes: dict[str, _SQLiteStagedRow] = {}
-        self.delete_keys: set[str] = set()
+    writes: dict[str, _SQLiteStagedRow] = field(default_factory=dict)
+    delete_keys: set[str] = field(default_factory=set)
 
     def clear(self) -> None:
         self.writes.clear()
