@@ -3,17 +3,26 @@ members = [
     "packages/glyff",
     "packages/glyff-file-store",
     "packages/glyff-pydantic",
+    "packages/glyff-sqlite",
 ]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
 asyncio_mode = "auto"
 
+[dependency-groups]
+dev = ["ruff>=0.11"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
 [tool.pyright]
 include = [
     "packages/glyff/src",
     "packages/glyff-pydantic/src",
     "packages/glyff-file-store/src",
+    "packages/glyff-sqlite/src",
 ]
 venvPath = "."
 venv = ".venv"

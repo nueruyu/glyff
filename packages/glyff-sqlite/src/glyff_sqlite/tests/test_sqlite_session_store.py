@@ -6,7 +6,7 @@ from glyff import ExecutionId, ExecutionStatus
 from glyff.serialization import JsonSerializer
 from glyff.store.utils import execution_id_to_path
 
-from glyff_file_store import SQLiteClient, SQLiteSessionStore
+from glyff_sqlite import SQLiteClient, SQLiteSessionStore
 
 
 def make_execution_id(

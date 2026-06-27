@@ -1,15 +1,16 @@
 # glyff-file-store
 
-File-backed `SessionStore` implementations for
+File-backed `SessionStore` implementation for
 [glyff](https://pypi.org/project/glyff/).
 
-This package provides two local backends:
+This package provides a human-readable debug backend:
 
-- `SQLiteSessionStore` is the durable backend. It stores one row per execution
-  in a SQLite database, enables WAL mode, and supports indexed lookups.
-- `JsonFileSessionStore` is a human-readable debug backend. It stores a
-  pretty-printed JSON event log, loads the whole log into memory at startup,
-  and rewrites the entire file atomically on each commit.
+- `JsonFileSessionStore` stores a pretty-printed JSON event log, loads the
+  whole log into memory at startup, and rewrites the entire file atomically on
+  each commit.
+
+For the durable production backend, see
+[`glyff-sqlite`](https://pypi.org/project/glyff-sqlite/).
 
 ## Install
 
@@ -21,25 +22,10 @@ This package depends on `glyff>=0.1.0`.
 
 ## Public API
 
-| Name                   | Description                                                    |
-| ---------------------- | -------------------------------------------------------------- |
-| `FileClient`           | Low-level file I/O for a session directory.                    |
-| `JsonFileSessionStore` | Debug `SessionStore` writing a pretty-printed JSON event log.  |
-| `SQLiteSessionStore`   | Durable `SessionStore` backed by a local SQLite database file. |
-
-## SQLite durable backend
-
-`SQLiteSessionStore` stores the current state of each execution in the
-`executions` table keyed by the stable execution path. Commits run in a SQLite
-transaction with `BEGIN IMMEDIATE`, and the connection is configured for WAL
-mode so local writes remain atomic and indexed reads stay cheap.
-
-```python
-from glyff.serialization import JsonSerializer
-from glyff_file_store import SQLiteSessionStore
-
-store = SQLiteSessionStore("executions.sqlite3", JsonSerializer())
-```
+| Name                   | Description                                                   |
+| ---------------------- | ------------------------------------------------------------- |
+| `FileClient`           | Low-level file I/O for a session directory.                   |
+| `JsonFileSessionStore` | Debug `SessionStore` writing a pretty-printed JSON event log. |
 
 ## JSON debug format
 

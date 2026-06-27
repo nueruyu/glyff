@@ -22,7 +22,11 @@ def _qualified_name(obj: Any) -> str:
 
 def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
     # Exclude fields the dataclass itself excludes from __hash__ (field(compare=False)).
-    return [f for f in dataclasses.fields(obj) if (f.hash if f.hash is not None else f.compare)]
+    return [
+        f
+        for f in dataclasses.fields(obj)
+        if (f.hash if f.hash is not None else f.compare)
+    ]
 
 
 def _sorted_for_hash(values: Any) -> list:

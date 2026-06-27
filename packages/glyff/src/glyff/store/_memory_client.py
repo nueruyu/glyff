@@ -51,9 +51,7 @@ class MemoryClient:
     def data(self) -> dict[str, Any]:
         return self._data
 
-    def _apply_ops(
-        self, initial: Any | None, ops: list[_StagedOp]
-    ) -> Any | None:
+    def _apply_ops(self, initial: Any | None, ops: list[_StagedOp]) -> Any | None:
         current = initial
         for op in ops:
             if isinstance(op, _Write):
@@ -69,9 +67,7 @@ class MemoryClient:
     def _require_staging(self) -> _StagingBuffer:
         staging = self._current.get()
         if staging is None:
-            raise RuntimeError(
-                "MemoryClient write attempted outside a transaction."
-            )
+            raise RuntimeError("MemoryClient write attempted outside a transaction.")
         return staging
 
     def begin_staging(self) -> tuple[contextvars.Token, _StagingBuffer]:
@@ -119,9 +115,7 @@ class MemoryClient:
         async with self._lock:
             buffer = self._current.get()
             if staged and buffer is not None and key in buffer.ops:
-                return self._apply_ops(
-                    self._data.get(key), buffer.ops[key]
-                )
+                return self._apply_ops(self._data.get(key), buffer.ops[key])
             return self._data.get(key)
 
     def stage_write(self, key: str, value: Any) -> None:

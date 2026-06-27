@@ -34,9 +34,9 @@ _NAME_TO_STATUS = {v: k for k, v in _STATUS_NAMES.items()}
 
 
 def _to_stored_bytes(record: dict[str, Any]) -> bytes:
-    return json.dumps(
-        record, ensure_ascii=False, sort_keys=True
-    ).encode(DEFAULT_ENCODING)
+    return json.dumps(record, ensure_ascii=False, sort_keys=True).encode(
+        DEFAULT_ENCODING
+    )
 
 
 def _from_stored_bytes(data: bytes | None) -> dict[str, Any] | None:
@@ -96,9 +96,7 @@ class _SQLiteExecution(Execution):
 
         def fn(data: bytes | None) -> bytes | None:
             if data is None:
-                raise LookupError(
-                    f"Execution at {self._key} not found"
-                )
+                raise LookupError(f"Execution at {self._key} not found")
             stored = json.loads(data.decode(DEFAULT_ENCODING))
             if stored["status"] in (
                 _STATUS_NAMES[ExecutionStatus.COMPLETED],
@@ -112,32 +110,25 @@ class _SQLiteExecution(Execution):
             stored["result_json"] = result_json
             return _to_stored_bytes(stored)
 
-        self._client.stage_update(
-            _EXECUTIONS_NAMESPACE, self._key, fn
-        )
+        self._client.stage_update(_EXECUTIONS_NAMESPACE, self._key, fn)
 
     async def fail(self, error: str) -> None:
         def fn(data: bytes | None) -> bytes | None:
             if data is None:
-                raise LookupError(
-                    f"Execution at {self._key} not found"
-                )
+                raise LookupError(f"Execution at {self._key} not found")
             stored = json.loads(data.decode(DEFAULT_ENCODING))
             if stored["status"] in (
                 _STATUS_NAMES[ExecutionStatus.COMPLETED],
                 _STATUS_NAMES[ExecutionStatus.FAILED],
             ):
                 raise ValueError(
-                    f"Cannot fail execution at {self._key}: "
-                    f"already {stored['status']}"
+                    f"Cannot fail execution at {self._key}: already {stored['status']}"
                 )
             stored["status"] = _STATUS_NAMES[ExecutionStatus.FAILED]
             stored["error"] = error
             return _to_stored_bytes(stored)
 
-        self._client.stage_update(
-            _EXECUTIONS_NAMESPACE, self._key, fn
-        )
+        self._client.stage_update(_EXECUTIONS_NAMESPACE, self._key, fn)
 
 
 class SQLiteSessionStore(SessionStore):
@@ -189,6 +180,7 @@ class SQLiteSessionStore(SessionStore):
         key = execution_id_to_path(execution_id)
         existing = await self.get_execution_record(execution_id, type(None))
         if existing is None:
+
             def fn(data: bytes | None) -> bytes | None:
                 if data is not None:
                     stored = json.loads(data.decode(DEFAULT_ENCODING))
@@ -202,9 +194,7 @@ class SQLiteSessionStore(SessionStore):
                         )
                 return _make_stored(ExecutionStatus.STARTED)
 
-            self._client.stage_update(
-                _EXECUTIONS_NAMESPACE, key, fn
-            )
+            self._client.stage_update(_EXECUTIONS_NAMESPACE, key, fn)
 
         return _SQLiteExecution(self._client, execution_id, self._serializer)
 
@@ -212,25 +202,17 @@ class SQLiteSessionStore(SessionStore):
         self, execution_id: ExecutionId, return_type: type
     ) -> ExecutionRecord | None:
         key = execution_id_to_path(execution_id)
-        data = await self._client.read(
-            _EXECUTIONS_NAMESPACE, key, staged=True
-        )
+        data = await self._client.read(_EXECUTIONS_NAMESPACE, key, staged=True)
         if data is None:
             return None
         return await _to_record(data, return_type, self._serializer)
 
-    async def get_descendants(
-        self, execution_id: ExecutionId
-    ) -> list[ExecutionId]:
+    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         prefix = execution_id_to_path(execution_id) + "/"
-        keys = await self._client.list_keys(
-            _EXECUTIONS_NAMESPACE, prefix, staged=True
-        )
+        keys = await self._client.list_keys(_EXECUTIONS_NAMESPACE, prefix, staged=True)
         return [path_to_execution_id(k) for k in keys]
 
-    async def delete_executions(
-        self, execution_ids: Iterable[ExecutionId]
-    ) -> None:
+    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
         for execution_id in execution_ids:
             key = execution_id_to_path(execution_id)
             self._client.stage_delete(_EXECUTIONS_NAMESPACE, key)

@@ -157,9 +157,7 @@ class FileClient:
                 for key, ops in staging.ops.items():
                     if not key.startswith(prefix):
                         continue
-                    final = self._apply_ops(
-                        self._read_committed_sync(key), ops
-                    )
+                    final = self._apply_ops(self._read_committed_sync(key), ops)
                     if final is None:
                         base.discard(key)
                     else:
