@@ -22,10 +22,10 @@ This package depends on `glyff>=0.1.0`.
 
 ## Public API
 
-| Name                   | Description                                                    |
-| ---------------------- | -------------------------------------------------------------- |
-| `FileClient`           | Low-level file I/O for a session directory.                    |
-| `JsonFileSessionStore` | Debug `SessionStore` writing a pretty-printed JSON event log.  |
+| Name                   | Description                                                   |
+| ---------------------- | ------------------------------------------------------------- |
+| `FileClient`           | Low-level file I/O for a session directory.                   |
+| `JsonFileSessionStore` | Debug `SessionStore` writing a pretty-printed JSON event log. |
 
 ## JSON debug format
 

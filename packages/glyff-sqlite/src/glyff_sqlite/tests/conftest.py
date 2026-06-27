@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from glyff import ArgsHasher, ExecutionId
 from glyff.serialization import JsonArgsHasher, JsonSerializer
-from glyff_sqlite import SQLiteClient, SQLiteSessionStore
+from glyff_sqlite import SQLiteSessionStore
 
 
 @pytest.fixture
