@@ -53,8 +53,6 @@ def _log_value_to_serialized_result(value: object) -> bytes:
 
 
 class _StagingBuffer:
-    """A single transaction's pending log entries and deletes."""
-
     __slots__ = ("entries", "delete_keys")
 
     def __init__(self) -> None:
@@ -71,7 +69,6 @@ class _FileTransaction(Transaction):
         self._store = store
         self._closed = False
         self._lock = asyncio.Lock()
-        # Isolate this transaction's staging from any concurrent transaction.
         self._token = store.begin_staging()
 
     async def commit(self) -> None:
@@ -137,10 +134,7 @@ class JsonFileSessionStore(SessionStore):
     """Human-readable debug SessionStore backed by a pretty-printed JSON log.
 
     The whole log is kept in memory and rewritten atomically on each commit
-    (O(n) per commit), so it suits small sessions rather than large or
-    high-throughput ones — use ``SQLiteSessionStore`` for those. Each
-    transaction stages into its own per-task buffer and commits are serialized,
-    so it is parallel-safe.
+    (O(n) per commit), so it suits small sessions.
     """
 
     def __init__(self, client: FileClient, serializer: JsonSerializer):
@@ -148,23 +142,14 @@ class JsonFileSessionStore(SessionStore):
         self._serializer = serializer
         self._lock = asyncio.Lock()
         self._executions_path = Path("executions.json")
-        # In-memory mirror of executions.json: the ordered entries plus a
-        # key -> latest-entry-index lookup rebuilt from them.
         self._log_entries: list[LogEntry] = []
         self._latest_index: dict[str, int] = {}
-        # Per-transaction staging, isolated per asyncio task (parallel gather
-        # branches each get their own). Writes require an active transaction.
         self._current: contextvars.ContextVar[_StagingBuffer | None] = (
             contextvars.ContextVar("json_store_staging", default=None)
         )
         self._load_executions()
 
-    # ------------------------------------------------------------------
-    # Id / call-stack helpers
-    # ------------------------------------------------------------------
-
     def _id_to_callstack(self, execution_id: ExecutionId) -> list[str]:
-        """Convert an ExecutionId to a call stack list (outermost → innermost)."""
         return execution_id_to_path(execution_id).split("/")
 
     def _id_to_key(self, execution_id: ExecutionId) -> str:
@@ -176,12 +161,7 @@ class JsonFileSessionStore(SessionStore):
 
     @staticmethod
     def _callstack_to_id(call_stack: list[str]) -> ExecutionId:
-        """Rebuild the full ExecutionId chain from a persisted call stack."""
         return path_to_execution_id("/".join(call_stack))
-
-    # ------------------------------------------------------------------
-    # Loading and in-memory state
-    # ------------------------------------------------------------------
 
     def _load_executions(self) -> None:
         abs_path = self._client.resolve(self._executions_path)
@@ -206,18 +186,11 @@ class JsonFileSessionStore(SessionStore):
         self._rebuild_index()
 
     def _rebuild_index(self) -> None:
-        """Rebuild ``_latest_index`` (key → index of its latest log entry)
-        from ``_log_entries``; entries with unrecognized event types are
-        ignored."""
         self._latest_index.clear()
         for i, entry in enumerate(self._log_entries):
             if entry["event_type"] in _EVENT_TYPE_TO_STATUS:
                 key = self._callstack_to_key(entry["call_stack"])
                 self._latest_index[key] = i
-
-    # ------------------------------------------------------------------
-    # Per-transaction staging and commit
-    # ------------------------------------------------------------------
 
     def _require_staging(self) -> _StagingBuffer:
         staging = self._current.get()
@@ -238,8 +211,7 @@ class JsonFileSessionStore(SessionStore):
 
     async def _add_log_entry(self, entry: LogEntry) -> None:
         staging = self._require_staging()
-        async with self._lock:
-            staging.entries.append(entry)
+        staging.entries.append(entry)
 
     async def _commit_current(self) -> None:
         staging = self._require_staging()
@@ -255,7 +227,6 @@ class JsonFileSessionStore(SessionStore):
                     if self._callstack_to_key(e["call_stack"])
                     not in staging.delete_keys
                 ]
-            # Write to disk first; advance in-memory state only on success.
             await self._write_all(self._serialize_entries(merged))
             self._log_entries = merged
             self._rebuild_index()
@@ -263,8 +234,7 @@ class JsonFileSessionStore(SessionStore):
 
     async def _rollback_current(self) -> None:
         staging = self._require_staging()
-        async with self._lock:
-            staging.clear()
+        staging.clear()
 
     @staticmethod
     def _serialize_entries(entries: list[LogEntry]) -> bytes:
@@ -273,13 +243,8 @@ class JsonFileSessionStore(SessionStore):
         ).encode(DEFAULT_ENCODING)
 
     async def _write_all(self, content: bytes) -> None:
-        """Rewrite the whole executions file atomically via the file client."""
         await self._client.stage_write(self._executions_path, content)
         await self._client.commit_staged()
-
-    # ------------------------------------------------------------------
-    # SessionStore interface
-    # ------------------------------------------------------------------
 
     async def begin_transaction(self) -> Transaction:
         return _FileTransaction(self)
@@ -324,16 +289,12 @@ class JsonFileSessionStore(SessionStore):
         return ExecutionRecord(status=status, result=result, error=error)
 
     async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        # Committed state only: the executor prunes a call after its descendants
-        # have committed in their own transactions, so no in-progress staged
-        # entry is ever a descendant here.
         prefix = self._id_to_key(execution_id) + "/"
-        async with self._lock:
-            keys: dict[str, list[str]] = {}
-            for entry in self._log_entries:
-                key = self._callstack_to_key(entry["call_stack"])
-                if key.startswith(prefix):
-                    keys.setdefault(key, entry["call_stack"])
+        keys: dict[str, list[str]] = {}
+        for entry in self._log_entries:
+            key = self._callstack_to_key(entry["call_stack"])
+            if key.startswith(prefix):
+                keys.setdefault(key, entry["call_stack"])
         return [self._callstack_to_id(call_stack) for call_stack in keys.values()]
 
     async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
@@ -341,5 +302,4 @@ class JsonFileSessionStore(SessionStore):
         if not keys:
             return
         staging = self._require_staging()
-        async with self._lock:
-            staging.delete_keys.update(keys)
+        staging.delete_keys.update(keys)

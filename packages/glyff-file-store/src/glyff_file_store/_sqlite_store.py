@@ -34,15 +34,7 @@ _WriteFn = Callable[[sqlite3.Connection], None]
 
 
 class _SQLiteTransaction(Transaction):
-    """A native SQLite transaction.
-
-    Staging is the database's own uncommitted state: each operation runs INSERT
-    / DELETE directly on this transaction's connection (inside ``BEGIN``), and
-    ``commit`` / ``rollback`` are native ``COMMIT`` / ``ROLLBACK``. Multiple
-    stagers (the store plus any external code holding this transaction) write to
-    the same connection and are committed atomically together; ``_lock``
-    serializes concurrent access to that single connection.
-    """
+    """A native SQLite transaction."""
 
     def __init__(self, store: SQLiteSessionStore, connection: sqlite3.Connection):
         self._store = store
@@ -109,19 +101,7 @@ class _SQLiteExecution(Execution):
 
 
 class SQLiteSessionStore(SessionStore):
-    """
-    A SQLite-backed SessionStore for durable local persistence.
-
-    The store keeps one row per execution id and uses native SQLite transactions
-    (no in-memory staging): ``begin_transaction`` opens a connection in ``BEGIN
-    IMMEDIATE`` and each ``start_execution`` / ``Execution.complete`` / ``fail`` /
-    ``delete_executions`` runs directly on it, becoming durable on ``commit``.
-    Multiple stores or application code sharing one transaction commit together
-    atomically.
-
-    It is the durable, parallel-safe backend; JsonFileSessionStore remains the
-    human-readable debug format.
-    """
+    """A SQLite-backed SessionStore for durable local persistence."""
 
     def __init__(
         self,
@@ -140,22 +120,11 @@ class SQLiteSessionStore(SessionStore):
         self._serializer = serializer
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
-        # Serializes write transactions within this process: only one
-        # BEGIN IMMEDIATE runs at a time, so concurrent transactions never
-        # block worker threads waiting on the SQLite write lock (which could
-        # exhaust the thread pool). Cross-process contention is handled by
-        # busy_timeout. Released by the transaction on commit/rollback.
         self._write_lock = asyncio.Lock()
-        # The transaction active in the current asyncio task, if any. Parallel
-        # gather branches run in copied contexts, so each sees its own.
         self._current_tx: contextvars.ContextVar[_SQLiteTransaction | None] = (
             contextvars.ContextVar("sqlite_current_tx", default=None)
         )
         self._initialize_database()
-
-    # ------------------------------------------------------------------
-    # Connection helpers
-    # ------------------------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
@@ -208,20 +177,10 @@ class SQLiteSessionStore(SessionStore):
         if self._write_lock.locked():
             self._write_lock.release()
 
-    # ------------------------------------------------------------------
-    # Read / write routing
-    # ------------------------------------------------------------------
-
     async def _read(self, fn: _ReadFn) -> Any:
-        """Run a read against the current transaction's connection (so it sees
-        this transaction's uncommitted writes), or a fresh connection when there
-        is no active transaction (committed state only)."""
         tx = self._current_tx.get()
         if tx is not None:
             async with tx._lock:
-                # A concurrent commit/rollback may have closed the connection
-                # while we waited on the lock; fall back to a fresh read of
-                # committed state in that case.
                 if not tx._closed:
                     return await asyncio.to_thread(fn, tx._connection)
         return await asyncio.to_thread(self._read_fresh, fn)
@@ -234,25 +193,17 @@ class SQLiteSessionStore(SessionStore):
             connection.close()
 
     async def _write(self, fn: _WriteFn) -> None:
-        """Run a write on the current transaction's connection. Writes only
-        happen inside a transaction (the executor opens one per event)."""
         tx = self._current_tx.get()
         if tx is None:
             raise RuntimeError(
                 "SQLiteSessionStore write attempted outside a transaction."
             )
         async with tx._lock:
-            # The transaction may have been committed/rolled back (and its
-            # connection closed) while we waited on the lock.
             if tx._closed:
                 raise RuntimeError(
                     "SQLiteSessionStore write attempted on a closed transaction."
                 )
             await asyncio.to_thread(fn, tx._connection)
-
-    # ------------------------------------------------------------------
-    # Id / call-stack helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _escape_like(value: str) -> str:
@@ -330,10 +281,6 @@ class SQLiteSessionStore(SessionStore):
 
         await self._write(op)
 
-    # ------------------------------------------------------------------
-    # SessionStore interface
-    # ------------------------------------------------------------------
-
     async def begin_transaction(self) -> Transaction:
         await self._write_lock.acquire()
         try:
@@ -347,8 +294,6 @@ class SQLiteSessionStore(SessionStore):
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         def op(connection: sqlite3.Connection) -> None:
-            # Insert the STARTED row only if no record exists yet, so a prior
-            # COMPLETED/FAILED/STARTED record is never clobbered on replay.
             self._write_row_sync(
                 connection,
                 execution_id,

@@ -18,7 +18,6 @@ def _make_key(path: str, part: str) -> str:
 
 
 def _key_to_path(key: str) -> str | None:
-    """Extract the path body from a full key, or None if not an execution key."""
     if not key.startswith(_KEY_PREFIX):
         return None
     body, _, _ = key[len(_KEY_PREFIX) :].rpartition("::")
@@ -30,7 +29,6 @@ class _MemoryTransaction(Transaction):
         self._client = client
         self._closed = False
         self._lock = asyncio.Lock()
-        # Isolate this transaction's staging from any concurrent transaction.
         self._token = client.begin_staging()
 
     async def commit(self) -> None:
@@ -81,11 +79,7 @@ class _MemoryExecution(Execution):
 
 
 class MemorySessionStore(SessionStore):
-    """
-    An in-memory implementation of SessionStore for testing and development.
-    This implementation is not persistent across processes.
-    It serializes values to ensure independence, mimicking persisted stores.
-    """
+    """An in-memory SessionStore for testing and development."""
 
     def __init__(self, client: MemoryClient, serializer: Serializer, **_):
         self._client = client

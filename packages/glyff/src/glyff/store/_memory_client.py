@@ -6,8 +6,6 @@ from typing import Any
 
 
 class _StagingBuffer:
-    """A single transaction's pending writes and deletes."""
-
     __slots__ = ("writes", "deletes")
 
     def __init__(self) -> None:
@@ -20,17 +18,10 @@ class _StagingBuffer:
 
 
 class MemoryClient:
-    """A low-level in-memory data store with per-transaction staging.
-
-    Each transaction stages into its own buffer, tracked per asyncio task via a
-    ``ContextVar``. Concurrent transactions (e.g. parallel ``asyncio.gather``
-    branches, which each run in a copied context) therefore stay isolated: one
-    transaction's commit or rollback never touches another's staged writes.
-    """
+    """A low-level in-memory data store with per-transaction staging."""
 
     def __init__(self):
         self._data: dict[str, Any] = {}
-        # Per-instance so two stores (two sessions) never share a staging view.
         self._current: contextvars.ContextVar[_StagingBuffer | None] = (
             contextvars.ContextVar("memory_client_staging", default=None)
         )
@@ -46,25 +37,16 @@ class MemoryClient:
             raise RuntimeError("MemoryClient write attempted outside a transaction.")
         return staging
 
-    # ------------------------------------------------------------------
-    # Transaction lifecycle (driven by the store's Transaction object)
-    # ------------------------------------------------------------------
-
     def begin_staging(self) -> contextvars.Token:
-        """Start an isolated staging buffer for the current task; returns a
-        token that ``end_staging`` uses to restore the previous buffer."""
         return self._current.set(_StagingBuffer())
 
     def end_staging(self, token: contextvars.Token) -> None:
         try:
             self._current.reset(token)
         except (ValueError, LookupError):
-            # Reset from a different context than set; nothing to restore.
             pass
 
     def all_keys(self) -> set[str]:
-        """All keys visible to the current transaction: committed keys plus
-        keys staged for writing, minus those staged for deletion."""
         buffer = self._current.get()
         if buffer is None:
             return set(self._data.keys())
@@ -82,13 +64,6 @@ class MemoryClient:
         buffer.clear()
 
     async def read(self, key: str, *, staged: bool = True) -> Any | None:
-        """Read the value for ``key``.
-
-        With ``staged=True`` (the default) the read is transaction-aware: a
-        staged write overrides the committed value, a staged delete reads as
-        ``None``, and otherwise the committed value is returned (mirroring the
-        staged view exposed by ``all_keys()``). With ``staged=False`` only the
-        committed value is returned, ignoring all staged state."""
         async with self._lock:
             buffer = self._current.get()
             if staged and buffer is not None:

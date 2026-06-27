@@ -6,7 +6,6 @@ import pytest
 
 from glyff_file_store import FileClient
 from glyff_file_store._file_client import _BACKUP_SUFFIX, _TEMP_PREFIX
-from glyff_file_store.exceptions import InvalidStagedContentError
 
 
 @pytest.fixture
@@ -134,11 +133,6 @@ async def test_stage_accepts_async_callback_as_content(client: FileClient):
     await client.commit_staged()
     assert call_count == 1
     assert await client.read(path) == b"from callback"
-
-
-async def test_stage_write_rejects_invalid_content(client: FileClient):
-    with pytest.raises(InvalidStagedContentError, match="bytes or a callable"):
-        await client.stage_write("bad.txt", "not bytes")  # type: ignore
 
 
 async def test_callback_can_implement_append_semantics(client: FileClient):
