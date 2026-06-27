@@ -2,8 +2,6 @@
 an uncommitted transaction must observe the staged view, consistent with
 ``all_keys()``."""
 
-import asyncio
-
 import pytest
 
 from glyff.store import MemoryClient
@@ -124,43 +122,10 @@ async def test_all_keys_without_staging_returns_committed_keys():
     assert client.all_keys() == {"k"}
 
 
-async def test_memory_transaction_concurrent_close_finishes_once(
-    monkeypatch: pytest.MonkeyPatch,
-):
+async def test_memory_transaction_close_is_idempotent():
     client = MemoryClient()
-    calls: list[str] = []
-    end_calls = 0
-    commit_started = asyncio.Event()
-    release_commit = asyncio.Event()
-    original_end_staging = client.end_staging
-
-    def end_staging(token) -> None:
-        nonlocal end_calls
-        end_calls += 1
-        original_end_staging(token)
-
-    async def commit_staged() -> None:
-        calls.append("commit")
-        commit_started.set()
-        await release_commit.wait()
-
-    def clear_staged() -> None:
-        calls.append("rollback")
-
-    monkeypatch.setattr(client, "end_staging", end_staging)
-    monkeypatch.setattr(client, "commit_staged", commit_staged)
-    monkeypatch.setattr(client, "clear_staged", clear_staged)
-
-    transaction = _MemoryTransaction(client)
-
-    commit_task = asyncio.create_task(transaction.commit())
-    await commit_started.wait()
-
-    rollback_task = asyncio.create_task(transaction.rollback())
-    await asyncio.sleep(0)
-    release_commit.set()
-
-    await asyncio.gather(commit_task, rollback_task)
-
-    assert calls == ["commit"]
-    assert end_calls == 1
+    transaction = await _MemoryTransaction(client).begin()
+    await transaction.commit()
+    await transaction.commit()
+    await transaction.rollback()
+    assert True

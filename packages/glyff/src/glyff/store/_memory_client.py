@@ -2,19 +2,39 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
+
+MemoryUpdate = Callable[[Any | None], Any | None]
+
+
+@dataclass(frozen=True)
+class _Write:
+    value: Any
+
+
+@dataclass(frozen=True)
+class _Delete:
+    pass
+
+
+@dataclass(frozen=True)
+class _Update:
+    fn: MemoryUpdate
+
+
+_StagedOp = _Write | _Delete | _Update
 
 
 class _StagingBuffer:
-    __slots__ = ("writes", "deletes")
+    __slots__ = ("ops",)
 
     def __init__(self) -> None:
-        self.writes: dict[str, Any] = {}
-        self.deletes: set[str] = set()
+        self.ops: dict[str, list[_StagedOp]] = {}
 
     def clear(self) -> None:
-        self.writes.clear()
-        self.deletes.clear()
+        self.ops.clear()
 
 
 class MemoryClient:
@@ -31,10 +51,27 @@ class MemoryClient:
     def data(self) -> dict[str, Any]:
         return self._data
 
+    def _apply_ops(
+        self, initial: Any | None, ops: list[_StagedOp]
+    ) -> Any | None:
+        current = initial
+        for op in ops:
+            if isinstance(op, _Write):
+                current = op.value
+            elif isinstance(op, _Delete):
+                current = None
+            elif isinstance(op, _Update):
+                current = op.fn(current)
+            else:
+                raise TypeError(f"Unknown op: {op!r}")
+        return current
+
     def _require_staging(self) -> _StagingBuffer:
         staging = self._current.get()
         if staging is None:
-            raise RuntimeError("MemoryClient write attempted outside a transaction.")
+            raise RuntimeError(
+                "MemoryClient write attempted outside a transaction."
+            )
         return staging
 
     def begin_staging(self) -> tuple[contextvars.Token, _StagingBuffer]:
@@ -43,10 +80,7 @@ class MemoryClient:
         return token, staging
 
     def end_staging(self, token: contextvars.Token) -> None:
-        try:
-            self._current.reset(token)
-        except (ValueError, LookupError):
-            pass
+        self._current.reset(token)
 
     def _require_current_staging(self, expected: _StagingBuffer) -> None:
         if self._current.get() is not expected:
@@ -56,7 +90,16 @@ class MemoryClient:
         buffer = self._current.get()
         if buffer is None:
             return set(self._data.keys())
-        return (self._data.keys() | buffer.writes.keys()) - buffer.deletes
+
+        keys = set(self._data.keys())
+        for key, ops in buffer.ops.items():
+            current = self._data.get(key)
+            result = self._apply_ops(current, ops)
+            if result is None:
+                keys.discard(key)
+            else:
+                keys.add(key)
+        return keys
 
     def clear_staged(self) -> None:
         self._require_staging().clear()
@@ -64,27 +107,31 @@ class MemoryClient:
     async def commit_staged(self) -> None:
         buffer = self._require_staging()
         async with self._lock:
-            self._data.update(buffer.writes)
-            for key in buffer.deletes:
-                self._data.pop(key, None)
+            for key, ops in buffer.ops.items():
+                result = self._apply_ops(self._data.get(key), ops)
+                if result is None:
+                    self._data.pop(key, None)
+                else:
+                    self._data[key] = result
         buffer.clear()
 
     async def read(self, key: str, *, staged: bool = True) -> Any | None:
         async with self._lock:
             buffer = self._current.get()
-            if staged and buffer is not None:
-                if key in buffer.deletes:
-                    return None
-                if key in buffer.writes:
-                    return buffer.writes[key]
+            if staged and buffer is not None and key in buffer.ops:
+                return self._apply_ops(
+                    self._data.get(key), buffer.ops[key]
+                )
             return self._data.get(key)
 
     def stage_write(self, key: str, value: Any) -> None:
         buffer = self._require_staging()
-        buffer.writes[key] = value
-        buffer.deletes.discard(key)
+        buffer.ops.setdefault(key, []).append(_Write(value))
 
     def stage_delete(self, key: str) -> None:
         buffer = self._require_staging()
-        buffer.deletes.add(key)
-        buffer.writes.pop(key, None)
+        buffer.ops.setdefault(key, []).append(_Delete())
+
+    def stage_update(self, key: str, fn: MemoryUpdate) -> None:
+        buffer = self._require_staging()
+        buffer.ops.setdefault(key, []).append(_Update(fn))

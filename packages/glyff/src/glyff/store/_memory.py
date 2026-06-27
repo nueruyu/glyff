@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from collections.abc import Iterable
 from typing import Any
 
@@ -29,28 +30,41 @@ class _MemoryTransaction(Transaction):
         self._client = client
         self._closed = False
         self._lock = asyncio.Lock()
-        self._token, self._staging = client.begin_staging()
+        self._token: contextvars.Token | None = None
+        self._staging = None
+
+    async def begin(self) -> _MemoryTransaction:
+        self._token, self._staging = self._client.begin_staging()
+        return self
 
     async def commit(self) -> None:
         async with self._lock:
             if self._closed:
                 return
+            if self._staging is None:
+                raise RuntimeError("transaction not started")
             self._client._require_current_staging(self._staging)
             self._closed = True
             try:
                 await self._client.commit_staged()
             finally:
+                if self._token is None:
+                    raise RuntimeError("transaction not started")
                 self._client.end_staging(self._token)
 
     async def rollback(self) -> None:
         async with self._lock:
             if self._closed:
                 return
+            if self._staging is None:
+                raise RuntimeError("transaction not started")
             self._client._require_current_staging(self._staging)
             self._closed = True
             try:
                 self._client.clear_staged()
             finally:
+                if self._token is None:
+                    raise RuntimeError("transaction not started")
                 self._client.end_staging(self._token)
 
 
@@ -91,7 +105,7 @@ class MemorySessionStore(SessionStore):
         return _make_key(execution_id_to_path(id), part)
 
     async def begin_transaction(self) -> Transaction:
-        return _MemoryTransaction(self._client)
+        return await _MemoryTransaction(self._client).begin()
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         status_key = self._id_to_key(execution_id, "status")

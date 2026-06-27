@@ -33,30 +33,22 @@ def make_store(tmp_path: Path) -> SQLiteSessionStore:
 async def test_sqlite_client_does_not_create_domain_tables(tmp_path):
     client = SQLiteClient(tmp_path / "session.sqlite3")
 
-    tables = await client.read(
-        lambda c: {
-            row[0]
-            for row in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
+    tables = await client.read_sql(
+        "SELECT name FROM sqlite_master WHERE type = 'table'"
     )
 
-    assert "executions" not in tables
-    assert "blobs" not in tables
+    assert set(row[0] for row in tables) == set()
 
 
-async def test_sqlite_session_store_creates_executions_table(tmp_path, serializer):
+async def test_sqlite_session_store_creates_records_table(tmp_path, serializer):
     client = SQLiteClient(tmp_path / "session.sqlite3")
     SQLiteSessionStore(client=client, serializer=serializer)
 
-    tables = await client.read(
-        lambda c: {
-            row[0]
-            for row in c.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
+    tables = await client.read_sql(
+        "SELECT name FROM sqlite_master WHERE type = 'table'"
     )
 
-    assert "executions" in tables
-    assert "blobs" not in tables
+    assert "records" in {row[0] for row in tables}
 
 
 # -- Basic store operations --------------------------------------------------
@@ -203,7 +195,9 @@ async def test_multiple_writes_in_one_transaction_commit_atomically(tmp_path: Pa
     assert b_record.result == "b"
 
 
-async def test_multiple_writes_in_one_transaction_roll_back_atomically(tmp_path: Path):
+async def test_multiple_writes_in_one_transaction_roll_back_atomically(
+    tmp_path: Path,
+):
     a = make_execution_id("a", args_hash="a")
     b = make_execution_id("b", args_hash="b")
     store = make_store(tmp_path)
@@ -251,7 +245,9 @@ async def test_sqlite_nested_child_commit_is_independent_of_parent_staging(
     assert child_record.status == ExecutionStatus.COMPLETED
 
 
-async def test_sqlite_parent_staging_survives_nested_child_rollback(tmp_path: Path):
+async def test_sqlite_parent_staging_survives_nested_child_rollback(
+    tmp_path: Path,
+):
     parent = make_execution_id("parent")
     child = make_execution_id("child", parent_id=parent)
     store = make_store(tmp_path)
@@ -287,17 +283,6 @@ async def test_sqlite_execution_and_external_metadata_commit_together(
     client = SQLiteClient(tmp_path / "session.sqlite3")
     store = SQLiteSessionStore(client=client, serializer=serializer)
 
-    client._apply_sync(
-        lambda c: c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value BLOB NOT NULL
-            )
-            """
-        )
-    )
-
     execution_id = ExecutionId(
         parent_id=None,
         name="root",
@@ -309,12 +294,7 @@ async def test_sqlite_execution_and_external_metadata_commit_together(
     execution = await store.start_execution(execution_id)
     await execution.complete("ok", str)
 
-    client.stage(
-        lambda c: c.execute(
-            "INSERT INTO metadata (key, value) VALUES (?, ?)",
-            ("root", b"metadata"),
-        )
-    )
+    client.stage_write("metadata", "root", b"external-value")
 
     await tx.commit()
 
@@ -323,14 +303,8 @@ async def test_sqlite_execution_and_external_metadata_commit_together(
     assert record.status == ExecutionStatus.COMPLETED
     assert record.result == "ok"
 
-    row = await client.read(
-        lambda c: c.execute(
-            "SELECT value FROM metadata WHERE key = ?",
-            ("root",),
-        ).fetchone()
-    )
-    assert row is not None
-    assert row[0] == b"metadata"
+    value = await client.read("metadata", "root")
+    assert value == b"external-value"
 
 
 async def test_sqlite_execution_and_external_metadata_rollback_together(
@@ -340,17 +314,6 @@ async def test_sqlite_execution_and_external_metadata_rollback_together(
     client = SQLiteClient(tmp_path / "session.sqlite3")
     store = SQLiteSessionStore(client=client, serializer=serializer)
 
-    client._apply_sync(
-        lambda c: c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value BLOB NOT NULL
-            )
-            """
-        )
-    )
-
     execution_id = ExecutionId(
         parent_id=None,
         name="root",
@@ -362,24 +325,12 @@ async def test_sqlite_execution_and_external_metadata_rollback_together(
     execution = await store.start_execution(execution_id)
     await execution.complete("ok", str)
 
-    client.stage(
-        lambda c: c.execute(
-            "INSERT INTO metadata (key, value) VALUES (?, ?)",
-            ("root", b"metadata"),
-        )
-    )
+    client.stage_write("metadata", "root", b"external-value")
 
     await tx.rollback()
 
     assert await store.get_execution_record(execution_id, str) is None
-
-    row = await client.read(
-        lambda c: c.execute(
-            "SELECT value FROM metadata WHERE key = ?",
-            ("root",),
-        ).fetchone()
-    )
-    assert row is None
+    assert await client.read("metadata", "root") is None
 
 
 async def test_sqlite_child_commit_does_not_commit_parent_metadata(
@@ -389,57 +340,31 @@ async def test_sqlite_child_commit_does_not_commit_parent_metadata(
     client = SQLiteClient(tmp_path / "session.sqlite3")
     store = SQLiteSessionStore(client=client, serializer=serializer)
 
-    client._apply_sync(
-        lambda c: c.execute(
-            """
-            CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value BLOB NOT NULL
-            )
-            """
-        )
-    )
-
     parent = ExecutionId(parent_id=None, name="parent", sequence=0, args_hash="p")
     child = ExecutionId(parent_id=parent, name="child", sequence=0, args_hash="c")
 
     parent_tx = await store.begin_transaction()
     await store.start_execution(parent)
 
-    client.stage(
-        lambda c: c.execute(
-            "INSERT INTO metadata (key, value) VALUES (?, ?)",
-            ("parent", b"parent"),
-        )
-    )
+    client.stage_write("metadata", "parent", b"parent-value")
 
     child_tx = await store.begin_transaction()
     child_execution = await store.start_execution(child)
     await child_execution.complete("child", str)
-    client.stage(
-        lambda c: c.execute(
-            "INSERT INTO metadata (key, value) VALUES (?, ?)",
-            ("child", b"child"),
-        )
-    )
+    client.stage_write("metadata", "child", b"child-value")
     await child_tx.commit()
 
     child_record = await store.get_execution_record(child, str)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 
-    def read_metadata(key: str):
-        return lambda c: c.execute(
-            "SELECT value FROM metadata WHERE key = ?", (key,)
-        ).fetchone()
-
-    assert await client.read(read_metadata("child")) is not None
-    assert await client.read(read_metadata("parent")) is None
+    assert await client.read("metadata", "child") is not None
+    assert await client.read("metadata", "parent", staged=False) is None
 
     await parent_tx.rollback()
 
-    assert await client.read(read_metadata("child")) is not None
-    assert await client.read(read_metadata("parent")) is None
+    assert await client.read("metadata", "child") is not None
+    assert await client.read("metadata", "parent", staged=False) is None
 
 
 # -- Concurrent close --------------------------------------------------------
@@ -489,9 +414,6 @@ async def test_sqlite_store_raises_on_no_path_or_client(serializer):
 async def test_sqlite_store_raises_on_no_serializer(tmp_path):
     with pytest.raises(TypeError, match="serializer"):
         SQLiteSessionStore(tmp_path / "e.sqlite3")
-
-
-# -- Out-of-order close ------------------------------------------------------
 
 
 # -- Three-level nesting -----------------------------------------------------
