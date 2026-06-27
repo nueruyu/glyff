@@ -33,18 +33,20 @@ store = SQLiteSessionStore("executions.sqlite3", JsonSerializer())
 
 ## External metadata
 
-Application code can persist its own rows alongside execution records and commit
-or roll back atomically together using ``stage_write`` / ``stage_delete``:
+The underlying ``SQLiteClient`` exposes ``stage_write`` / ``stage_delete`` /
+``stage_update`` so application code can persist its own rows alongside execution
+records and commit or roll back atomically together:
 
 ```python
-store = SQLiteSessionStore("session.sqlite3", JsonSerializer())
+client = SQLiteClient("session.sqlite3")
+store = SQLiteSessionStore(client=client, serializer=JsonSerializer())
 
 tx = await store.begin_transaction()
 execution = await store.start_execution(some_id)
 await execution.complete("ok", str)
 
-store.stage_write("metadata", "my_key", b"my_value")
-store.stage_delete("metadata", "old_key")
+client.stage_write("metadata", "my_key", b"my_value")
+client.stage_delete("metadata", "old_key")
 
 await tx.commit()   # execution record + metadata commit atomically
 ```

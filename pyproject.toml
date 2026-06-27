@@ -10,6 +10,13 @@ members = [
 addopts = ["--import-mode=importlib"]
 asyncio_mode = "auto"
 
+[dependency-groups]
+dev = ["ruff>=0.11"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
 [tool.pyright]
 include = [
     "packages/glyff/src",

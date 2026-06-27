@@ -226,7 +226,9 @@ async def test_failed_commit_leaves_no_orphan_temp_directories(
     client: FileClient, tmp_path: Path
 ):
     t, _ = client.begin_staging()
-    client.stage_update("file.txt", lambda data: (_ for _ in ()).throw(RuntimeError("nope")))
+    client.stage_update(
+        "file.txt", lambda data: (_ for _ in ()).throw(RuntimeError("nope"))
+    )
     with pytest.raises(RuntimeError):
         await client.commit_staged()
     client.end_staging(t)

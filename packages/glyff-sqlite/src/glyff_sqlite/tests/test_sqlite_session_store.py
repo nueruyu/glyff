@@ -294,7 +294,7 @@ async def test_sqlite_execution_and_external_metadata_commit_together(
     execution = await store.start_execution(execution_id)
     await execution.complete("ok", str)
 
-    store.stage_write("metadata", "root", b"external-value")
+    client.stage_write("metadata", "root", b"external-value")
 
     await tx.commit()
 
@@ -325,7 +325,7 @@ async def test_sqlite_execution_and_external_metadata_rollback_together(
     execution = await store.start_execution(execution_id)
     await execution.complete("ok", str)
 
-    store.stage_write("metadata", "root", b"external-value")
+    client.stage_write("metadata", "root", b"external-value")
 
     await tx.rollback()
 
@@ -346,12 +346,12 @@ async def test_sqlite_child_commit_does_not_commit_parent_metadata(
     parent_tx = await store.begin_transaction()
     await store.start_execution(parent)
 
-    store.stage_write("metadata", "parent", b"parent-value")
+    client.stage_write("metadata", "parent", b"parent-value")
 
     child_tx = await store.begin_transaction()
     child_execution = await store.start_execution(child)
     await child_execution.complete("child", str)
-    store.stage_write("metadata", "child", b"child-value")
+    client.stage_write("metadata", "child", b"child-value")
     await child_tx.commit()
 
     child_record = await store.get_execution_record(child, str)
@@ -454,21 +454,3 @@ async def test_sqlite_three_level_nested_transactions(tmp_path):
     grandchild_record = await store.get_execution_record(grandchild, str)
     assert grandchild_record is not None
     assert grandchild_record.status == ExecutionStatus.COMPLETED
-
-
-# -- External metadata via store.stage_delete --------------------------------
-
-
-async def test_sqlite_store_stage_delete_external_metadata(tmp_path, serializer):
-    client = SQLiteClient(tmp_path / "session.sqlite3")
-    store = SQLiteSessionStore(client=client, serializer=serializer)
-
-    tx = await store.begin_transaction()
-    store.stage_write("metadata", "to-delete", b"value")
-    await tx.commit()
-
-    tx = await store.begin_transaction()
-    store.stage_delete("metadata", "to-delete")
-    await tx.commit()
-
-    assert await client.read("metadata", "to-delete") is None

@@ -86,9 +86,7 @@ class _FileExecution(Execution):
             executions = _decode(data)
             stored = executions.get(self._key)
             if stored is None:
-                raise LookupError(
-                    f"Execution at {self._key} not found"
-                )
+                raise LookupError(f"Execution at {self._key} not found")
             if stored["status"] in ("completed", "failed"):
                 raise ValueError(
                     f"Cannot complete execution at {self._key}: "
@@ -105,13 +103,10 @@ class _FileExecution(Execution):
             executions = _decode(data)
             stored = executions.get(self._key)
             if stored is None:
-                raise LookupError(
-                    f"Execution at {self._key} not found"
-                )
+                raise LookupError(f"Execution at {self._key} not found")
             if stored["status"] in ("completed", "failed"):
                 raise ValueError(
-                    f"Cannot fail execution at {self._key}: "
-                    f"already {stored['status']}"
+                    f"Cannot fail execution at {self._key}: already {stored['status']}"
                 )
             stored["status"] = _STATUS_NAMES[ExecutionStatus.FAILED]
             stored["error"] = error
@@ -139,6 +134,7 @@ class JsonFileSessionStore(SessionStore):
         key = execution_id_to_path(execution_id)
         existing = await self.get_execution_record(execution_id, type(None))
         if existing is None:
+
             def fn(data: bytes | None) -> bytes | None:
                 executions = _decode(data)
                 if key in executions:
@@ -148,8 +144,7 @@ class JsonFileSessionStore(SessionStore):
                         _STATUS_NAMES[ExecutionStatus.FAILED],
                     ):
                         raise ValueError(
-                            f"Cannot start execution {execution_id}: "
-                            f"already {status}"
+                            f"Cannot start execution {execution_id}: already {status}"
                         )
                 executions[key] = {
                     "status": _STATUS_NAMES[ExecutionStatus.STARTED],
@@ -175,9 +170,7 @@ class JsonFileSessionStore(SessionStore):
             return None
         return await _to_record(stored, return_type, self._serializer)
 
-    async def get_descendants(
-        self, execution_id: ExecutionId
-    ) -> list[ExecutionId]:
+    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
         prefix = execution_id_to_path(execution_id) + "/"
         raw = await self._client.read(_EXECUTIONS_FILE, staged=True)
         if raw is None:
@@ -189,9 +182,7 @@ class JsonFileSessionStore(SessionStore):
                 result.append(path_to_execution_id(key))
         return result
 
-    async def delete_executions(
-        self, execution_ids: Iterable[ExecutionId]
-    ) -> None:
+    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
         keys = {execution_id_to_path(eid) for eid in execution_ids}
         if not keys:
             return

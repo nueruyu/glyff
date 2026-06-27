@@ -180,7 +180,9 @@ async def test_three_level_nested_transactions_restore_each_parent(
 ):
     root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
     child = ExecutionId(parent_id=root, name="child", sequence=0, args_hash="c")
-    grandchild = ExecutionId(parent_id=child, name="grandchild", sequence=0, args_hash="g")
+    grandchild = ExecutionId(
+        parent_id=child, name="grandchild", sequence=0, args_hash="g"
+    )
 
     store: SessionStore = store_factory("three-level-nesting")
 
