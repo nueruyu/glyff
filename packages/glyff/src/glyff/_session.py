@@ -34,9 +34,13 @@ class Session:
             raise TypeError("serializer is required")
         if hasher is None:
             raise TypeError("hasher is required")
+        if transactions is None:
+            if not isinstance(executions, TransactionProvider):
+                raise TypeError("transactions is required")
+            transactions = executions
         self._id = id
         self._executions = executions
-        self._transactions = transactions or executions
+        self._transactions = transactions
         self._hasher = hasher
         self._serializer = serializer
         self._event_emitter = event_emitter or EventEmitter([])

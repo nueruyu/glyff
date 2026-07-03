@@ -1,5 +1,5 @@
 from typing import Callable
 
-from glyff import ExecutionRepository
+from glyff import SessionStore
 
-StoreFactory = Callable[[str], ExecutionRepository]
+StoreFactory = Callable[[str], SessionStore]
