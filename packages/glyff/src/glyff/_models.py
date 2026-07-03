@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -31,11 +30,14 @@ class ExecutionId:
 
 
 class ExecutionStatus(Enum):
-    """Represents the lifecycle state of a task execution."""
+    """Represents the lifecycle state of a task execution.
+
+    There is no failed state: an exception persists nothing, so an interrupted
+    call stays ``STARTED`` and is retried on resume.
+    """
 
     STARTED = auto()
     COMPLETED = auto()
-    FAILED = auto()
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,6 @@ class Execution:
     id: ExecutionId
     status: ExecutionStatus
     result: SerializedValue | None = None
-    error: str | None = None
     metadata: dict[str, Metadata] = field(default_factory=dict)
 
     @classmethod
@@ -68,34 +69,13 @@ class Execution:
         return cls(id=execution_id, status=ExecutionStatus.STARTED)
 
     def complete(self, result: SerializedValue) -> None:
-        if self.status in {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED}:
-            raise ValueError(
-                f"Cannot complete execution {self.id}: "
-                f"already {self.status.name.lower()}"
-            )
+        if self.status is ExecutionStatus.COMPLETED:
+            raise ValueError(f"Cannot complete execution {self.id}: already completed")
         self.status = ExecutionStatus.COMPLETED
         self.result = result
-        self.error = None
-
-    def fail(self, error: str) -> None:
-        if self.status in {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED}:
-            raise ValueError(
-                f"Cannot fail execution {self.id}: already {self.status.name.lower()}"
-            )
-        self.status = ExecutionStatus.FAILED
-        self.error = error
 
     def set_metadata(self, key: str, value: SerializedValue) -> None:
         self.metadata[key] = Metadata(key=key, value=value)
 
     def get_metadata(self, key: str) -> Metadata | None:
         return self.metadata.get(key)
-
-
-@dataclass(frozen=True)
-class ExecutionRecord:
-    """Read DTO returned to application/runtime callers."""
-
-    status: ExecutionStatus
-    result: Any | None = None
-    error: str | None = None

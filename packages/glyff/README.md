@@ -19,8 +19,9 @@ pip install glyff
   function identity, arguments, and call position.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
-- Exceptions raised by a call are recorded as `FAILED`; completed descendant
-  work remains committed, and the original exception propagates.
+- An exception persists nothing: the interrupted call stays `STARTED` (retried
+  on resume), completed descendant work remains committed, and the original
+  exception propagates.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 
@@ -32,8 +33,7 @@ pip install glyff
 | `Session`             | Async context manager that scopes a sequence of engraved calls. |
 | `ExecutionId`         | Identifier for a recorded function execution.                   |
 | `Execution`           | Aggregate Root for a recorded function execution.               |
-| `ExecutionRecord`     | Read DTO for execution state and result.                        |
-| `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`, `FAILED`.                         |
+| `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`.                                   |
 | `SerializedValue`     | Serializer-neutral persisted value.                             |
 | `Metadata`            | Metadata entry owned by an `Execution`.                         |
 | `ExecutionRepository` | Repository for execution aggregates.                            |

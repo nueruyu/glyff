@@ -224,7 +224,7 @@ async def test_completed_task_is_skipped(
     assert not mock_backend.get_calls("commit")
 
 
-async def test_failed_record_is_retryable(
+async def test_started_record_is_retryable(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
@@ -232,9 +232,10 @@ async def test_failed_record_is_retryable(
     async def sample_func():
         return "recovered"
 
+    # A leftover STARTED record (an interrupted prior attempt) does not block
+    # re-execution.
     path = execution_id_to_path(base_execution_id)
-    mock_backend._client.data[_make_key(path, "status")] = ExecutionStatus.FAILED
-    mock_backend._client.data[_make_key(path, "error")] = "it broke"
+    mock_backend._client.data[_make_key(path, "status")] = ExecutionStatus.STARTED
 
     result = await execute(
         ctx=test_context,
@@ -248,7 +249,7 @@ async def test_failed_record_is_retryable(
     assert result == "recovered"
 
 
-async def test_general_exception_marks_execution_failed(
+async def test_general_exception_persists_nothing(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
@@ -267,12 +268,13 @@ async def test_general_exception_marks_execution_failed(
         )
 
     assert not test_context.tracer.call_stack
+    # Nothing is persisted on exception: the record stays STARTED (retried on
+    # resume), the body scope rolled back, and no failure is written.
     record = await mock_backend.executions.get(base_execution_id)
     assert record is not None
-    assert record.status == ExecutionStatus.FAILED
-    assert record.error == "oops"
-    assert len(mock_backend.get_calls("commit")) == 2
-    assert not mock_backend.get_calls("rollback")
+    assert record.status == ExecutionStatus.STARTED
+    assert len(mock_backend.get_calls("commit")) == 1
+    assert len(mock_backend.get_calls("rollback")) == 1
 
 
 async def test_original_traceback_is_preserved_on_function_exception(
@@ -324,22 +326,22 @@ async def test_start_is_committed_before_function_body_runs(
     assert result == "hello"
 
 
-async def test_function_exception_commits_body_scope_writes(
+async def test_function_exception_rolls_back_body_scope_writes(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
     serializer: Serializer,
 ):
-    metadata_id = ExecutionId(
+    scratch_id = ExecutionId(
         parent_id=base_execution_id,
-        name="metadata",
+        name="scratch",
         sequence=0,
         args_hash="state",
     )
 
     async def sample_func():
         assert test_context.current_execution_id == base_execution_id
-        execution = Execution.start(metadata_id)
+        execution = Execution.start(scratch_id)
         execution.complete(SerializedValue(await serializer.serialize("saved", str)))
         await test_context.executions.save(execution)
         raise ValueError("oops")
@@ -354,13 +356,12 @@ async def test_function_exception_commits_body_scope_writes(
             return_type=str,
         )
 
-    record = await mock_backend.executions.get(metadata_id)
-    assert record is not None
-    assert record.status == ExecutionStatus.COMPLETED
-    assert await _result(mock_backend, serializer, metadata_id, str) == "saved"
+    # Writes made directly in the failing body scope are rolled back — nothing
+    # is persisted on exception.
+    assert await mock_backend.executions.get(scratch_id) is None
 
 
-async def test_failure_event_handlers_run_inside_transaction(
+async def test_failure_handler_can_clean_up_in_its_own_transaction(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     nested_execution_id: ExecutionId,
@@ -369,10 +370,13 @@ async def test_failure_event_handlers_run_inside_transaction(
 ):
     seen_exceptions: list[Exception] = []
 
+    # ExecutionFailed is emitted after the body scope rolled back (no open
+    # transaction), so a handler that wants to persist opens its own.
     class CleanupOnFailure(EventHandler[ExecutionFailed]):
         async def handle(self, event: ExecutionFailed) -> None:
             seen_exceptions.append(event.exception)
-            await event.context.executions.delete_many([nested_execution_id])
+            async with event.context.get_transaction_scope():
+                await event.context.executions.delete_many([nested_execution_id])
 
     ctx = Context(
         session_id="failure-handler-tx",
@@ -416,7 +420,7 @@ async def test_failure_event_handlers_run_inside_transaction(
     assert await mock_backend.executions.get(nested_execution_id) is None
     record = await mock_backend.executions.get(base_execution_id)
     assert record is not None
-    assert record.status == ExecutionStatus.FAILED
+    assert record.status == ExecutionStatus.STARTED
 
 
 async def test_execution_save_failure_rolls_back_complete_transaction(

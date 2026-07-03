@@ -14,15 +14,6 @@ class GlyffError(GlyffException):
     pass
 
 
-class ExecutionFailedError(GlyffError):
-    """
-    Raised when attempting to execute a task that has previously failed
-    and its failure state is engraved.
-    """
-
-    pass
-
-
 class TypeHintResolutionError(GlyffError):
     """
     Raised when type hints for an engraved function cannot be resolved.

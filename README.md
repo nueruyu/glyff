@@ -75,8 +75,9 @@ the provided answer instead of pausing again.
   function identity, arguments, and call position.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
-- Exceptions raised by a call are recorded as `FAILED`; completed descendant
-  work remains committed, and the original exception propagates.
+- An exception persists nothing: the interrupted call stays `STARTED` (retried
+  on resume), completed descendant work remains committed, and the original
+  exception propagates.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 

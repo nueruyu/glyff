@@ -19,10 +19,12 @@ async def execute(
 
     START, the function body, and COMPLETE each use separate transaction
     scopes, so a completed descendant can commit while an ancestor body is
-    still running. ExecutionCompleted is emitted *after* the COMPLETE scope
-    commits, so completion is durable before any handler runs and a handler
-    (e.g. pruning/GC) must open its own transaction — its failure cannot roll
-    back the completion.
+    still running. An exception persists nothing: the body scope rolls back and
+    the record stays ``STARTED`` (retried on resume); ``ExecutionFailed`` is a
+    notification only. ``ExecutionCompleted`` is emitted *after* the COMPLETE
+    scope commits, so completion is durable before any handler runs and a
+    handler (e.g. pruning/GC) must open its own transaction — its failure cannot
+    roll back the completion.
     """
     executions = ctx.executions
     serializer = ctx.serializer
@@ -39,31 +41,21 @@ async def execute(
 
     async with ctx.get_transaction_scope():
         await sequencer.reset_for_call(execution_id)
-        execution = await executions.get(execution_id)
-        if execution is None or execution.status == ExecutionStatus.FAILED:
-            execution = Execution.start(execution_id)
-            await executions.save(execution)
+        if await executions.get(execution_id) is None:
+            await executions.save(Execution.start(execution_id))
 
     tracer.start(execution_id)
     try:
-        async with ctx.get_transaction_scope() as scope:
-            try:
+        try:
+            async with ctx.get_transaction_scope():
                 result = await func(*args, **kwargs)
-            except Exception as e:
-                execution = await executions.get(execution_id)
-                if execution is None:
-                    execution = Execution.start(execution_id)
-                execution.fail(str(e))
-                await executions.save(execution)
-                await ctx.event_emitter.emit(
-                    ExecutionFailed(
-                        context=ctx,
-                        execution_id=execution_id,
-                        exception=e,
-                    )
-                )
-                await scope.commit()
-                raise
+        except Exception as e:
+            # Never persist on exception: the body scope has rolled back and the
+            # record stays STARTED (retried on resume). Only notify.
+            await ctx.event_emitter.emit(
+                ExecutionFailed(context=ctx, execution_id=execution_id, exception=e)
+            )
+            raise
 
         async with ctx.get_transaction_scope():
             execution = await executions.get(execution_id)

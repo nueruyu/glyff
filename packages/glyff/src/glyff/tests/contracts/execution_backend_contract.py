@@ -77,7 +77,6 @@ class ExecutionBackendContract:
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
         assert loaded.result is None
-        assert loaded.error is None
         assert loaded.metadata == {}
 
     async def test_save_completed_result_then_get(
@@ -94,21 +93,6 @@ class ExecutionBackendContract:
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == value(b"result-bytes")
-        assert loaded.error is None
-
-    async def test_save_failed_error_then_get(self, backend_factory: BackendFactory):
-        backend = backend_factory("failed")
-        execution_id = eid("task")
-        execution = Execution.start(execution_id)
-        execution.fail("boom")
-
-        await save_execution(backend, execution)
-
-        loaded = await backend.executions.get(execution_id)
-        assert loaded is not None
-        assert loaded.status is ExecutionStatus.FAILED
-        assert loaded.error == "boom"
-        assert loaded.result is None
 
     async def test_save_preserves_metadata_inside_execution(
         self, backend_factory: BackendFactory

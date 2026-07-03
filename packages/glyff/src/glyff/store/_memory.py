@@ -10,7 +10,7 @@ from ._memory_client import MemoryClient
 from .utils import execution_id_to_path, path_to_execution_id
 
 _KEY_PREFIX = "execution::"
-_PARTS = ("status", "result", "error", "metadata")
+_PARTS = ("status", "result", "metadata")
 
 
 def _make_key(path: str, part: str) -> str:
@@ -84,7 +84,6 @@ class MemoryExecutionRepository(ExecutionRepository):
             return None
 
         result_data = await self._client.read(self._id_to_key(execution_id, "result"))
-        error = await self._client.read(self._id_to_key(execution_id, "error"))
         raw_metadata = await self._client.read(
             self._id_to_key(execution_id, "metadata")
         )
@@ -101,7 +100,6 @@ class MemoryExecutionRepository(ExecutionRepository):
             result=SerializedValue(result_data)
             if isinstance(result_data, bytes)
             else None,
-            error=error if isinstance(error, str) else None,
             metadata=metadata,
         )
 
@@ -118,14 +116,6 @@ class MemoryExecutionRepository(ExecutionRepository):
             )
         else:
             self._client.stage_delete(self._id_to_key(execution.id, "result"))
-
-        if execution.error is not None:
-            self._client.stage_write(
-                self._id_to_key(execution.id, "error"),
-                execution.error,
-            )
-        else:
-            self._client.stage_delete(self._id_to_key(execution.id, "error"))
 
         if execution.metadata:
             self._client.stage_write(

@@ -11,7 +11,6 @@ from ._interfaces import (
 from ._models import (
     Execution,
     ExecutionId,
-    ExecutionRecord,
     ExecutionStatus,
     Metadata,
     SerializedValue,
@@ -32,7 +31,6 @@ __all__ = [
     "ExecutionRepository",
     "Execution",
     "ExecutionId",
-    "ExecutionRecord",
     "ExecutionStatus",
     "Metadata",
     "SerializedValue",
