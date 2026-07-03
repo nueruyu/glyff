@@ -1,13 +1,14 @@
 import inspect
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from typing import Any, Callable
 
-from ._models import ExecutionId, ExecutionRecord
+from ._models import Execution, ExecutionId
 
 
 class Transaction(ABC):
     """
-    A transaction context for a SessionStore.
+    A transaction context for a TransactionProvider.
     Actual commit/rollback logic is delegated to this object.
     """
 
@@ -22,19 +23,32 @@ class Transaction(ABC):
         ...
 
 
-class Execution(ABC):
-    """
-    Represents a single task execution, handling its outcome.
-    """
+class TransactionProvider(ABC):
+    """Provides transactions for TransactionScope."""
 
     @abstractmethod
-    async def complete(self, value: Any, return_type: type) -> None:
-        """Marks the task as successfully completed with a result."""
+    async def begin_transaction(self) -> Transaction:
+        """Begins a transaction and returns a transaction object."""
+        ...
+
+
+class ExecutionRepository(ABC):
+    """DDD Repository for Execution aggregates."""
+
+    @abstractmethod
+    async def get(self, execution_id: ExecutionId) -> Execution | None:
         ...
 
     @abstractmethod
-    async def fail(self, error: str) -> None:
-        """Marks the task as failed with an error message."""
+    async def save(self, execution: Execution) -> None:
+        ...
+
+    @abstractmethod
+    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
+        ...
+
+    @abstractmethod
+    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
         ...
 
 
@@ -63,52 +77,8 @@ class ArgsHasher(ABC):
         ...
 
 
-class SessionStore(ABC):
+class SessionStore(ExecutionRepository, TransactionProvider, ABC):
+    """Deprecated compatibility alias.
+
+    Use ExecutionRepository + TransactionScope instead.
     """
-    Protocol for a store that persists the state and results of task calls.
-    """
-
-    @abstractmethod
-    async def begin_transaction(self) -> Transaction:
-        """Begins a transaction and returns a transaction object."""
-        ...
-
-    @abstractmethod
-    async def start_execution(self, execution_id: ExecutionId) -> Execution:
-        """
-        Records that a task has started and returns an execution object
-        to manage its outcome.
-        """
-        ...
-
-    @abstractmethod
-    async def get_execution_record(
-        self, execution_id: ExecutionId, return_type: type
-    ) -> ExecutionRecord | None:
-        """
-        Gets the persisted state of a task.
-        The result, if any, is deserialized to the given type.
-        """
-        ...
-
-    @abstractmethod
-    async def set_metadata(
-        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
-    ) -> None:
-        """
-        Set a per-execution metadata entry: a keyed map on the execution
-        record, serialized with the store's serializer and staged into the
-        current transaction. Overwrites the key if present; leaves other keys
-        and the execution's status/result untouched.
-        """
-        ...
-
-    @abstractmethod
-    async def get_metadata(
-        self, execution_id: ExecutionId, key: str, return_type: type
-    ) -> Any | None:
-        """
-        Gets a per-execution metadata entry, deserialized to ``return_type``,
-        or ``None`` if the execution or key does not exist.
-        """
-        ...

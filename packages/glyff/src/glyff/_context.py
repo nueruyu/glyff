@@ -5,8 +5,14 @@ from collections.abc import Iterator, Sequence
 from typing import Any, overload
 
 from ._event_system import EventEmitter
-from ._interfaces import ArgsHasher, SessionStore, Transaction
-from ._models import ExecutionId
+from ._interfaces import (
+    ArgsHasher,
+    ExecutionRepository,
+    Serializer,
+    Transaction,
+    TransactionProvider,
+)
+from ._models import ExecutionId, SerializedValue
 from ._sequencer import Sequencer
 from .exceptions import ContextNotSetError, NoCurrentExecutionError
 
@@ -17,13 +23,17 @@ class Context:
     def __init__(
         self,
         session_id: str,
-        store: SessionStore,
+        executions: ExecutionRepository,
+        transactions: TransactionProvider,
+        serializer: Serializer,
         sequencer: Sequencer,
         hasher: ArgsHasher,
         event_emitter: EventEmitter,
     ) -> None:
         self._session_id = session_id
-        self._store = store
+        self._executions = executions
+        self._transactions = transactions
+        self._serializer = serializer
         self._sequencer = sequencer
         self._hasher = hasher
         self._event_emitter = event_emitter
@@ -34,8 +44,16 @@ class Context:
         return self._session_id
 
     @property
-    def store(self) -> SessionStore:
-        return self._store
+    def executions(self) -> ExecutionRepository:
+        return self._executions
+
+    @property
+    def serializer(self) -> Serializer:
+        return self._serializer
+
+    @property
+    def store(self) -> ExecutionRepository:
+        return self._executions
 
     @property
     def sequencer(self) -> Sequencer:
@@ -68,7 +86,7 @@ class Context:
         and COMPLETE so each durable boundary can commit or roll back on its
         own.
         """
-        return TransactionScope(self._store)
+        return TransactionScope(self._transactions)
 
     async def set_metadata(
         self, key: str, value: Any, value_type: type | None = None
@@ -83,12 +101,16 @@ class Context:
                 "set_metadata requires an active execution; call it from within "
                 "an engraved function."
             )
-        await self._store.set_metadata(
-            execution_id,
-            key,
+        execution = await self._executions.get(execution_id)
+        if execution is None:
+            raise LookupError(f"Execution {execution_id} not found")
+
+        serialized = await self._serializer.serialize(
             value,
             type(value) if value_type is None else value_type,
         )
+        execution.set_metadata(key, SerializedValue(serialized))
+        await self._executions.save(execution)
 
     async def get_metadata(
         self,
@@ -107,7 +129,15 @@ class Context:
             raise NoCurrentExecutionError(
                 "get_metadata requires an active execution or an explicit execution_id."
             )
-        return await self._store.get_metadata(target, key, return_type)
+        execution = await self._executions.get(target)
+        if execution is None:
+            return None
+
+        metadata = execution.get_metadata(key)
+        if metadata is None:
+            return None
+
+        return await self._serializer.deserialize(metadata.value.data, return_type)
 
 
 class CallStack(Sequence[ExecutionId]):
@@ -175,17 +205,17 @@ class ExecutionTracer:
 
 
 class TransactionScope:
-    """A single-use transaction scope around a SessionStore."""
+    """A single-use transaction scope around a TransactionProvider."""
 
-    def __init__(self, store: SessionStore):
-        self._store = store
+    def __init__(self, transactions: TransactionProvider):
+        self._transactions = transactions
         self._transaction: Transaction | None = None
         self._closed = False
 
     async def __aenter__(self) -> "TransactionScope":
         if self._closed or self._transaction is not None:
             raise RuntimeError("TransactionScope cannot be re-entered.")
-        self._transaction = await self._store.begin_transaction()
+        self._transaction = await self._transactions.begin_transaction()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:

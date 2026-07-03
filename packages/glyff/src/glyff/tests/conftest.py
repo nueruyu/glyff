@@ -61,7 +61,9 @@ def mock_store(serializer: Serializer) -> StubSessionStore:
 def test_context(mock_store: StubSessionStore, hasher: ArgsHasher) -> Context:
     return Context(
         session_id=str(uuid.uuid4()),
-        store=mock_store,
+        executions=mock_store,
+        transactions=mock_store,
+        serializer=mock_store.serializer,
         sequencer=Sequencer(),
         hasher=hasher,
         event_emitter=EventEmitter([]),

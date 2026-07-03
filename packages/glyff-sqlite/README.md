@@ -1,6 +1,6 @@
 # glyff-sqlite
 
-SQLite-backed durable `SessionStore` implementation for
+SQLite-backed durable `ExecutionRepository` implementation for
 [glyff](https://pypi.org/project/glyff/).
 
 This is the **production** backend: one row per execution in a SQLite database,
@@ -18,17 +18,16 @@ This package depends on `glyff>=0.1.0` (no additional runtime dependencies —
 ## Usage
 
 ```python
-from glyff.serialization import JsonSerializer
 from glyff_sqlite import SQLiteSessionStore
 
-store = SQLiteSessionStore("executions.sqlite3", JsonSerializer())
+store = SQLiteSessionStore("executions.sqlite3")
 ```
 
 ## Public API
 
 | Name                 | Description                                                   |
 | -------------------- | ------------------------------------------------------------- |
-| `SQLiteSessionStore` | Durable `SessionStore` backed by a local SQLite database.     |
+| `SQLiteSessionStore` | Durable `ExecutionRepository` backed by local SQLite.        |
 
 The underlying `SQLiteClient` is internal and not part of the public API.
 

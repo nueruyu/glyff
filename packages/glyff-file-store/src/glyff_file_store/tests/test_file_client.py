@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import pytest
-from glyff import ExecutionId, ExecutionStatus
+from glyff import Execution, ExecutionId, ExecutionStatus, SerializedValue
 
 from glyff_file_store import JsonFileSessionStore
 from glyff_file_store._file_client import FileClient
@@ -551,7 +551,7 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     child = ExecutionId(parent_id=parent, name="child", sequence=0, args_hash="c")
 
     parent_tx = await store.begin_transaction()
-    await store.start_execution(parent)
+    await store.save(Execution.start(parent))
 
     def parent_meta(data: bytes | None) -> bytes | None:
         return b'{"state":"parent"}'
@@ -559,11 +559,12 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     client.stage_update("metadata/parent.json", parent_meta)
 
     child_tx = await store.begin_transaction()
-    child_execution = await store.start_execution(child)
-    await child_execution.complete("child", str)
+    child_execution = Execution.start(child)
+    child_execution.complete(SerializedValue(await serializer.serialize("child", str)))
+    await store.save(child_execution)
     await child_tx.commit()
 
-    child_record = await store.get_execution_record(child, str)
+    child_record = await store.get(child)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 

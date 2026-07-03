@@ -1,9 +1,16 @@
-"""Per-execution metadata: typed, keyed, co-transactional, and scoped to the
-execution's lifetime (deleted with it, preserved across complete/fail)."""
+"""Per-execution metadata is owned by the Execution aggregate."""
 
 import pytest
 
-from glyff import ArgsHasher, ExecutionId, Session, engrave, get_context
+from glyff import (
+    ArgsHasher,
+    Execution,
+    ExecutionId,
+    SerializedValue,
+    Session,
+    engrave,
+    get_context,
+)
 from glyff.exceptions import NoCurrentExecutionError
 from glyff.store import MemorySessionStore
 from glyff.store._memory_client import MemoryClient
@@ -20,11 +27,29 @@ def _eid(name: str, parent: ExecutionId | None = None) -> ExecutionId:
 
 async def _start(store: MemorySessionStore, eid: ExecutionId) -> None:
     tx = await store.begin_transaction()
-    await store.start_execution(eid)
+    await store.save(Execution.start(eid))
     await tx.commit()
 
 
-# -- Repository mechanism ----------------------------------------------------
+async def _set_metadata(store, serializer, eid, key, value, value_type) -> None:
+    execution = await store.get(eid)
+    if execution is None:
+        raise LookupError(f"Execution {eid} not found")
+    execution.set_metadata(
+        key,
+        SerializedValue(await serializer.serialize(value, value_type)),
+    )
+    await store.save(execution)
+
+
+async def _get_metadata(store, serializer, eid, key, return_type):
+    execution = await store.get(eid)
+    if execution is None:
+        return None
+    metadata = execution.get_metadata(key)
+    if metadata is None:
+        return None
+    return await serializer.deserialize(metadata.value.data, return_type)
 
 
 async def test_set_get_roundtrip(serializer):
@@ -33,11 +58,11 @@ async def test_set_get_roundtrip(serializer):
     await _start(store, eid)
 
     tx = await store.begin_transaction()
-    await store.set_metadata(eid, "note", {"a": 1}, dict)
+    await _set_metadata(store, serializer, eid, "note", {"a": 1}, dict)
     await tx.commit()
 
-    assert await store.get_metadata(eid, "note", dict) == {"a": 1}
-    assert await store.get_metadata(eid, "missing", dict) is None
+    assert await _get_metadata(store, serializer, eid, "note", dict) == {"a": 1}
+    assert await _get_metadata(store, serializer, eid, "missing", dict) is None
 
 
 async def test_keyed_entries_are_independent(serializer):
@@ -46,17 +71,16 @@ async def test_keyed_entries_are_independent(serializer):
     await _start(store, eid)
 
     tx = await store.begin_transaction()
-    await store.set_metadata(eid, "a", "one", str)
-    await store.set_metadata(eid, "b", "two", str)
+    await _set_metadata(store, serializer, eid, "a", "one", str)
+    await _set_metadata(store, serializer, eid, "b", "two", str)
     await tx.commit()
 
-    # Overwrite one key; the other survives.
     tx = await store.begin_transaction()
-    await store.set_metadata(eid, "a", "ONE", str)
+    await _set_metadata(store, serializer, eid, "a", "ONE", str)
     await tx.commit()
 
-    assert await store.get_metadata(eid, "a", str) == "ONE"
-    assert await store.get_metadata(eid, "b", str) == "two"
+    assert await _get_metadata(store, serializer, eid, "a", str) == "ONE"
+    assert await _get_metadata(store, serializer, eid, "b", str) == "two"
 
 
 async def test_metadata_is_co_transactional(serializer):
@@ -65,10 +89,10 @@ async def test_metadata_is_co_transactional(serializer):
     await _start(store, eid)
 
     tx = await store.begin_transaction()
-    await store.set_metadata(eid, "note", "staged", str)
+    await _set_metadata(store, serializer, eid, "note", "staged", str)
     await tx.rollback()
 
-    assert await store.get_metadata(eid, "note", str) is None
+    assert await _get_metadata(store, serializer, eid, "note", str) is None
 
 
 async def test_complete_preserves_metadata(serializer):
@@ -76,65 +100,48 @@ async def test_complete_preserves_metadata(serializer):
     eid = _eid("root")
 
     tx = await store.begin_transaction()
-    execution = await store.start_execution(eid)
-    await store.set_metadata(eid, "note", "kept", str)
-    await execution.complete("result", str)
+    execution = Execution.start(eid)
+    execution.set_metadata("note", SerializedValue(await serializer.serialize("kept", str)))
+    execution.complete(SerializedValue(await serializer.serialize("result", str)))
+    await store.save(execution)
     await tx.commit()
 
-    record = await store.get_execution_record(eid, str)
-    assert record is not None and record.result == "result"
-    assert await store.get_metadata(eid, "note", str) == "kept"
+    record = await store.get(eid)
+    assert record is not None and record.result is not None
+    assert await serializer.deserialize(record.result.data, str) == "result"
+    assert await _get_metadata(store, serializer, eid, "note", str) == "kept"
 
 
-async def test_delete_executions_removes_metadata(serializer):
+async def test_delete_many_removes_metadata(serializer):
     store = _store(serializer)
     eid = _eid("root")
     await _start(store, eid)
     tx = await store.begin_transaction()
-    await store.set_metadata(eid, "note", "gone", str)
+    await _set_metadata(store, serializer, eid, "note", "gone", str)
     await tx.commit()
 
     tx = await store.begin_transaction()
-    await store.repository.delete_executions([eid])
+    await store.delete_many([eid])
     await tx.commit()
 
-    assert await store.get_metadata(eid, "note", str) is None
+    assert await _get_metadata(store, serializer, eid, "note", str) is None
 
 
 async def test_set_metadata_unknown_execution_raises(serializer):
-    # Contract parity with the file/sqlite backends: no orphan metadata.
     store = _store(serializer)
+    tx = await store.begin_transaction()
     with pytest.raises(LookupError):
-        await store.set_metadata(_eid("ghost"), "k", "v", str)
+        await _set_metadata(store, serializer, _eid("ghost"), "k", "v", str)
+    await tx.rollback()
 
 
 async def test_get_metadata_unknown_execution_returns_none(serializer):
     store = _store(serializer)
-    assert await store.get_metadata(_eid("ghost"), "k", str) is None
-
-
-async def test_metadata_tolerates_corrupt_non_dict(serializer):
-    from glyff.store._memory import _make_key
-    from glyff.store.utils import execution_id_to_path
-
-    store = _store(serializer)
-    eid = _eid("root")
-    await _start(store, eid)
-    # Simulate legacy/corrupt data: the metadata part is not a dict.
-    store._client.data[_make_key(execution_id_to_path(eid), "metadata")] = "corrupt"
-
-    assert await store.get_metadata(eid, "k", str) is None
-    tx = await store.begin_transaction()
-    await store.set_metadata(eid, "k", "v", str)  # replaces the bad value
-    await tx.commit()
-    assert await store.get_metadata(eid, "k", str) == "v"
-
-
-# -- ctx API through a live session ------------------------------------------
+    assert await _get_metadata(store, serializer, _eid("ghost"), "k", str) is None
 
 
 async def test_ctx_metadata_roundtrips_and_persists(
-    store_factory: StoreFactory, hasher: ArgsHasher
+    store_factory: StoreFactory, hasher: ArgsHasher, serializer
 ):
     captured: dict[str, ExecutionId] = {}
 
@@ -142,33 +149,32 @@ async def test_ctx_metadata_roundtrips_and_persists(
     async def annotate() -> str:
         ctx = get_context()
         await ctx.set_metadata("trace", {"step": 1})
-        # Read-your-writes within the running execution.
         assert await ctx.get_metadata("trace", dict) == {"step": 1}
         captured["id"] = ctx.current_execution_id  # type: ignore[assignment]
         return "done"
 
     store = store_factory("meta-ctx")
-    async with Session(id="meta-ctx", store=store, hasher=hasher):
+    async with Session(id="meta-ctx", store=store, serializer=serializer, hasher=hasher):
         result = await annotate()
 
     assert result == "done"
-    # Written to the current execution and committed with the body scope.
-    assert await store.get_metadata(captured["id"], "trace", dict) == {"step": 1}
+    assert await _get_metadata(store, serializer, captured["id"], "trace", dict) == {
+        "step": 1
+    }
 
 
 async def test_ctx_set_metadata_requires_active_execution():
-    @engrave
-    async def _noop() -> None:
-        return None
-
-    from glyff._context import Context, set_context
+    from glyff._context import Context, reset_context, set_context
     from glyff._event_system import EventEmitter
     from glyff._sequencer import Sequencer
     from glyff.serialization import JsonArgsHasher, JsonSerializer
 
+    store = _store(JsonSerializer())
     ctx = Context(
         session_id="no-exec",
-        store=_store(JsonSerializer()),
+        executions=store,
+        transactions=store,
+        serializer=JsonSerializer(),
         sequencer=Sequencer(),
         hasher=JsonArgsHasher(),
         event_emitter=EventEmitter([]),
@@ -178,6 +184,4 @@ async def test_ctx_set_metadata_requires_active_execution():
         with pytest.raises(NoCurrentExecutionError):
             await ctx.set_metadata("k", "v")
     finally:
-        from glyff._context import reset_context
-
         reset_context(token)

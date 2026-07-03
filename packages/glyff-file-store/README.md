@@ -1,11 +1,11 @@
 # glyff-file-store
 
-File-backed `SessionStore` implementation for
+File-backed `ExecutionRepository` implementation for
 [glyff](https://pypi.org/project/glyff/).
 
 This package provides a human-readable debug backend:
 
-- `JsonFileSessionStore` stores a pretty-printed JSON event log, loads the
+- `JsonFileSessionStore` stores a pretty-printed JSON execution map, loads the
   whole log into memory at startup, and rewrites the entire file atomically on
   each commit.
 
@@ -24,16 +24,15 @@ This package depends on `glyff>=0.1.0`.
 
 | Name                   | Description                                                   |
 | ---------------------- | ------------------------------------------------------------- |
-| `JsonFileSessionStore` | Debug `SessionStore` writing a pretty-printed JSON event log. |
+| `JsonFileSessionStore` | Debug `ExecutionRepository` writing pretty-printed JSON. |
 
 Construct it with a `base_dir` and `session_id`:
 
 ```python
-from glyff.serialization import JsonSerializer
 from glyff_file_store import JsonFileSessionStore
 
 store = JsonFileSessionStore(
-    base_dir=".sessions", session_id="my-session", serializer=JsonSerializer()
+    base_dir=".sessions", session_id="my-session"
 )
 ```
 
@@ -42,8 +41,8 @@ The underlying `FileClient` is internal and not part of the public API.
 ## JSON debug format
 
 `JsonFileSessionStore` stores each session under `<base_dir>/<session_id>/` in a
-single pretty-printed JSON file (`executions.json`). The whole log is read into
-memory on startup and rewritten atomically on every commit.
+single pretty-printed JSON file (`executions.json`). The execution map is read
+into memory on startup and rewritten atomically on every commit.
 
 This format is intended for debugging and manual inspection, not as the durable
 or high-throughput backend.

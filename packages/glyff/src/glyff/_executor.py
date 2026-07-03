@@ -1,7 +1,7 @@
 from typing import Any, Callable
 
 from ._context import Context
-from ._models import ExecutionId, ExecutionStatus
+from ._models import Execution, ExecutionId, ExecutionStatus, SerializedValue
 from .events import ExecutionCompleted, ExecutionFailed
 
 
@@ -24,17 +24,25 @@ async def execute(
     (e.g. pruning/GC) must open its own transaction — its failure cannot roll
     back the completion.
     """
-    store = ctx.store
+    executions = ctx.executions
+    serializer = ctx.serializer
     sequencer = ctx.sequencer
     tracer = ctx.tracer
 
-    record = await store.get_execution_record(execution_id, return_type)
-    if record and record.status == ExecutionStatus.COMPLETED:
-        return record.result
+    cached = await executions.get(execution_id)
+    if (
+        cached is not None
+        and cached.status == ExecutionStatus.COMPLETED
+        and cached.result is not None
+    ):
+        return await serializer.deserialize(cached.result.data, return_type)
 
     async with ctx.get_transaction_scope():
         await sequencer.reset_for_call(execution_id)
-        execution = await store.start_execution(execution_id)
+        execution = await executions.get(execution_id)
+        if execution is None or execution.status == ExecutionStatus.FAILED:
+            execution = Execution.start(execution_id)
+            await executions.save(execution)
 
     tracer.start(execution_id)
     try:
@@ -42,6 +50,11 @@ async def execute(
             try:
                 result = await func(*args, **kwargs)
             except Exception as e:
+                execution = await executions.get(execution_id)
+                if execution is None:
+                    execution = Execution.start(execution_id)
+                execution.fail(str(e))
+                await executions.save(execution)
                 await ctx.event_emitter.emit(
                     ExecutionFailed(
                         context=ctx,
@@ -53,7 +66,12 @@ async def execute(
                 raise
 
         async with ctx.get_transaction_scope():
-            await execution.complete(result, return_type)
+            execution = await executions.get(execution_id)
+            if execution is None:
+                raise LookupError(f"Execution {execution_id} not found")
+            serialized = await serializer.serialize(result, return_type)
+            execution.complete(SerializedValue(serialized))
+            await executions.save(execution)
 
         # Emitted outside the COMPLETE scope: completion is already durable, so
         # a handler (pruning/GC) runs in its own transaction and cannot roll the

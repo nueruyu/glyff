@@ -1,6 +1,8 @@
 import pytest
 
-from glyff import Execution, ExecutionId, ExecutionRecord, SessionStore, Transaction
+from collections.abc import Iterable
+
+from glyff import Execution, ExecutionId, SessionStore, Transaction
 from glyff._context import TransactionScope, get_context
 from glyff.exceptions import ContextNotSetError
 
@@ -26,22 +28,16 @@ class FakeStore(SessionStore):
         self.begins += 1
         return self.transaction
 
-    async def start_execution(self, execution_id: ExecutionId) -> Execution:
+    async def get(self, execution_id: ExecutionId) -> Execution | None:
         raise NotImplementedError
 
-    async def get_execution_record(
-        self, execution_id: ExecutionId, return_type: type
-    ) -> ExecutionRecord | None:
+    async def save(self, execution: Execution) -> None:
         raise NotImplementedError
 
-    async def set_metadata(
-        self, execution_id: ExecutionId, key: str, value: object, value_type: type
-    ) -> None:
+    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
         raise NotImplementedError
 
-    async def get_metadata(
-        self, execution_id: ExecutionId, key: str, return_type: type
-    ) -> object | None:
+    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
         raise NotImplementedError
 
 

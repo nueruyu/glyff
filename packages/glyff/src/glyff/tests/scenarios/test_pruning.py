@@ -1,6 +1,4 @@
-"""End-to-end pruning against the (in-memory) scenario store, exercising the
-event-driven policy together with the store's get_descendants/delete_executions
-mechanism within a live session."""
+"""End-to-end pruning against the in-memory repository."""
 
 import pytest
 

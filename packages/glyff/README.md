@@ -19,9 +19,8 @@ pip install glyff
   function identity, arguments, and call position.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
-- Exceptions raised by a call are non-terminal by default: completed work is
-  committed, the interrupted call remains `STARTED`, and the original exception
-  propagates so the caller can decide whether to resume later.
+- Exceptions raised by a call are recorded as `FAILED`; completed descendant
+  work remains committed, and the original exception propagates.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 
@@ -32,9 +31,11 @@ pip install glyff
 | `engrave`         | Decorator that marks an async function for recording.           |
 | `Session`         | Async context manager that scopes a sequence of engraved calls. |
 | `ExecutionId`     | Identifier for a recorded function execution.                   |
-| `ExecutionRecord` | Persisted execution state and result.                           |
+| `Execution`       | Aggregate Root for a recorded function execution.               |
+| `ExecutionRecord` | Read DTO for execution state and result.                        |
 | `ExecutionStatus` | Enum: `STARTED`, `COMPLETED`, `FAILED`.                         |
-| `SessionStore`    | Protocol for storage backends.                                  |
+| `ExecutionRepository` | Repository for execution aggregates.                       |
+| `TransactionProvider` | Provider used by `TransactionScope`.                       |
 | `Serializer`      | Protocol for value serialization.                               |
 | `ArgsHasher`      | Protocol for argument hashing.                                  |
 
@@ -42,8 +43,8 @@ pip install glyff
 
 - For persistent storage, see [`glyff-file-store`](https://pypi.org/project/glyff-file-store/).
 - For Pydantic-typed serialization, see [`glyff-pydantic`](https://pypi.org/project/glyff-pydantic/).
-- Custom backends can be written by implementing the `SessionStore`,
-  `Serializer`, and `ArgsHasher` protocols.
+- Custom backends can be written by implementing `ExecutionRepository` and
+  `TransactionProvider`.
 
 ## Status
 

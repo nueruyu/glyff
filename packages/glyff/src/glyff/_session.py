@@ -1,6 +1,6 @@
 from ._context import Context, reset_context, set_context
 from ._event_system import EventEmitter
-from ._interfaces import ArgsHasher, SessionStore
+from ._interfaces import ArgsHasher, ExecutionRepository, Serializer, TransactionProvider
 from ._sequencer import Sequencer
 
 
@@ -16,13 +16,29 @@ class Session:
     def __init__(
         self,
         id: str,
-        store: SessionStore,
-        hasher: ArgsHasher,
+        executions: ExecutionRepository | None = None,
+        serializer: Serializer | None = None,
+        hasher: ArgsHasher | None = None,
         event_emitter: EventEmitter | None = None,
+        *,
+        store: ExecutionRepository | None = None,
+        transactions: TransactionProvider | None = None,
     ):
+        if executions is None:
+            executions = store
+        if executions is None:
+            raise TypeError("executions is required")
+        if serializer is None:
+            serializer = getattr(executions, "serializer", None)
+        if serializer is None:
+            raise TypeError("serializer is required")
+        if hasher is None:
+            raise TypeError("hasher is required")
         self._id = id
-        self._store = store
+        self._executions = executions
+        self._transactions = transactions or executions
         self._hasher = hasher
+        self._serializer = serializer
         self._event_emitter = event_emitter or EventEmitter([])
         self._context: Context | None = None
         self._context_token = None
@@ -33,14 +49,21 @@ class Session:
         return self._id
 
     @property
-    def store(self) -> SessionStore:
-        """Returns the SessionStore used by this Session."""
-        return self._store
+    def executions(self) -> ExecutionRepository:
+        """Returns the ExecutionRepository used by this Session."""
+        return self._executions
+
+    @property
+    def store(self) -> ExecutionRepository:
+        """Compatibility alias for executions."""
+        return self._executions
 
     async def __aenter__(self) -> "Session":
         self._context = Context(
             session_id=self._id,
-            store=self._store,
+            executions=self._executions,
+            transactions=self._transactions,
+            serializer=self._serializer,
             sequencer=Sequencer(),
             hasher=self._hasher,
             event_emitter=self._event_emitter,

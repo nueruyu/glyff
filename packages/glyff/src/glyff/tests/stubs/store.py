@@ -3,14 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from typing import Any, NamedTuple
 
-from glyff import (
-    Execution,
-    ExecutionId,
-    ExecutionRecord,
-    Serializer,
-    SessionStore,
-    Transaction,
-)
+from glyff import Execution, ExecutionId, Serializer, SessionStore, Transaction
 from glyff.store import MemorySessionStore
 from glyff.store._memory_client import MemoryClient
 
@@ -22,21 +15,6 @@ class Call(NamedTuple):
 
 
 Recorder = Callable[..., None]
-
-
-class StubExecution(Execution):
-    def __init__(self, eid: ExecutionId, record: Recorder, impl: Execution):
-        self._id = eid
-        self._record = record
-        self._impl = impl
-
-    async def complete(self, value: Any, return_type: type) -> None:
-        self._record("complete", self._id, value, return_type)
-        await self._impl.complete(value, return_type)
-
-    async def fail(self, error: str) -> None:
-        self._record("fail", self._id, error)
-        await self._impl.fail(error)
 
 
 class StubTransaction(Transaction):
@@ -53,56 +31,14 @@ class StubTransaction(Transaction):
         await self._impl.rollback()
 
 
-class StubExecutionRepository:
-    """Spy over MemoryExecutionRepository, recording into a shared recorder."""
-
-    def __init__(self, record: Recorder, impl: Any):
-        self._record = record
-        self._impl = impl
-
-    async def start_execution(self, execution_id: ExecutionId) -> Execution:
-        self._record("start_execution", execution_id)
-        execution = await self._impl.start_execution(execution_id)
-        return StubExecution(execution_id, self._record, execution)
-
-    async def get_execution_record(
-        self, execution_id: ExecutionId, return_type: type
-    ) -> ExecutionRecord | None:
-        self._record("get_execution_record", execution_id, return_type)
-        return await self._impl.get_execution_record(execution_id, return_type)
-
-    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        self._record("get_descendants", execution_id)
-        return await self._impl.get_descendants(execution_id)
-
-    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
-        execution_ids = list(execution_ids)
-        self._record("delete_executions", execution_ids)
-        await self._impl.delete_executions(execution_ids)
-
-    async def set_metadata(
-        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
-    ) -> None:
-        self._record("set_metadata", execution_id, key, value, value_type)
-        await self._impl.set_metadata(execution_id, key, value, value_type)
-
-    async def get_metadata(
-        self, execution_id: ExecutionId, key: str, return_type: type
-    ) -> Any | None:
-        self._record("get_metadata", execution_id, key, return_type)
-        return await self._impl.get_metadata(execution_id, key, return_type)
-
-
 class StubSessionStore(SessionStore):
-    """A spy over MemorySessionStore that records method calls for test assertions."""
+    """A spy over MemoryExecutionRepository."""
 
     def __init__(self, client: MemoryClient, serializer: Serializer, **_):
         self._mem_store = MemorySessionStore(client=client, serializer=serializer)
+        self.serializer = serializer
         self.calls: list[Call] = []
         self.transaction_impl: Transaction
-        self.repository = StubExecutionRepository(
-            self._record, self._mem_store.repository
-        )
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append(Call(name, args, kwargs))
@@ -115,20 +51,19 @@ class StubSessionStore(SessionStore):
         self.transaction_impl = await self._mem_store.begin_transaction()
         return StubTransaction(self._record, self.transaction_impl)
 
-    async def start_execution(self, execution_id: ExecutionId) -> Execution:
-        return await self.repository.start_execution(execution_id)
+    async def get(self, execution_id: ExecutionId) -> Execution | None:
+        self._record("get", execution_id)
+        return await self._mem_store.get(execution_id)
 
-    async def get_execution_record(
-        self, execution_id: ExecutionId, return_type: type
-    ) -> ExecutionRecord | None:
-        return await self.repository.get_execution_record(execution_id, return_type)
+    async def save(self, execution: Execution) -> None:
+        self._record("save", execution)
+        await self._mem_store.save(execution)
 
-    async def set_metadata(
-        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
-    ) -> None:
-        await self.repository.set_metadata(execution_id, key, value, value_type)
+    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
+        self._record("descendants_of", execution_id)
+        return await self._mem_store.descendants_of(execution_id)
 
-    async def get_metadata(
-        self, execution_id: ExecutionId, key: str, return_type: type
-    ) -> Any | None:
-        return await self.repository.get_metadata(execution_id, key, return_type)
+    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
+        execution_ids = list(execution_ids)
+        self._record("delete_many", execution_ids)
+        await self._mem_store.delete_many(execution_ids)

@@ -34,15 +34,15 @@ async def greet(name: str, answer: str | None = None) -> str:
 
 async def main(session_id: str, answer: str | None = None):
     serializer = PydanticSerializer()
-    store = glyff_file_store.JsonFileSessionStore(
+    executions = glyff_file_store.JsonFileSessionStore(
         base_dir=".sessions",
         session_id=session_id,
-        serializer=serializer,
     )
 
     session = glyff.Session(
         id=session_id,
-        store=store,
+        executions=executions,
+        serializer=serializer,
         hasher=PydanticArgsHasher(),
     )
 
@@ -74,9 +74,8 @@ the provided answer instead of pausing again.
   function identity, arguments, and call position.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
-- Exceptions raised by a call are non-terminal by default: completed work is
-  committed, the interrupted call remains `STARTED`, and the original exception
-  propagates so the caller can decide whether to resume later.
+- Exceptions raised by a call are recorded as `FAILED`; completed descendant
+  work remains committed, and the original exception propagates.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 
@@ -106,7 +105,7 @@ but *when and whether* to delete them is a retention policy glyff does not ship.
 glyff knows only **what** is unreachable — a completed call's strict
 descendants; you decide the rest.
 
-Each store's `repository` exposes `get_descendants` and `delete_executions` (in
+The context execution repository exposes `descendants_of` and `delete_many` (in
 `ExecutionId` terms). Drive them from an `ExecutionCompleted` handler. The event
 fires *after* the completion is durably committed, so the handler opens its own
 transaction — GC is decoupled from the completion, and a prune failure never
@@ -119,16 +118,18 @@ from glyff.events import ExecutionCompleted
 
 class PruneDescendants(EventHandler[ExecutionCompleted]):
     async def handle(self, event: ExecutionCompleted) -> None:
-        repo = event.context.store.repository
         async with event.context.get_transaction_scope():
-            descendants = await repo.get_descendants(event.execution_id)
+            descendants = await event.context.executions.descendants_of(
+                event.execution_id
+            )
             if descendants:
-                await repo.delete_executions(descendants)
+                await event.context.executions.delete_many(descendants)
 
 
 session = Session(
     id=session_id,
-    store=store,
+    executions=executions,
+    serializer=serializer,
     hasher=hasher,
     event_emitter=EventEmitter([PruneDescendants()]),
 )
