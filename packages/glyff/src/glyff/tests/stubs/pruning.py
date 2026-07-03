@@ -13,10 +13,15 @@ from glyff.events import ExecutionCompleted
 
 
 class PruningEventHandler(EventHandler[ExecutionCompleted]):
-    """Deletes the descendant records of a completed execution."""
+    """Deletes the descendant records of a completed execution.
+
+    Opens its own transaction: completion is already durable when this runs, so
+    the GC is decoupled from the completion commit.
+    """
 
     async def handle(self, event: ExecutionCompleted) -> None:
         repository = event.context.store.repository  # type: ignore[attr-defined]
-        descendants = await repository.get_descendants(event.execution_id)
-        if descendants:
-            await repository.delete_executions(descendants)
+        async with event.context.get_transaction_scope():
+            descendants = await repository.get_descendants(event.execution_id)
+            if descendants:
+                await repository.delete_executions(descendants)

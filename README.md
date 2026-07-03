@@ -107,8 +107,10 @@ glyff knows only **what** is unreachable — a completed call's strict
 descendants; you decide the rest.
 
 Each store's `repository` exposes `get_descendants` and `delete_executions` (in
-`ExecutionId` terms). Drive them from an `ExecutionCompleted` handler to prune a
-completed call's descendants, staged in the same session:
+`ExecutionId` terms). Drive them from an `ExecutionCompleted` handler. The event
+fires *after* the completion is durably committed, so the handler opens its own
+transaction — GC is decoupled from the completion, and a prune failure never
+rolls it back:
 
 ```python
 from glyff import EventEmitter, EventHandler, Session
@@ -118,9 +120,10 @@ from glyff.events import ExecutionCompleted
 class PruneDescendants(EventHandler[ExecutionCompleted]):
     async def handle(self, event: ExecutionCompleted) -> None:
         repo = event.context.store.repository
-        descendants = await repo.get_descendants(event.execution_id)
-        if descendants:
-            await repo.delete_executions(descendants)
+        async with event.context.get_transaction_scope():
+            descendants = await repo.get_descendants(event.execution_id)
+            if descendants:
+                await repo.delete_executions(descendants)
 
 
 session = Session(

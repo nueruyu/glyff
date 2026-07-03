@@ -195,7 +195,10 @@ class SQLiteExecutionRepository:
             if data is None:
                 raise LookupError(f"Execution at {path} not found")
             stored = json.loads(data.decode(DEFAULT_ENCODING))
-            metadata = stored.setdefault("metadata", {})
+            metadata = stored.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+                stored["metadata"] = metadata
             metadata[key] = value_json
             return _to_stored_bytes(stored)
 
@@ -209,8 +212,8 @@ class SQLiteExecutionRepository:
         if data is None:
             return None
         stored = json.loads(data.decode(DEFAULT_ENCODING))
-        metadata = stored.get("metadata") or {}
-        if key not in metadata:
+        metadata = stored.get("metadata")
+        if not isinstance(metadata, dict) or key not in metadata:
             return None
         return await self._serializer.deserialize(
             metadata[key].encode(DEFAULT_ENCODING), return_type

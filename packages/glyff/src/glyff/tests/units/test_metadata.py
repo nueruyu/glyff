@@ -101,6 +101,35 @@ async def test_delete_executions_removes_metadata(serializer):
     assert await store.get_metadata(eid, "note", str) is None
 
 
+async def test_set_metadata_unknown_execution_raises(serializer):
+    # Contract parity with the file/sqlite backends: no orphan metadata.
+    store = _store(serializer)
+    with pytest.raises(LookupError):
+        await store.set_metadata(_eid("ghost"), "k", "v", str)
+
+
+async def test_get_metadata_unknown_execution_returns_none(serializer):
+    store = _store(serializer)
+    assert await store.get_metadata(_eid("ghost"), "k", str) is None
+
+
+async def test_metadata_tolerates_corrupt_non_dict(serializer):
+    from glyff.store._memory import _make_key
+    from glyff.store.utils import execution_id_to_path
+
+    store = _store(serializer)
+    eid = _eid("root")
+    await _start(store, eid)
+    # Simulate legacy/corrupt data: the metadata part is not a dict.
+    store._client.data[_make_key(execution_id_to_path(eid), "metadata")] = "corrupt"
+
+    assert await store.get_metadata(eid, "k", str) is None
+    tx = await store.begin_transaction()
+    await store.set_metadata(eid, "k", "v", str)  # replaces the bad value
+    await tx.commit()
+    assert await store.get_metadata(eid, "k", str) == "v"
+
+
 # -- ctx API through a live session ------------------------------------------
 
 

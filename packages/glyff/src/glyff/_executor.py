@@ -19,7 +19,10 @@ async def execute(
 
     START, the function body, and COMPLETE each use separate store transaction
     scopes, so a completed descendant can commit while an ancestor body is
-    still running.
+    still running. ExecutionCompleted is emitted *after* the COMPLETE scope
+    commits, so completion is durable before any handler runs and a handler
+    (e.g. pruning/GC) must open its own transaction — its failure cannot roll
+    back the completion.
     """
     store = ctx.store
     sequencer = ctx.sequencer
@@ -51,9 +54,13 @@ async def execute(
 
         async with ctx.get_transaction_scope():
             await execution.complete(result, return_type)
-            await ctx.event_emitter.emit(
-                ExecutionCompleted(context=ctx, execution_id=execution_id)
-            )
+
+        # Emitted outside the COMPLETE scope: completion is already durable, so
+        # a handler (pruning/GC) runs in its own transaction and cannot roll the
+        # completion back.
+        await ctx.event_emitter.emit(
+            ExecutionCompleted(context=ctx, execution_id=execution_id)
+        )
         return result
     finally:
         tracer.end()

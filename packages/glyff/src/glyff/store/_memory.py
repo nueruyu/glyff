@@ -157,17 +157,21 @@ class MemoryExecutionRepository:
     async def set_metadata(
         self, execution_id: ExecutionId, key: str, value: Any, value_type: type
     ) -> None:
+        if await self._client.read(self._id_to_key(execution_id, "status")) is None:
+            raise LookupError(f"Execution {execution_id} not found")
         meta_key = self._id_to_key(execution_id, "metadata")
         current = await self._client.read(meta_key)
-        metadata = dict(current) if current else {}
+        metadata = dict(current) if isinstance(current, dict) else {}
         metadata[key] = await self._serializer.serialize(value, value_type)
         self._client.stage_write(meta_key, metadata)
 
     async def get_metadata(
         self, execution_id: ExecutionId, key: str, return_type: type
     ) -> Any | None:
+        if await self._client.read(self._id_to_key(execution_id, "status")) is None:
+            return None
         metadata = await self._client.read(self._id_to_key(execution_id, "metadata"))
-        if not metadata or key not in metadata:
+        if not isinstance(metadata, dict) or key not in metadata:
             return None
         return await self._serializer.deserialize(metadata[key], return_type)
 

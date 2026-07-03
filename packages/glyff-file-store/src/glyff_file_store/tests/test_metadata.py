@@ -3,6 +3,7 @@ across complete, and removed when the execution is deleted."""
 
 from pathlib import Path
 
+import pytest
 from glyff import ExecutionId
 from glyff.serialization import JsonSerializer
 
@@ -68,3 +69,16 @@ async def test_delete_removes_metadata(store_factory):
     await tx.commit()
 
     assert await store.get_metadata(eid, "k", str) is None
+
+
+async def test_set_metadata_unknown_execution_raises(store_factory):
+    store: JsonFileSessionStore = store_factory("meta-unknown")
+    tx = await store.begin_transaction()
+    await store.set_metadata(_eid("ghost"), "k", "v", str)
+    with pytest.raises(LookupError):
+        await tx.commit()
+
+
+async def test_get_metadata_unknown_execution_returns_none(store_factory):
+    store: JsonFileSessionStore = store_factory("meta-none")
+    assert await store.get_metadata(_eid("ghost"), "k", str) is None

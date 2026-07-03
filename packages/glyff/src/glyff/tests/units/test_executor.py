@@ -499,11 +499,14 @@ async def test_execution_complete_failure_rolls_back_complete_transaction(
     assert len(store.get_calls("rollback")) == 1
 
 
-async def test_completed_handler_failure_rolls_back_complete_transaction(
+async def test_completed_handler_failure_does_not_roll_back_completion(
     base_execution_id: ExecutionId,
     serializer: Serializer,
     hasher,
 ):
+    # ExecutionCompleted is emitted after the COMPLETE scope commits, so a
+    # failing completed-handler propagates but cannot roll the durable
+    # completion back.
     class FailingCompletedHandler(EventHandler[ExecutionCompleted]):
         async def handle(self, event: ExecutionCompleted) -> None:
             raise RuntimeError("handler failed")
@@ -536,8 +539,8 @@ async def test_completed_handler_failure_rolls_back_complete_transaction(
 
     record = await store.get_execution_record(base_execution_id, str)
     assert record is not None
-    assert record.status == ExecutionStatus.STARTED
-    assert len(store.get_calls("rollback")) == 1
+    assert record.status == ExecutionStatus.COMPLETED
+    assert not store.get_calls("rollback")
 
 
 async def test_nested_child_commits_without_losing_parent_staging(
