@@ -1,62 +1,59 @@
+from typing import cast
+
 from glyff import Execution, ExecutionId, ExecutionStatus, SerializedValue
-from glyff.store import MemorySessionStore
+from glyff._context import TransactionScope
+from glyff.store import MemoryBackend, MemoryExecutionRepository
 from glyff.store._memory import _make_key
-from glyff.store._memory_client import MemoryClient
 from glyff.store.utils import execution_id_to_path
 
 
-def _store(serializer) -> MemorySessionStore:
-    return MemorySessionStore(client=MemoryClient(), serializer=serializer)
-
-
-async def _save(store: MemorySessionStore, execution: Execution) -> None:
-    tx = await store.begin_transaction()
-    await store.save(execution)
-    await tx.commit()
+async def _save(backend: MemoryBackend, execution: Execution) -> None:
+    async with TransactionScope(backend.transactions):
+        await backend.executions.save(execution)
 
 
 async def test_descendants_of_returns_strict_transitive_descendants(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
     a = ExecutionId(parent_id=root, name="a", sequence=0, args_hash="a")
     b = ExecutionId(parent_id=root, name="b", sequence=0, args_hash="b")
     grand = ExecutionId(parent_id=a, name="grand", sequence=0, args_hash="g")
 
     for eid in (root, a, b, grand):
-        await _save(store, Execution.start(eid))
+        await _save(backend, Execution.start(eid))
 
-    assert set(await store.descendants_of(root)) == {a, b, grand}
-    assert set(await store.descendants_of(a)) == {grand}
-    assert await store.descendants_of(grand) == []
+    assert set(await backend.executions.descendants_of(root)) == {a, b, grand}
+    assert set(await backend.executions.descendants_of(a)) == {grand}
+    assert await backend.executions.descendants_of(grand) == []
 
 
 async def test_delete_many_removes_execution_parts(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     eid = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
     execution = Execution.start(eid)
     execution.complete(SerializedValue(await serializer.serialize("ok", str)))
     execution.set_metadata("k", SerializedValue(await serializer.serialize("v", str)))
-    await _save(store, execution)
+    await _save(backend, execution)
 
-    tx = await store.begin_transaction()
-    await store.delete_many([eid])
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        await backend.executions.delete_many([eid])
 
-    assert await store.get(eid) is None
+    assert await backend.executions.get(eid) is None
 
 
 async def test_descendants_ignore_metadata_only_orphans(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
     child = ExecutionId(parent_id=root, name="child", sequence=0, args_hash="c")
     path = execution_id_to_path(child)
-    store._client.data[_make_key(path, "metadata")] = {"k": b'"v"'}
+    executions = cast(MemoryExecutionRepository, backend.executions)
+    executions._client.data[_make_key(path, "metadata")] = {"k": b'"v"'}
 
-    assert await store.descendants_of(root) == []
+    assert await backend.executions.descendants_of(root) == []
 
 
 async def test_delete_one_descendant_preserves_siblings(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
     p1 = ExecutionId(parent_id=root, name="p1", sequence=0, args_hash="p1")
     p2 = ExecutionId(parent_id=root, name="p2", sequence=0, args_hash="p2")
@@ -66,13 +63,12 @@ async def test_delete_one_descendant_preserves_siblings(serializer):
     for eid in (root, p1, p2, leaf1, leaf2):
         execution = Execution.start(eid)
         execution.complete(SerializedValue(await serializer.serialize("ok", str)))
-        await _save(store, execution)
+        await _save(backend, execution)
 
-    tx = await store.begin_transaction()
-    await store.delete_many([leaf1])
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        await backend.executions.delete_many([leaf1])
 
-    assert await store.get(leaf1) is None
-    leaf2_record = await store.get(leaf2)
+    assert await backend.executions.get(leaf1) is None
+    leaf2_record = await backend.executions.get(leaf2)
     assert leaf2_record is not None
     assert leaf2_record.status is ExecutionStatus.COMPLETED

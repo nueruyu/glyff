@@ -36,20 +36,16 @@ class ExecutionRepository(ABC):
     """DDD Repository for Execution aggregates."""
 
     @abstractmethod
-    async def get(self, execution_id: ExecutionId) -> Execution | None:
-        ...
+    async def get(self, execution_id: ExecutionId) -> Execution | None: ...
 
     @abstractmethod
-    async def save(self, execution: Execution) -> None:
-        ...
+    async def save(self, execution: Execution) -> None: ...
 
     @abstractmethod
-    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        ...
+    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]: ...
 
     @abstractmethod
-    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
-        ...
+    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None: ...
 
 
 class Serializer(ABC):
@@ -75,10 +71,3 @@ class ArgsHasher(ABC):
     ) -> str:
         """Creates a deterministic hash from a function's arguments."""
         ...
-
-
-class SessionStore(ExecutionRepository, TransactionProvider, ABC):
-    """Deprecated compatibility alias.
-
-    Use ExecutionRepository + TransactionScope instead.
-    """

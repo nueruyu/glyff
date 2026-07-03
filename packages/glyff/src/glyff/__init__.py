@@ -1,11 +1,10 @@
-from ._context import get_context
+from ._context import TransactionScope, get_context
 from ._engrave import engrave
 from ._event_system import Event, EventEmitter, EventHandler
 from ._interfaces import (
     ArgsHasher,
     ExecutionRepository,
     Serializer,
-    SessionStore,
     Transaction,
     TransactionProvider,
 )
@@ -29,8 +28,8 @@ __all__ = [
     "Serializer",
     "Transaction",
     "TransactionProvider",
+    "TransactionScope",
     "ExecutionRepository",
-    "SessionStore",
     "Execution",
     "ExecutionId",
     "ExecutionRecord",

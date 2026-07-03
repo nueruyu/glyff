@@ -1,8 +1,7 @@
 from glyff import ArgsHasher, Session, engrave
 from glyff.serialization import JsonSerializer
 
-from glyff_file_store import JsonFileSessionStore
-from glyff_file_store._file_client import FileClient
+from glyff_file_store import JsonFileBackend
 
 _json_runs: list[int] = []
 
@@ -21,17 +20,27 @@ async def test_completed_record_replays_across_instances(
     _json_runs.clear()
     session_id = "json-replay"
 
-    client = FileClient(base_dir=tmp_path, session_id=session_id)
-    store = JsonFileSessionStore(client=client, serializer=serializer)
-    async with Session(id=session_id, store=store, hasher=hasher):
+    backend = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    async with Session(
+        id=session_id,
+        executions=backend.executions,
+        transactions=backend.transactions,
+        serializer=serializer,
+        hasher=hasher,
+    ):
         first = await json_func(7)
     assert first == 14
     assert _json_runs == [7]
 
     _json_runs.clear()
-    client2 = FileClient(base_dir=tmp_path, session_id=session_id)
-    store2 = JsonFileSessionStore(client=client2, serializer=serializer)
-    async with Session(id=session_id, store=store2, hasher=hasher):
+    reopened = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    async with Session(
+        id=session_id,
+        executions=reopened.executions,
+        transactions=reopened.transactions,
+        serializer=serializer,
+        hasher=hasher,
+    ):
         second = await json_func(7)
     assert second == 14
     assert _json_runs == []
@@ -54,18 +63,28 @@ async def test_multiple_completed_records_replay_across_instances(
     _multi_runs.clear()
     session_id = "json-multi"
 
-    client = FileClient(base_dir=tmp_path, session_id=session_id)
-    store = JsonFileSessionStore(client=client, serializer=serializer)
-    async with Session(id=session_id, store=store, hasher=hasher):
+    backend = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    async with Session(
+        id=session_id,
+        executions=backend.executions,
+        transactions=backend.transactions,
+        serializer=serializer,
+        hasher=hasher,
+    ):
         a = await multi_payload(0)
         b = await multi_payload(1000)
         c = await multi_payload(99999)
     assert _multi_runs == [0, 1000, 99999]
 
     _multi_runs.clear()
-    client2 = FileClient(base_dir=tmp_path, session_id=session_id)
-    store2 = JsonFileSessionStore(client=client2, serializer=serializer)
-    async with Session(id=session_id, store=store2, hasher=hasher):
+    reopened = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    async with Session(
+        id=session_id,
+        executions=reopened.executions,
+        transactions=reopened.transactions,
+        serializer=serializer,
+        hasher=hasher,
+    ):
         a2 = await multi_payload(0)
         b2 = await multi_payload(1000)
         c2 = await multi_payload(99999)

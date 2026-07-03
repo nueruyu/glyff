@@ -5,7 +5,8 @@ File-backed `ExecutionRepository` implementation for
 
 This package provides a human-readable debug backend:
 
-- `JsonFileSessionStore` stores a pretty-printed JSON execution map, loads the
+- `JsonFileBackend` provides a file-backed execution repository and transaction
+  provider. It stores a pretty-printed JSON execution map, loads the
   whole log into memory at startup, and rewrites the entire file atomically on
   each commit.
 
@@ -22,25 +23,25 @@ This package depends on `glyff>=0.1.0`.
 
 ## Public API
 
-| Name                   | Description                                                   |
-| ---------------------- | ------------------------------------------------------------- |
-| `JsonFileSessionStore` | Debug `ExecutionRepository` writing pretty-printed JSON. |
+| Name                      | Description                                               |
+| ------------------------- | --------------------------------------------------------- |
+| `JsonFileBackend`         | Bundle exposing repository and transaction provider.      |
+| `FileExecutionRepository` | Debug repository writing pretty-printed JSON.             |
+| `FileTransactionProvider` | Transaction provider for the file backend.                |
 
 Construct it with a `base_dir` and `session_id`:
 
 ```python
-from glyff_file_store import JsonFileSessionStore
+from glyff_file_store import JsonFileBackend
 
-store = JsonFileSessionStore(
-    base_dir=".sessions", session_id="my-session"
-)
+backend = JsonFileBackend(base_dir=".sessions", session_id="my-session")
 ```
 
 The underlying `FileClient` is internal and not part of the public API.
 
 ## JSON debug format
 
-`JsonFileSessionStore` stores each session under `<base_dir>/<session_id>/` in a
+`JsonFileBackend` stores each session under `<base_dir>/<session_id>/` in a
 single pretty-printed JSON file (`executions.json`). The execution map is read
 into memory on startup and rewritten atomically on every commit.
 

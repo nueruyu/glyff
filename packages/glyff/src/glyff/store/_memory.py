@@ -3,9 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from collections.abc import Iterable
-from typing import Any
 
-from .._interfaces import Serializer, SessionStore, Transaction
+from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
 from .._models import Execution, ExecutionId, Metadata, SerializedValue
 from ._memory_client import MemoryClient
 from .utils import execution_id_to_path, path_to_execution_id
@@ -70,20 +69,11 @@ class _MemoryTransaction(Transaction):
                 self._client.end_staging(self._token)
 
 
-class MemoryExecutionRepository(SessionStore):
+class MemoryExecutionRepository(ExecutionRepository):
     """In-memory Execution aggregate repository."""
 
-    def __init__(
-        self,
-        client: MemoryClient | None = None,
-        serializer: Serializer | None = None,
-        **_: Any,
-    ):
-        self._client = client if client is not None else MemoryClient()
-        self.serializer = serializer
-
-    async def begin_transaction(self) -> Transaction:
-        return await _MemoryTransaction(self._client).begin()
+    def __init__(self, client: MemoryClient):
+        self._client = client
 
     def _id_to_key(self, execution_id: ExecutionId, part: str) -> str:
         return _make_key(execution_id_to_path(execution_id), part)
@@ -95,7 +85,9 @@ class MemoryExecutionRepository(SessionStore):
 
         result_data = await self._client.read(self._id_to_key(execution_id, "result"))
         error = await self._client.read(self._id_to_key(execution_id, "error"))
-        raw_metadata = await self._client.read(self._id_to_key(execution_id, "metadata"))
+        raw_metadata = await self._client.read(
+            self._id_to_key(execution_id, "metadata")
+        )
 
         metadata: dict[str, Metadata] = {}
         if isinstance(raw_metadata, dict):
@@ -106,7 +98,9 @@ class MemoryExecutionRepository(SessionStore):
         return Execution(
             id=execution_id,
             status=status,
-            result=SerializedValue(result_data) if isinstance(result_data, bytes) else None,
+            result=SerializedValue(result_data)
+            if isinstance(result_data, bytes)
+            else None,
             error=error if isinstance(error, str) else None,
             metadata=metadata,
         )
@@ -156,4 +150,16 @@ class MemoryExecutionRepository(SessionStore):
                 self._client.stage_delete(self._id_to_key(execution_id, part))
 
 
-MemorySessionStore = MemoryExecutionRepository
+class MemoryTransactionProvider(TransactionProvider):
+    def __init__(self, client: MemoryClient):
+        self._client = client
+
+    async def begin_transaction(self) -> Transaction:
+        return await _MemoryTransaction(self._client).begin()
+
+
+class MemoryBackend:
+    def __init__(self) -> None:
+        client = MemoryClient()
+        self.executions: ExecutionRepository = MemoryExecutionRepository(client)
+        self.transactions: TransactionProvider = MemoryTransactionProvider(client)

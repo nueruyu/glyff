@@ -1,6 +1,11 @@
 from ._context import Context, reset_context, set_context
 from ._event_system import EventEmitter
-from ._interfaces import ArgsHasher, ExecutionRepository, Serializer, TransactionProvider
+from ._interfaces import (
+    ArgsHasher,
+    ExecutionRepository,
+    Serializer,
+    TransactionProvider,
+)
 from ._sequencer import Sequencer
 
 
@@ -8,36 +13,20 @@ class Session:
     """
     Manages the lifecycle of a workflow execution.
 
-    It sets up the execution context. Stores persist execution events as they
-    happen (per event), so there is no session-wide transaction to commit at
-    exit.
+    It sets up the execution context. Execution records are persisted per
+    event, so there is no session-wide transaction to commit at exit.
     """
 
     def __init__(
         self,
         id: str,
-        executions: ExecutionRepository | None = None,
-        serializer: Serializer | None = None,
-        hasher: ArgsHasher | None = None,
-        event_emitter: EventEmitter | None = None,
         *,
-        store: ExecutionRepository | None = None,
-        transactions: TransactionProvider | None = None,
-    ):
-        if executions is None:
-            executions = store
-        if executions is None:
-            raise TypeError("executions is required")
-        if serializer is None:
-            serializer = getattr(executions, "serializer", None)
-        if serializer is None:
-            raise TypeError("serializer is required")
-        if hasher is None:
-            raise TypeError("hasher is required")
-        if transactions is None:
-            if not isinstance(executions, TransactionProvider):
-                raise TypeError("transactions is required")
-            transactions = executions
+        executions: ExecutionRepository,
+        transactions: TransactionProvider,
+        serializer: Serializer,
+        hasher: ArgsHasher,
+        event_emitter: EventEmitter | None = None,
+    ) -> None:
         self._id = id
         self._executions = executions
         self._transactions = transactions
@@ -58,9 +47,9 @@ class Session:
         return self._executions
 
     @property
-    def store(self) -> ExecutionRepository:
-        """Compatibility alias for executions."""
-        return self._executions
+    def transactions(self) -> TransactionProvider:
+        """Returns the TransactionProvider used by this Session."""
+        return self._transactions
 
     async def __aenter__(self) -> "Session":
         self._context = Context(

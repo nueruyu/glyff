@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import base64
 import json
-import logging
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -9,20 +9,18 @@ from typing import Any
 from glyff import (
     Execution,
     ExecutionId,
+    ExecutionRepository,
     ExecutionStatus,
     Metadata,
     SerializedValue,
-    Serializer,
-    SessionStore,
     Transaction,
+    TransactionProvider,
 )
 from glyff.serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 from ._file_client import FileClient
 from ._transaction import _ClientTransaction
-
-logger = logging.getLogger(__name__)
 
 _EXECUTIONS_FILE = "executions.json"
 
@@ -32,6 +30,39 @@ _STATUS_NAMES = {
     ExecutionStatus.FAILED: "failed",
 }
 _NAME_TO_STATUS = {v: k for k, v in _STATUS_NAMES.items()}
+
+
+def _pack_value(value: SerializedValue | None) -> str | None:
+    if value is None:
+        return None
+    return base64.b64encode(value.data).decode("ascii")
+
+
+def _unpack_value(value: object) -> SerializedValue | None:
+    if not isinstance(value, str):
+        return None
+    return SerializedValue(base64.b64decode(value.encode("ascii")))
+
+
+def _pack_metadata(metadata: dict[str, Metadata]) -> dict[str, str]:
+    return {
+        key: base64.b64encode(item.value.data).decode("ascii")
+        for key, item in metadata.items()
+    }
+
+
+def _unpack_metadata(raw: object) -> dict[str, Metadata]:
+    if not isinstance(raw, dict):
+        return {}
+
+    result: dict[str, Metadata] = {}
+    for key, value in raw.items():
+        if isinstance(key, str) and isinstance(value, str):
+            result[key] = Metadata(
+                key=key,
+                value=SerializedValue(base64.b64decode(value.encode("ascii"))),
+            )
+    return result
 
 
 def _decode(raw: bytes | None) -> dict[str, dict[str, Any]]:
@@ -51,69 +82,29 @@ def _encode(executions: dict[str, dict[str, Any]]) -> bytes:
 
 
 def _to_execution(execution_id: ExecutionId, stored: dict[str, Any]) -> Execution:
-    metadata_raw = stored.get("metadata")
-    metadata: dict[str, Metadata] = {}
-    if isinstance(metadata_raw, dict):
-        for key, value_json in metadata_raw.items():
-            if isinstance(value_json, str):
-                metadata[key] = Metadata(
-                    key=key,
-                    value=SerializedValue(value_json.encode(DEFAULT_ENCODING)),
-                )
-
-    result_json = stored.get("result_json")
     return Execution(
         id=execution_id,
         status=_NAME_TO_STATUS[stored["status"]],
-        result=(
-            SerializedValue(result_json.encode(DEFAULT_ENCODING))
-            if isinstance(result_json, str)
-            else None
-        ),
+        result=_unpack_value(stored.get("result_b64")),
         error=stored.get("error") if isinstance(stored.get("error"), str) else None,
-        metadata=metadata,
+        metadata=_unpack_metadata(stored.get("metadata")),
     )
 
 
 def _from_execution(execution: Execution) -> dict[str, Any]:
     return {
         "status": _STATUS_NAMES[execution.status],
-        "result_json": (
-            execution.result.data.decode(DEFAULT_ENCODING)
-            if execution.result is not None
-            else None
-        ),
+        "result_b64": _pack_value(execution.result),
         "error": execution.error,
-        "metadata": {
-            key: item.value.data.decode(DEFAULT_ENCODING)
-            for key, item in execution.metadata.items()
-        },
+        "metadata": _pack_metadata(execution.metadata),
     }
 
 
-class FileExecutionRepository(SessionStore):
+class FileExecutionRepository(ExecutionRepository):
     """File-backed Execution aggregate repository."""
 
-    def __init__(
-        self,
-        serializer: Serializer | None = None,
-        *,
-        base_dir: str | Path | None = None,
-        session_id: str | None = None,
-        client: FileClient | None = None,
-    ):
-        if client is None:
-            if base_dir is None or session_id is None:
-                raise TypeError("base_dir and session_id (or client) are required.")
-            client = FileClient(base_dir=base_dir, session_id=session_id)
-        elif base_dir is not None or session_id is not None:
-            raise TypeError("Pass base_dir/session_id or client, not both.")
-
+    def __init__(self, client: FileClient):
         self._client = client
-        self.serializer = serializer
-
-    async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client).begin()
 
     async def get(self, execution_id: ExecutionId) -> Execution | None:
         key = execution_id_to_path(execution_id)
@@ -158,4 +149,16 @@ class FileExecutionRepository(SessionStore):
         self._client.stage_update(_EXECUTIONS_FILE, fn)
 
 
-JsonFileSessionStore = FileExecutionRepository
+class FileTransactionProvider(TransactionProvider):
+    def __init__(self, client: FileClient):
+        self._client = client
+
+    async def begin_transaction(self) -> Transaction:
+        return await _ClientTransaction(self._client).begin()
+
+
+class JsonFileBackend:
+    def __init__(self, *, base_dir: str | Path, session_id: str):
+        client = FileClient(base_dir=base_dir, session_id=session_id)
+        self.executions: ExecutionRepository = FileExecutionRepository(client)
+        self.transactions: TransactionProvider = FileTransactionProvider(client)

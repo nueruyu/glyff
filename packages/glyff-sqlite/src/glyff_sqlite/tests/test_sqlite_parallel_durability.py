@@ -10,7 +10,7 @@ import pytest
 from glyff import ArgsHasher, Session, engrave
 from glyff.serialization import JsonSerializer
 
-from glyff_sqlite import SQLiteSessionStore
+from glyff_sqlite import SQLiteBackend
 
 _ran: set[int] = set()
 _interrupt_root: bool = False
@@ -55,9 +55,12 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
 
     _interrupt_root = True
     with pytest.raises(RootInterrupted):
+        backend = SQLiteBackend(db)
         async with Session(
             id="sqlite-parallel",
-            store=SQLiteSessionStore(db, serializer),
+            executions=backend.executions,
+            transactions=backend.transactions,
+            serializer=serializer,
             hasher=hasher,
         ):
             await sqp_root()
@@ -67,9 +70,12 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
     # boundaries, then resume: no child body should re-execute.
     _ran.clear()
     _interrupt_root = False
+    backend = SQLiteBackend(db)
     async with Session(
         id="sqlite-parallel",
-        store=SQLiteSessionStore(db, serializer),
+        executions=backend.executions,
+        transactions=backend.transactions,
+        serializer=serializer,
         hasher=hasher,
     ):
         total = await sqp_root()

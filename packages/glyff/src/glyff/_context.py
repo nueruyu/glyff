@@ -52,8 +52,8 @@ class Context:
         return self._serializer
 
     @property
-    def store(self) -> ExecutionRepository:
-        return self._executions
+    def transactions(self) -> TransactionProvider:
+        return self._transactions
 
     @property
     def sequencer(self) -> Sequencer:

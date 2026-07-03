@@ -18,16 +18,18 @@ This package depends on `glyff>=0.1.0` (no additional runtime dependencies —
 ## Usage
 
 ```python
-from glyff_sqlite import SQLiteSessionStore
+from glyff_sqlite import SQLiteBackend
 
-store = SQLiteSessionStore("executions.sqlite3")
+backend = SQLiteBackend("executions.sqlite3")
 ```
 
 ## Public API
 
-| Name                 | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `SQLiteSessionStore` | Durable `ExecutionRepository` backed by local SQLite.        |
+| Name                        | Description                                          |
+| --------------------------- | ---------------------------------------------------- |
+| `SQLiteBackend`             | Bundle exposing repository and transaction provider. |
+| `SQLiteExecutionRepository` | Durable repository backed by local SQLite.           |
+| `SQLiteTransactionProvider` | Transaction provider for the SQLite backend.         |
 
 The underlying `SQLiteClient` is internal and not part of the public API.
 

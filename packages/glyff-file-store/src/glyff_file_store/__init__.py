@@ -1,6 +1,11 @@
-from ._store import FileExecutionRepository, JsonFileSessionStore
+from ._store import (
+    FileExecutionRepository,
+    FileTransactionProvider,
+    JsonFileBackend,
+)
 
 __all__ = [
-    "JsonFileSessionStore",
+    "JsonFileBackend",
     "FileExecutionRepository",
+    "FileTransactionProvider",
 ]

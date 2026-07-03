@@ -16,24 +16,25 @@ from glyff._event_system import EventHandler
 from glyff._executor import execute
 from glyff._sequencer import Sequencer
 from glyff.events import ExecutionCompleted, ExecutionFailed
+from glyff.store import MemoryExecutionRepository
 from glyff.store._memory import _make_key
 from glyff.store._memory_client import MemoryClient
 from glyff.store.utils import execution_id_to_path
 from glyff.tests.stubs.pruning import PruningEventHandler
-from glyff.tests.stubs.store import StubSessionStore
+from glyff.tests.stubs.store import StubBackend, StubExecutionRepository
 
 
-async def _result(store: StubSessionStore, serializer, eid: ExecutionId, typ: type):
-    execution = await store.get(eid)
+async def _result(backend: StubBackend, serializer, eid: ExecutionId, typ: type):
+    execution = await backend.executions.get(eid)
     if execution is None or execution.result is None:
         return None
     return await serializer.deserialize(execution.result.data, typ)
 
 
 @pytest.fixture
-def transaction_scope_factory(mock_store: StubSessionStore):
+def transaction_scope_factory(mock_backend: StubBackend):
     def factory():
-        return TransactionScope(mock_store)
+        return TransactionScope(mock_backend.transactions)
 
     return factory
 
@@ -46,7 +47,7 @@ def set_context_for_tests(test_context: Context):
 
 
 async def test_successful_execution(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
     serializer: Serializer,
@@ -69,26 +70,26 @@ async def test_successful_execution(
     assert not test_context.tracer.call_stack
     test_context.sequencer.reset_for_call.assert_called_once_with(base_execution_id)
 
-    saves = mock_store.get_calls("save")
+    saves = mock_backend.get_calls("save")
     assert [c.args[0].status for c in saves] == [
         ExecutionStatus.STARTED,
         ExecutionStatus.COMPLETED,
     ]
-    assert await _result(mock_store, serializer, base_execution_id, str) == "hello"
-    assert len(mock_store.get_calls("commit")) == 3
+    assert await _result(mock_backend, serializer, base_execution_id, str) == "hello"
+    assert len(mock_backend.get_calls("commit")) == 3
 
 
 async def test_completion_prunes_descendants_when_enabled(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     hasher,
     serializer: Serializer,
 ):
-    emitter = EventEmitter([PruningEventHandler()])
+    emitter = EventEmitter([PruningEventHandler(mock_backend.executions)])
     ctx = Context(
         session_id="prune-on",
-        executions=mock_store,
-        transactions=mock_store,
+        executions=mock_backend.executions,
+        transactions=mock_backend.transactions,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -106,7 +107,7 @@ async def test_completion_prunes_descendants_when_enabled(
                 execution.complete(
                     SerializedValue(await serializer.serialize("child", str))
                 )
-                await mock_store.save(execution)
+                await mock_backend.executions.save(execution)
             return "hello"
 
         result = await execute(
@@ -121,24 +122,24 @@ async def test_completion_prunes_descendants_when_enabled(
         reset_context(token)
 
     assert result == "hello"
-    desc_calls = mock_store.get_calls("descendants_of")
+    desc_calls = mock_backend.get_calls("descendants_of")
     assert any(c.args[0] == base_execution_id for c in desc_calls)
-    delete_calls = mock_store.get_calls("delete_many")
+    delete_calls = mock_backend.get_calls("delete_many")
     assert len(delete_calls) == 1
     assert delete_calls[0].args[0] == [child]
 
 
 async def test_nested_completion_prunes(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     nested_execution_id: ExecutionId,
     hasher,
     serializer: Serializer,
 ):
-    emitter = EventEmitter([PruningEventHandler()])
+    emitter = EventEmitter([PruningEventHandler(mock_backend.executions)])
     ctx = Context(
         session_id="prune-nested",
-        executions=mock_store,
-        transactions=mock_store,
+        executions=mock_backend.executions,
+        transactions=mock_backend.transactions,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -146,6 +147,7 @@ async def test_nested_completion_prunes(
     )
     token = set_context(ctx)
     try:
+
         async def sample_func():
             return "hello"
 
@@ -160,13 +162,13 @@ async def test_nested_completion_prunes(
     finally:
         reset_context(token)
 
-    desc_calls = mock_store.get_calls("descendants_of")
+    desc_calls = mock_backend.get_calls("descendants_of")
     assert any(c.args[0] == nested_execution_id for c in desc_calls)
-    assert not mock_store.get_calls("delete_many")
+    assert not mock_backend.get_calls("delete_many")
 
 
 async def test_completion_does_not_prune_when_disabled(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
 ):
@@ -182,12 +184,12 @@ async def test_completion_does_not_prune_when_disabled(
         return_type=str,
     )
 
-    assert not mock_store.get_calls("descendants_of")
-    assert not mock_store.get_calls("delete_many")
+    assert not mock_backend.get_calls("descendants_of")
+    assert not mock_backend.get_calls("delete_many")
 
 
 async def test_completed_task_is_skipped(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
     serializer: Serializer,
@@ -201,12 +203,10 @@ async def test_completed_task_is_skipped(
     test_context.sequencer.reset_for_call = AsyncMock()
 
     path = execution_id_to_path(base_execution_id)
-    mock_store._mem_store._client.data[_make_key(path, "status")] = (
-        ExecutionStatus.COMPLETED
+    mock_backend._client.data[_make_key(path, "status")] = ExecutionStatus.COMPLETED
+    mock_backend._client.data[_make_key(path, "result")] = await serializer.serialize(
+        "cached_result", str
     )
-    mock_store._mem_store._client.data[
-        _make_key(path, "result")
-    ] = await serializer.serialize("cached_result", str)
 
     result = await execute(
         ctx=test_context,
@@ -220,12 +220,12 @@ async def test_completed_task_is_skipped(
     assert result == "cached_result"
     assert not executed
     test_context.sequencer.reset_for_call.assert_not_called()
-    assert not mock_store.get_calls("save")
-    assert not mock_store.get_calls("commit")
+    assert not mock_backend.get_calls("save")
+    assert not mock_backend.get_calls("commit")
 
 
 async def test_failed_record_is_retryable(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
 ):
@@ -233,10 +233,8 @@ async def test_failed_record_is_retryable(
         return "recovered"
 
     path = execution_id_to_path(base_execution_id)
-    mock_store._mem_store._client.data[_make_key(path, "status")] = (
-        ExecutionStatus.FAILED
-    )
-    mock_store._mem_store._client.data[_make_key(path, "error")] = "it broke"
+    mock_backend._client.data[_make_key(path, "status")] = ExecutionStatus.FAILED
+    mock_backend._client.data[_make_key(path, "error")] = "it broke"
 
     result = await execute(
         ctx=test_context,
@@ -251,7 +249,7 @@ async def test_failed_record_is_retryable(
 
 
 async def test_general_exception_marks_execution_failed(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
 ):
@@ -269,12 +267,12 @@ async def test_general_exception_marks_execution_failed(
         )
 
     assert not test_context.tracer.call_stack
-    record = await mock_store.get(base_execution_id)
+    record = await mock_backend.executions.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.FAILED
     assert record.error == "oops"
-    assert len(mock_store.get_calls("commit")) == 2
-    assert not mock_store.get_calls("rollback")
+    assert len(mock_backend.get_calls("commit")) == 2
+    assert not mock_backend.get_calls("rollback")
 
 
 async def test_original_traceback_is_preserved_on_function_exception(
@@ -304,12 +302,12 @@ async def test_original_traceback_is_preserved_on_function_exception(
 
 
 async def test_start_is_committed_before_function_body_runs(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
 ):
     async def sample_func():
-        record = await mock_store.get(base_execution_id)
+        record = await mock_backend.executions.get(base_execution_id)
         assert record is not None
         assert record.status == ExecutionStatus.STARTED
         return "hello"
@@ -327,7 +325,7 @@ async def test_start_is_committed_before_function_body_runs(
 
 
 async def test_function_exception_commits_body_scope_writes(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
     serializer: Serializer,
@@ -356,14 +354,14 @@ async def test_function_exception_commits_body_scope_writes(
             return_type=str,
         )
 
-    record = await mock_store.get(metadata_id)
+    record = await mock_backend.executions.get(metadata_id)
     assert record is not None
     assert record.status == ExecutionStatus.COMPLETED
-    assert await _result(mock_store, serializer, metadata_id, str) == "saved"
+    assert await _result(mock_backend, serializer, metadata_id, str) == "saved"
 
 
 async def test_failure_event_handlers_run_inside_transaction(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     nested_execution_id: ExecutionId,
     hasher,
@@ -378,8 +376,8 @@ async def test_failure_event_handlers_run_inside_transaction(
 
     ctx = Context(
         session_id="failure-handler-tx",
-        executions=mock_store,
-        transactions=mock_store,
+        executions=mock_backend.executions,
+        transactions=mock_backend.transactions,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -389,8 +387,10 @@ async def test_failure_event_handlers_run_inside_transaction(
     try:
         async with ctx.get_transaction_scope():
             execution = Execution.start(nested_execution_id)
-            execution.complete(SerializedValue(await serializer.serialize("child", str)))
-            await mock_store.save(execution)
+            execution.complete(
+                SerializedValue(await serializer.serialize("child", str))
+            )
+            await mock_backend.executions.save(execution)
 
         async def sample_func():
             raise ValueError("oops")
@@ -407,14 +407,14 @@ async def test_failure_event_handlers_run_inside_transaction(
     finally:
         reset_context(token)
 
-    delete_calls = mock_store.get_calls("delete_many")
+    delete_calls = mock_backend.get_calls("delete_many")
     assert len(delete_calls) == 1
     assert delete_calls[0].args[0] == [nested_execution_id]
     assert len(seen_exceptions) == 1
     assert isinstance(seen_exceptions[0], ValueError)
     assert str(seen_exceptions[0]) == "oops"
-    assert await mock_store.get(nested_execution_id) is None
-    record = await mock_store.get(base_execution_id)
+    assert await mock_backend.executions.get(nested_execution_id) is None
+    record = await mock_backend.executions.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.FAILED
 
@@ -424,17 +424,21 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     serializer: Serializer,
     hasher,
 ):
-    class FailingCompleteStore(StubSessionStore):
+    class FailingCompleteRepository(StubExecutionRepository):
         async def save(self, execution: Execution) -> None:
             if execution.status is ExecutionStatus.COMPLETED:
                 raise RuntimeError("complete failed")
             await super().save(execution)
 
-    store = FailingCompleteStore(client=MemoryClient(), serializer=serializer)
+    client = MemoryClient()
+    backend = StubBackend(client)
+    backend.executions = FailingCompleteRepository(
+        backend._record, MemoryExecutionRepository(client)
+    )
     ctx = Context(
         session_id="complete-fails",
-        executions=store,
-        transactions=store,
+        executions=backend.executions,
+        transactions=backend.transactions,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -442,6 +446,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     )
     token = set_context(ctx)
     try:
+
         async def sample_func():
             return "hello"
 
@@ -457,10 +462,10 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     finally:
         reset_context(token)
 
-    record = await store.get(base_execution_id)
+    record = await backend.executions.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.STARTED
-    assert len(store.get_calls("rollback")) == 1
+    assert len(backend.get_calls("rollback")) == 1
 
 
 async def test_completed_handler_failure_does_not_roll_back_completion(
@@ -472,11 +477,11 @@ async def test_completed_handler_failure_does_not_roll_back_completion(
         async def handle(self, event: ExecutionCompleted) -> None:
             raise RuntimeError("handler failed")
 
-    store = StubSessionStore(client=MemoryClient(), serializer=serializer)
+    backend = StubBackend(client=MemoryClient())
     ctx = Context(
         session_id="completed-handler-fails",
-        executions=store,
-        transactions=store,
+        executions=backend.executions,
+        transactions=backend.transactions,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -484,6 +489,7 @@ async def test_completed_handler_failure_does_not_roll_back_completion(
     )
     token = set_context(ctx)
     try:
+
         async def sample_func():
             return "hello"
 
@@ -499,14 +505,14 @@ async def test_completed_handler_failure_does_not_roll_back_completion(
     finally:
         reset_context(token)
 
-    record = await store.get(base_execution_id)
+    record = await backend.executions.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.COMPLETED
-    assert not store.get_calls("rollback")
+    assert not backend.get_calls("rollback")
 
 
 async def test_nested_child_commits_without_losing_parent_staging(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     nested_execution_id: ExecutionId,
     test_context: Context,
@@ -549,16 +555,16 @@ async def test_nested_child_commits_without_losing_parent_staging(
     )
 
     assert result == "child"
-    marker = await mock_store.get(marker_id)
+    marker = await mock_backend.executions.get(marker_id)
     assert marker is not None
     assert marker.status == ExecutionStatus.STARTED
-    child_record = await mock_store.get(nested_execution_id)
+    child_record = await mock_backend.executions.get(nested_execution_id)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 
 
 async def test_base_exception_after_start_keeps_started_record(
-    mock_store: StubSessionStore,
+    mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     test_context: Context,
 ):
@@ -575,9 +581,9 @@ async def test_base_exception_after_start_keeps_started_record(
             return_type=str,
         )
 
-    assert len(mock_store.get_calls("commit")) == 1
-    assert len(mock_store.get_calls("rollback")) == 1
+    assert len(mock_backend.get_calls("commit")) == 1
+    assert len(mock_backend.get_calls("rollback")) == 1
 
-    record = await mock_store.get(base_execution_id)
+    record = await mock_backend.executions.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.STARTED

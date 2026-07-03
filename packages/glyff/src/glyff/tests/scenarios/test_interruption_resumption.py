@@ -1,7 +1,7 @@
 import pytest
 
-from glyff import ArgsHasher, Session, engrave
-from glyff.tests.types import StoreFactory
+from glyff import ArgsHasher, engrave
+from glyff.tests.types import BackendFactory, make_session
 
 _calls: list[str] = []
 _interrupt: bool = False
@@ -44,14 +44,14 @@ async def ir_root() -> str:
 
 
 async def test_interrupted_session_engraves_completed_tasks(
-    store_factory: StoreFactory, hasher: ArgsHasher
+    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
 ):
     global _interrupt
-    store = store_factory("ir-interrupt")
+    backend = backend_factory("ir-interrupt")
 
     _interrupt = True
     with pytest.raises(ApplicationPause, match="waiting"):
-        async with Session(id="ir-interrupt", store=store, hasher=hasher):
+        async with make_session("ir-interrupt", backend, hasher, serializer):
             await ir_root()
 
     assert "a" in _calls
@@ -60,20 +60,20 @@ async def test_interrupted_session_engraves_completed_tasks(
 
 
 async def test_resumed_session_skips_completed_tasks(
-    store_factory: StoreFactory, hasher: ArgsHasher
+    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
 ):
     global _interrupt
-    store = store_factory("ir-resume")
+    backend = backend_factory("ir-resume")
 
     _interrupt = True
     with pytest.raises(ApplicationPause, match="waiting"):
-        async with Session(id="ir-resume", store=store, hasher=hasher):
+        async with make_session("ir-resume", backend, hasher, serializer):
             await ir_root()
 
     _calls.clear()
 
     _interrupt = False
-    async with Session(id="ir-resume", store=store, hasher=hasher):
+    async with make_session("ir-resume", backend, hasher, serializer):
         result = await ir_root()
 
     assert result == "A:B"

@@ -80,8 +80,7 @@ class Execution:
     def fail(self, error: str) -> None:
         if self.status in {ExecutionStatus.COMPLETED, ExecutionStatus.FAILED}:
             raise ValueError(
-                f"Cannot fail execution {self.id}: "
-                f"already {self.status.name.lower()}"
+                f"Cannot fail execution {self.id}: already {self.status.name.lower()}"
             )
         self.status = ExecutionStatus.FAILED
         self.error = error

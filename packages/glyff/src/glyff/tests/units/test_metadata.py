@@ -11,39 +11,34 @@ from glyff import (
     engrave,
     get_context,
 )
+from glyff._context import TransactionScope
 from glyff.exceptions import NoCurrentExecutionError
-from glyff.store import MemorySessionStore
-from glyff.store._memory_client import MemoryClient
-from glyff.tests.types import StoreFactory
-
-
-def _store(serializer) -> MemorySessionStore:
-    return MemorySessionStore(client=MemoryClient(), serializer=serializer)
+from glyff.store import MemoryBackend
+from glyff.tests.types import BackendFactory
 
 
 def _eid(name: str, parent: ExecutionId | None = None) -> ExecutionId:
     return ExecutionId(parent_id=parent, name=name, sequence=0, args_hash="h")
 
 
-async def _start(store: MemorySessionStore, eid: ExecutionId) -> None:
-    tx = await store.begin_transaction()
-    await store.save(Execution.start(eid))
-    await tx.commit()
+async def _start(backend: MemoryBackend, eid: ExecutionId) -> None:
+    async with TransactionScope(backend.transactions):
+        await backend.executions.save(Execution.start(eid))
 
 
-async def _set_metadata(store, serializer, eid, key, value, value_type) -> None:
-    execution = await store.get(eid)
+async def _set_metadata(backend, serializer, eid, key, value, value_type) -> None:
+    execution = await backend.executions.get(eid)
     if execution is None:
         raise LookupError(f"Execution {eid} not found")
     execution.set_metadata(
         key,
         SerializedValue(await serializer.serialize(value, value_type)),
     )
-    await store.save(execution)
+    await backend.executions.save(execution)
 
 
-async def _get_metadata(store, serializer, eid, key, return_type):
-    execution = await store.get(eid)
+async def _get_metadata(backend, serializer, eid, key, return_type):
+    execution = await backend.executions.get(eid)
     if execution is None:
         return None
     metadata = execution.get_metadata(key)
@@ -53,95 +48,93 @@ async def _get_metadata(store, serializer, eid, key, return_type):
 
 
 async def test_set_get_roundtrip(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     eid = _eid("root")
-    await _start(store, eid)
+    await _start(backend, eid)
 
-    tx = await store.begin_transaction()
-    await _set_metadata(store, serializer, eid, "note", {"a": 1}, dict)
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        await _set_metadata(backend, serializer, eid, "note", {"a": 1}, dict)
 
-    assert await _get_metadata(store, serializer, eid, "note", dict) == {"a": 1}
-    assert await _get_metadata(store, serializer, eid, "missing", dict) is None
+    assert await _get_metadata(backend, serializer, eid, "note", dict) == {"a": 1}
+    assert await _get_metadata(backend, serializer, eid, "missing", dict) is None
 
 
 async def test_keyed_entries_are_independent(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     eid = _eid("root")
-    await _start(store, eid)
+    await _start(backend, eid)
 
-    tx = await store.begin_transaction()
-    await _set_metadata(store, serializer, eid, "a", "one", str)
-    await _set_metadata(store, serializer, eid, "b", "two", str)
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        await _set_metadata(backend, serializer, eid, "a", "one", str)
+        await _set_metadata(backend, serializer, eid, "b", "two", str)
 
-    tx = await store.begin_transaction()
-    await _set_metadata(store, serializer, eid, "a", "ONE", str)
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        await _set_metadata(backend, serializer, eid, "a", "ONE", str)
 
-    assert await _get_metadata(store, serializer, eid, "a", str) == "ONE"
-    assert await _get_metadata(store, serializer, eid, "b", str) == "two"
+    assert await _get_metadata(backend, serializer, eid, "a", str) == "ONE"
+    assert await _get_metadata(backend, serializer, eid, "b", str) == "two"
 
 
 async def test_metadata_is_co_transactional(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     eid = _eid("root")
-    await _start(store, eid)
+    await _start(backend, eid)
 
-    tx = await store.begin_transaction()
-    await _set_metadata(store, serializer, eid, "note", "staged", str)
-    await tx.rollback()
+    scope = TransactionScope(backend.transactions)
+    await scope.__aenter__()
+    await _set_metadata(backend, serializer, eid, "note", "staged", str)
+    await scope.rollback()
 
-    assert await _get_metadata(store, serializer, eid, "note", str) is None
+    assert await _get_metadata(backend, serializer, eid, "note", str) is None
 
 
 async def test_complete_preserves_metadata(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     eid = _eid("root")
 
-    tx = await store.begin_transaction()
-    execution = Execution.start(eid)
-    execution.set_metadata("note", SerializedValue(await serializer.serialize("kept", str)))
-    execution.complete(SerializedValue(await serializer.serialize("result", str)))
-    await store.save(execution)
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        execution = Execution.start(eid)
+        execution.set_metadata(
+            "note", SerializedValue(await serializer.serialize("kept", str))
+        )
+        execution.complete(SerializedValue(await serializer.serialize("result", str)))
+        await backend.executions.save(execution)
 
-    record = await store.get(eid)
+    record = await backend.executions.get(eid)
     assert record is not None and record.result is not None
     assert await serializer.deserialize(record.result.data, str) == "result"
-    assert await _get_metadata(store, serializer, eid, "note", str) == "kept"
+    assert await _get_metadata(backend, serializer, eid, "note", str) == "kept"
 
 
 async def test_delete_many_removes_metadata(serializer):
-    store = _store(serializer)
+    backend = MemoryBackend()
     eid = _eid("root")
-    await _start(store, eid)
-    tx = await store.begin_transaction()
-    await _set_metadata(store, serializer, eid, "note", "gone", str)
-    await tx.commit()
+    await _start(backend, eid)
+    async with TransactionScope(backend.transactions):
+        await _set_metadata(backend, serializer, eid, "note", "gone", str)
 
-    tx = await store.begin_transaction()
-    await store.delete_many([eid])
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        await backend.executions.delete_many([eid])
 
-    assert await _get_metadata(store, serializer, eid, "note", str) is None
+    assert await _get_metadata(backend, serializer, eid, "note", str) is None
 
 
 async def test_set_metadata_unknown_execution_raises(serializer):
-    store = _store(serializer)
-    tx = await store.begin_transaction()
+    backend = MemoryBackend()
+    scope = TransactionScope(backend.transactions)
+    await scope.__aenter__()
     with pytest.raises(LookupError):
-        await _set_metadata(store, serializer, _eid("ghost"), "k", "v", str)
-    await tx.rollback()
+        await _set_metadata(backend, serializer, _eid("ghost"), "k", "v", str)
+    await scope.rollback()
 
 
 async def test_get_metadata_unknown_execution_returns_none(serializer):
-    store = _store(serializer)
-    assert await _get_metadata(store, serializer, _eid("ghost"), "k", str) is None
+    backend = MemoryBackend()
+    assert await _get_metadata(backend, serializer, _eid("ghost"), "k", str) is None
 
 
 async def test_ctx_metadata_roundtrips_and_persists(
-    store_factory: StoreFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
 ):
     captured: dict[str, ExecutionId] = {}
 
@@ -153,12 +146,18 @@ async def test_ctx_metadata_roundtrips_and_persists(
         captured["id"] = ctx.current_execution_id  # type: ignore[assignment]
         return "done"
 
-    store = store_factory("meta-ctx")
-    async with Session(id="meta-ctx", store=store, serializer=serializer, hasher=hasher):
+    backend = backend_factory("meta-ctx")
+    async with Session(
+        id="meta-ctx",
+        executions=backend.executions,
+        transactions=backend.transactions,
+        serializer=serializer,
+        hasher=hasher,
+    ):
         result = await annotate()
 
     assert result == "done"
-    assert await _get_metadata(store, serializer, captured["id"], "trace", dict) == {
+    assert await _get_metadata(backend, serializer, captured["id"], "trace", dict) == {
         "step": 1
     }
 
@@ -169,11 +168,11 @@ async def test_ctx_set_metadata_requires_active_execution():
     from glyff._sequencer import Sequencer
     from glyff.serialization import JsonArgsHasher, JsonSerializer
 
-    store = _store(JsonSerializer())
+    backend = MemoryBackend()
     ctx = Context(
         session_id="no-exec",
-        executions=store,
-        transactions=store,
+        executions=backend.executions,
+        transactions=backend.transactions,
         serializer=JsonSerializer(),
         sequencer=Sequencer(),
         hasher=JsonArgsHasher(),

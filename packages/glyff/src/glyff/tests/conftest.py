@@ -2,17 +2,17 @@ import uuid
 
 import pytest
 
-from glyff import ArgsHasher, EventEmitter, ExecutionId, Serializer, SessionStore
+from glyff import ArgsHasher, EventEmitter, ExecutionId, Serializer
 from glyff._context import Context
 from glyff._sequencer import Sequencer
 from glyff.serialization import (
     JsonArgsHasher,
     JsonSerializer,
 )
-from glyff.store import MemorySessionStore
+from glyff.store import MemoryBackend
 from glyff.store._memory_client import MemoryClient
-from glyff.tests.stubs.store import StubSessionStore
-from glyff.tests.types import StoreFactory
+from glyff.tests.stubs.store import StubBackend
+from glyff.tests.types import BackendFactory
 
 
 @pytest.fixture
@@ -43,27 +43,28 @@ def hasher() -> ArgsHasher:
 
 
 @pytest.fixture
-def store_factory(serializer: Serializer) -> StoreFactory:
-    def factory(session_id: str) -> SessionStore:
-        client = MemoryClient()
-        return MemorySessionStore(client=client, serializer=serializer)
+def backend_factory() -> BackendFactory:
+    def factory(session_id: str) -> MemoryBackend:
+        return MemoryBackend()
 
     return factory
 
 
 @pytest.fixture
-def mock_store(serializer: Serializer) -> StubSessionStore:
+def mock_backend() -> StubBackend:
     client = MemoryClient()
-    return StubSessionStore(client=client, serializer=serializer)
+    return StubBackend(client=client)
 
 
 @pytest.fixture
-def test_context(mock_store: StubSessionStore, hasher: ArgsHasher) -> Context:
+def test_context(
+    mock_backend: StubBackend, hasher: ArgsHasher, serializer: Serializer
+) -> Context:
     return Context(
         session_id=str(uuid.uuid4()),
-        executions=mock_store,
-        transactions=mock_store,
-        serializer=mock_store.serializer,
+        executions=mock_backend.executions,
+        transactions=mock_backend.transactions,
+        serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
         event_emitter=EventEmitter([]),

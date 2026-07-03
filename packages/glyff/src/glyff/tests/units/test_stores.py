@@ -1,7 +1,16 @@
 import pytest
 
-from glyff import Execution, ExecutionId, ExecutionStatus, SerializedValue, SessionStore
-from glyff.tests.types import StoreFactory
+from glyff import (
+    Execution,
+    ExecutionId,
+    ExecutionRepository,
+    ExecutionStatus,
+    SerializedValue,
+    TransactionProvider,
+)
+from glyff._context import TransactionScope
+from glyff.store import MemoryBackend
+from glyff.tests.types import BackendFactory
 
 
 def _result(value: str) -> SerializedValue:
@@ -9,94 +18,93 @@ def _result(value: str) -> SerializedValue:
 
 
 async def test_get_missing_returns_none(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
-    store: SessionStore = store_factory("test-initial")
-    assert await store.get(base_execution_id) is None
+    backend = backend_factory("test-initial")
+    assert await backend.executions.get(base_execution_id) is None
 
 
 async def test_save_start_stages_execution(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
-    store: SessionStore = store_factory("test-start")
-    tx = await store.begin_transaction()
-    await store.save(Execution.start(base_execution_id))
-    staged = await store.get(base_execution_id)
-    assert staged is not None
-    assert staged.status == ExecutionStatus.STARTED
-    await tx.commit()
-    state = await store.get(base_execution_id)
+    backend = backend_factory("test-start")
+    async with TransactionScope(backend.transactions):
+        await backend.executions.save(Execution.start(base_execution_id))
+        staged = await backend.executions.get(base_execution_id)
+        assert staged is not None
+        assert staged.status == ExecutionStatus.STARTED
+
+    state = await backend.executions.get(base_execution_id)
     assert state is not None
     assert state.status == ExecutionStatus.STARTED
 
 
 async def test_completed_result_persists(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
-    store: SessionStore = store_factory("test-commit-ok")
+    backend = backend_factory("test-commit-ok")
     execution = Execution.start(base_execution_id)
     execution.complete(_result("42"))
 
-    tx = await store.begin_transaction()
-    await store.save(execution)
-    staged = await store.get(base_execution_id)
-    assert staged is not None
-    assert staged.status == ExecutionStatus.COMPLETED
-    assert staged.result == _result("42")
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        await backend.executions.save(execution)
+        staged = await backend.executions.get(base_execution_id)
+        assert staged is not None
+        assert staged.status == ExecutionStatus.COMPLETED
+        assert staged.result == _result("42")
 
-    state = await store.get(base_execution_id)
+    state = await backend.executions.get(base_execution_id)
     assert state is not None
     assert state.status == ExecutionStatus.COMPLETED
     assert state.result == _result("42")
 
 
 async def test_failed_error_persists(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
-    store: SessionStore = store_factory("test-commit-fail")
+    backend = backend_factory("test-commit-fail")
     execution = Execution.start(base_execution_id)
     execution.fail("something went wrong")
-    tx = await store.begin_transaction()
-    await store.save(execution)
-    await tx.commit()
+    async with TransactionScope(backend.transactions):
+        await backend.executions.save(execution)
 
-    state = await store.get(base_execution_id)
+    state = await backend.executions.get(base_execution_id)
     assert state is not None
     assert state.status == ExecutionStatus.FAILED
     assert state.error == "something went wrong"
 
 
 async def test_rollback_discards_save(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
-    store: SessionStore = store_factory("test-rollback")
-    tx = await store.begin_transaction()
-    await store.save(Execution.start(base_execution_id))
-    await tx.rollback()
-    assert await store.get(base_execution_id) is None
+    backend = backend_factory("test-rollback")
+    scope = TransactionScope(backend.transactions)
+    await scope.__aenter__()
+    await backend.executions.save(Execution.start(base_execution_id))
+    await scope.rollback()
+    assert await backend.executions.get(base_execution_id) is None
 
 
 async def test_save_requires_transaction(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
-    store: SessionStore = store_factory("test-save-without-transaction")
+    backend = backend_factory("test-save-without-transaction")
 
     with pytest.raises(RuntimeError, match="write attempted outside a transaction"):
-        await store.save(Execution.start(base_execution_id))
+        await backend.executions.save(Execution.start(base_execution_id))
 
 
 async def test_delete_many_requires_transaction(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
-    store: SessionStore = store_factory("test-delete-without-transaction")
+    backend = backend_factory("test-delete-without-transaction")
 
     with pytest.raises(RuntimeError, match="write attempted outside a transaction"):
-        await store.delete_many([base_execution_id])
+        await backend.executions.delete_many([base_execution_id])
 
 
 async def test_nested_child_commit_is_independent_of_parent_staging(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
     child = ExecutionId(
         parent_id=base_execution_id,
@@ -104,34 +112,36 @@ async def test_nested_child_commit_is_independent_of_parent_staging(
         sequence=0,
         args_hash="child",
     )
-    store: SessionStore = store_factory("test-nested-child-commit")
+    backend = backend_factory("test-nested-child-commit")
 
-    parent_tx = await store.begin_transaction()
-    await store.save(Execution.start(base_execution_id))
+    parent = TransactionScope(backend.transactions)
+    await parent.__aenter__()
+    await backend.executions.save(Execution.start(base_execution_id))
 
-    child_tx = await store.begin_transaction()
+    child_scope = TransactionScope(backend.transactions)
+    await child_scope.__aenter__()
     child_execution = Execution.start(child)
     child_execution.complete(_result("child"))
-    await store.save(child_execution)
-    await child_tx.commit()
+    await backend.executions.save(child_execution)
+    await child_scope.commit()
 
-    parent_record = await store.get(base_execution_id)
+    parent_record = await backend.executions.get(base_execution_id)
     assert parent_record is not None
     assert parent_record.status == ExecutionStatus.STARTED
-    child_record = await store.get(child)
+    child_record = await backend.executions.get(child)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 
-    await parent_tx.rollback()
+    await parent.rollback()
 
-    assert await store.get(base_execution_id) is None
-    child_record = await store.get(child)
+    assert await backend.executions.get(base_execution_id) is None
+    child_record = await backend.executions.get(child)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 
 
 async def test_parent_staging_survives_nested_child_rollback(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
     child = ExecutionId(
         parent_id=base_execution_id,
@@ -139,37 +149,39 @@ async def test_parent_staging_survives_nested_child_rollback(
         sequence=0,
         args_hash="child",
     )
-    store: SessionStore = store_factory("test-nested-child-rollback")
+    backend = backend_factory("test-nested-child-rollback")
 
-    parent_tx = await store.begin_transaction()
-    await store.save(Execution.start(base_execution_id))
+    parent = TransactionScope(backend.transactions)
+    await parent.__aenter__()
+    await backend.executions.save(Execution.start(base_execution_id))
 
-    child_tx = await store.begin_transaction()
+    child_scope = TransactionScope(backend.transactions)
+    await child_scope.__aenter__()
     child_execution = Execution.start(child)
     child_execution.complete(_result("child"))
-    await store.save(child_execution)
-    await child_tx.rollback()
+    await backend.executions.save(child_execution)
+    await child_scope.rollback()
 
-    parent_record = await store.get(base_execution_id)
+    parent_record = await backend.executions.get(base_execution_id)
     assert parent_record is not None
     assert parent_record.status == ExecutionStatus.STARTED
-    assert await store.get(child) is None
+    assert await backend.executions.get(child) is None
 
-    await parent_tx.commit()
+    await parent.commit()
 
-    parent_record = await store.get(base_execution_id)
+    parent_record = await backend.executions.get(base_execution_id)
     assert parent_record is not None
     assert parent_record.status == ExecutionStatus.STARTED
-    assert await store.get(child) is None
+    assert await backend.executions.get(child) is None
 
 
 async def test_out_of_order_transaction_close_raises(
-    store_factory: StoreFactory, base_execution_id: ExecutionId
+    backend_factory: BackendFactory, base_execution_id: ExecutionId
 ):
-    store: SessionStore = store_factory("out-of-order")
+    backend = backend_factory("out-of-order")
 
-    parent = await store.begin_transaction()
-    child = await store.begin_transaction()
+    parent = await backend.transactions.begin_transaction()
+    child = await backend.transactions.begin_transaction()
 
     with pytest.raises(RuntimeError, match="out of order"):
         await parent.commit()
@@ -179,7 +191,7 @@ async def test_out_of_order_transaction_close_raises(
 
 
 async def test_three_level_nested_transactions_restore_each_parent(
-    store_factory: StoreFactory,
+    backend_factory: BackendFactory,
 ):
     root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
     child = ExecutionId(parent_id=root, name="child", sequence=0, args_hash="c")
@@ -187,32 +199,47 @@ async def test_three_level_nested_transactions_restore_each_parent(
         parent_id=child, name="grandchild", sequence=0, args_hash="g"
     )
 
-    store: SessionStore = store_factory("three-level-nesting")
+    backend = backend_factory("three-level-nesting")
 
-    root_tx = await store.begin_transaction()
-    await store.save(Execution.start(root))
+    root_scope = TransactionScope(backend.transactions)
+    await root_scope.__aenter__()
+    await backend.executions.save(Execution.start(root))
 
-    child_tx = await store.begin_transaction()
+    child_scope = TransactionScope(backend.transactions)
+    await child_scope.__aenter__()
     child_execution = Execution.start(child)
 
-    grandchild_tx = await store.begin_transaction()
+    grandchild_scope = TransactionScope(backend.transactions)
+    await grandchild_scope.__aenter__()
     grandchild_execution = Execution.start(grandchild)
     grandchild_execution.complete(_result("grandchild"))
-    await store.save(grandchild_execution)
-    await grandchild_tx.commit()
+    await backend.executions.save(grandchild_execution)
+    await grandchild_scope.commit()
 
     child_execution.complete(_result("child"))
-    await store.save(child_execution)
-    await child_tx.commit()
+    await backend.executions.save(child_execution)
+    await child_scope.commit()
 
-    await root_tx.rollback()
+    await root_scope.rollback()
 
-    assert await store.get(root) is None
+    assert await backend.executions.get(root) is None
 
-    child_record = await store.get(child)
+    child_record = await backend.executions.get(child)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 
-    grandchild_record = await store.get(grandchild)
+    grandchild_record = await backend.executions.get(grandchild)
     assert grandchild_record is not None
     assert grandchild_record.status == ExecutionStatus.COMPLETED
+
+
+async def test_memory_backend_exposes_separate_repository_and_transactions(
+    backend_factory: BackendFactory,
+):
+    backend = backend_factory("memory-boundary")
+
+    assert isinstance(backend, MemoryBackend)
+    assert backend.executions is not backend.transactions
+    assert isinstance(backend.executions, ExecutionRepository)
+    assert isinstance(backend.transactions, TransactionProvider)
+    assert not hasattr(backend.executions, "serializer")

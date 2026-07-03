@@ -7,6 +7,7 @@ import asyncio
 
 import pytest
 from glyff import ArgsHasher, Session, engrave
+from glyff.serialization import JsonSerializer
 
 _ran: set[int] = set()
 _interrupt_root: bool = False
@@ -44,21 +45,35 @@ async def jp_root() -> int:
 
 
 async def test_json_parallel_children_durable_after_root_interrupt(
-    store_factory, hasher: ArgsHasher
+    backend_factory, hasher: ArgsHasher, serializer: JsonSerializer
 ):
     global _interrupt_root
     sid = "json-parallel"
 
     _interrupt_root = True
     with pytest.raises(RootInterrupted):
-        async with Session(id=sid, store=store_factory(sid), hasher=hasher):
+        backend = backend_factory(sid)
+        async with Session(
+            id=sid,
+            executions=backend.executions,
+            transactions=backend.transactions,
+            serializer=serializer,
+            hasher=hasher,
+        ):
             await jp_root()
     assert _ran == set(range(_N))
 
     # Fresh store over the same session directory, then resume: no child re-runs.
     _ran.clear()
     _interrupt_root = False
-    async with Session(id=sid, store=store_factory(sid), hasher=hasher):
+    backend = backend_factory(sid)
+    async with Session(
+        id=sid,
+        executions=backend.executions,
+        transactions=backend.transactions,
+        serializer=serializer,
+        hasher=hasher,
+    ):
         total = await jp_root()
 
     assert total == sum(i * 10 for i in range(_N))

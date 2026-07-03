@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from glyff import ArgsHasher, Session, engrave
-from glyff.tests.types import StoreFactory
+from glyff import ArgsHasher, engrave
+from glyff.tests.types import BackendFactory, make_session
 
 
 class ParallelPause(Exception):
@@ -50,24 +50,24 @@ async def par_root(delay_a: float, delay_b: float) -> str:
 
 
 async def test_parallel_tasks_complete_successfully(
-    store_factory: StoreFactory, hasher: ArgsHasher
+    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
 ):
-    store = store_factory("par-success")
-    async with Session(id="par-success", store=store, hasher=hasher):
+    backend = backend_factory("par-success")
+    async with make_session("par-success", backend, hasher, serializer):
         result = await par_root(0.01, 0.005)
     assert result == "AB"
     assert sorted(_calls) == ["a", "b"]
 
 
 async def test_parallel_interrupted_task_is_retried_on_resume(
-    store_factory: StoreFactory, hasher: ArgsHasher
+    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
 ):
     global _interrupt_b
-    store = store_factory("par-resume")
+    backend = backend_factory("par-resume")
 
     _interrupt_b = True
     with pytest.raises(ParallelPause):
-        async with Session(id="par-resume", store=store, hasher=hasher):
+        async with make_session("par-resume", backend, hasher, serializer):
             await par_root(0.005, 0.01)
 
     assert "a" in _calls
@@ -76,7 +76,7 @@ async def test_parallel_interrupted_task_is_retried_on_resume(
     _calls.clear()
 
     _interrupt_b = False
-    async with Session(id="par-resume", store=store, hasher=hasher):
+    async with make_session("par-resume", backend, hasher, serializer):
         result = await par_root(0.005, 0.01)
 
     assert result == "AB"

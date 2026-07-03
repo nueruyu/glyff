@@ -1,6 +1,11 @@
-from ._memory import MemoryExecutionRepository, MemorySessionStore
+from ._memory import (
+    MemoryBackend,
+    MemoryExecutionRepository,
+    MemoryTransactionProvider,
+)
 
 __all__ = [
-    "MemorySessionStore",
+    "MemoryBackend",
     "MemoryExecutionRepository",
+    "MemoryTransactionProvider",
 ]

@@ -34,14 +34,15 @@ async def greet(name: str, answer: str | None = None) -> str:
 
 async def main(session_id: str, answer: str | None = None):
     serializer = PydanticSerializer()
-    executions = glyff_file_store.JsonFileSessionStore(
+    backend = glyff_file_store.JsonFileBackend(
         base_dir=".sessions",
         session_id=session_id,
     )
 
     session = glyff.Session(
         id=session_id,
-        executions=executions,
+        executions=backend.executions,
+        transactions=backend.transactions,
         serializer=serializer,
         hasher=PydanticArgsHasher(),
     )
@@ -70,7 +71,7 @@ the provided answer instead of pausing again.
 
 ## Behavior
 
-- Marked function calls are recorded in a session-scoped store, keyed by
+- Marked function calls are recorded in a session-scoped execution repository, keyed by
   function identity, arguments, and call position.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
@@ -112,26 +113,32 @@ transaction — GC is decoupled from the completion, and a prune failure never
 rolls it back:
 
 ```python
-from glyff import EventEmitter, EventHandler, Session
+from glyff import EventEmitter, EventHandler, ExecutionRepository, Session
 from glyff.events import ExecutionCompleted
 
 
 class PruneDescendants(EventHandler[ExecutionCompleted]):
+    def __init__(self, executions: ExecutionRepository):
+        self._executions = executions
+
     async def handle(self, event: ExecutionCompleted) -> None:
         async with event.context.get_transaction_scope():
-            descendants = await event.context.executions.descendants_of(
-                event.execution_id
-            )
+            descendants = await self._executions.descendants_of(event.execution_id)
             if descendants:
-                await event.context.executions.delete_many(descendants)
+                await self._executions.delete_many(descendants)
 
 
+backend = glyff_file_store.JsonFileBackend(
+    base_dir=".sessions",
+    session_id=session_id,
+)
 session = Session(
     id=session_id,
-    executions=executions,
+    executions=backend.executions,
+    transactions=backend.transactions,
     serializer=serializer,
     hasher=hasher,
-    event_emitter=EventEmitter([PruneDescendants()]),
+    event_emitter=EventEmitter([PruneDescendants(backend.executions)]),
 )
 ```
 
@@ -148,8 +155,8 @@ Early development. APIs may change before v1.0.
 | Package                                           | Description                                                    |
 | ------------------------------------------------- | -------------------------------------------------------------- |
 | [`glyff`](./packages/glyff)                       | Core primitive. In-memory only, standard library dependencies. |
-| [`glyff-file-store`](./packages/glyff-file-store) | Append-only file-backed session store (debug).                 |
-| [`glyff-sqlite`](./packages/glyff-sqlite)         | SQLite-backed durable session store (production).              |
+| [`glyff-file-store`](./packages/glyff-file-store) | File-backed execution repository (debug).                      |
+| [`glyff-sqlite`](./packages/glyff-sqlite)         | SQLite-backed durable execution repository (production).       |
 | [`glyff-pydantic`](./packages/glyff-pydantic)     | Pydantic-typed serialization and arg hashing.                  |
 
 ```bash

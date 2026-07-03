@@ -15,7 +15,7 @@ pip install glyff
 
 ## Behavior
 
-- Marked function calls are recorded in a session-scoped store, keyed by
+- Marked function calls are recorded in a session-scoped execution repository, keyed by
   function identity, arguments, and call position.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
@@ -26,25 +26,28 @@ pip install glyff
 
 ## Public API
 
-| Name              | Description                                                     |
-| ----------------- | --------------------------------------------------------------- |
-| `engrave`         | Decorator that marks an async function for recording.           |
-| `Session`         | Async context manager that scopes a sequence of engraved calls. |
-| `ExecutionId`     | Identifier for a recorded function execution.                   |
-| `Execution`       | Aggregate Root for a recorded function execution.               |
-| `ExecutionRecord` | Read DTO for execution state and result.                        |
-| `ExecutionStatus` | Enum: `STARTED`, `COMPLETED`, `FAILED`.                         |
-| `ExecutionRepository` | Repository for execution aggregates.                       |
-| `TransactionProvider` | Provider used by `TransactionScope`.                       |
-| `Serializer`      | Protocol for value serialization.                               |
-| `ArgsHasher`      | Protocol for argument hashing.                                  |
+| Name                  | Description                                                     |
+| --------------------- | --------------------------------------------------------------- |
+| `engrave`             | Decorator that marks an async function for recording.           |
+| `Session`             | Async context manager that scopes a sequence of engraved calls. |
+| `ExecutionId`         | Identifier for a recorded function execution.                   |
+| `Execution`           | Aggregate Root for a recorded function execution.               |
+| `ExecutionRecord`     | Read DTO for execution state and result.                        |
+| `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`, `FAILED`.                         |
+| `SerializedValue`     | Serializer-neutral persisted value.                             |
+| `Metadata`            | Metadata entry owned by an `Execution`.                         |
+| `ExecutionRepository` | Repository for execution aggregates.                            |
+| `Transaction`         | Active transaction boundary.                                    |
+| `TransactionProvider` | Provider used by `TransactionScope`.                            |
+| `Serializer`          | Protocol for value serialization.                               |
+| `ArgsHasher`          | Protocol for argument hashing.                                  |
 
 ## Extending
 
 - For persistent storage, see [`glyff-file-store`](https://pypi.org/project/glyff-file-store/).
 - For Pydantic-typed serialization, see [`glyff-pydantic`](https://pypi.org/project/glyff-pydantic/).
-- Custom backends can be written by implementing `ExecutionRepository` and
-  `TransactionProvider`.
+- Custom backends should provide separate `ExecutionRepository` and
+  `TransactionProvider` objects, often through a small backend bundle.
 
 ## Status
 

@@ -17,7 +17,7 @@ async def execute(
     Orchestrates the execution of a regular (awaitable) task: cache checks,
     per-event durable recording, and exception handling.
 
-    START, the function body, and COMPLETE each use separate store transaction
+    START, the function body, and COMPLETE each use separate transaction
     scopes, so a completed descendant can commit while an ancestor body is
     still running. ExecutionCompleted is emitted *after* the COMPLETE scope
     commits, so completion is durable before any handler runs and a handler
