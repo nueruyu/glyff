@@ -2,10 +2,8 @@
 scheme (which also makes keys collision-free across different parents)."""
 
 from glyff import ExecutionId
-from glyff.store import (
-    MemoryClient,
-    MemorySessionStore,
-)
+from glyff.store import MemorySessionStore
+from glyff.store._memory_client import MemoryClient
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 
@@ -35,9 +33,9 @@ async def test_get_descendants_strict_and_transitive(serializer):
     for eid in (root, a, grand, b):
         await _complete(store, eid, "v")
 
-    assert set(await store.get_descendants(root)) == {a, grand, b}
-    assert set(await store.get_descendants(a)) == {grand}
-    assert await store.get_descendants(grand) == []
+    assert set(await store.repository.get_descendants(root)) == {a, grand, b}
+    assert set(await store.repository.get_descendants(a)) == {grand}
+    assert await store.repository.get_descendants(grand) == []
 
 
 async def test_delete_execution_removes_only_that_id(serializer):
@@ -48,7 +46,7 @@ async def test_delete_execution_removes_only_that_id(serializer):
     await _complete(store, child, "cv")
 
     tx = await store.begin_transaction()
-    await store.delete_executions([child])
+    await store.repository.delete_executions([child])
     await tx.commit()
 
     assert await store.get_execution_record(child, str) is None
@@ -62,7 +60,7 @@ async def test_delete_execution_rolls_back(serializer):
     await _complete(store, eid, "v")
 
     tx = await store.begin_transaction()
-    await store.delete_executions([eid])
+    await store.repository.delete_executions([eid])
     await tx.rollback()
 
     rec = await store.get_execution_record(eid, str)
@@ -90,7 +88,7 @@ async def test_full_path_keys_avoid_cross_parent_collision(serializer):
 
     # Deleting one leaf does not touch the colliding sibling under the other parent.
     tx = await store.begin_transaction()
-    await store.delete_executions([leaf_under_p1])
+    await store.repository.delete_executions([leaf_under_p1])
     await tx.commit()
     assert await store.get_execution_record(leaf_under_p1, str) is None
     leaf_under_p2_rec = await store.get_execution_record(leaf_under_p2, str)

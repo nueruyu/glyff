@@ -11,7 +11,7 @@ from ._memory_client import MemoryClient
 from .utils import execution_id_to_path, path_to_execution_id
 
 _KEY_PREFIX = "execution::"
-_PARTS = ("status", "result", "error")
+_PARTS = ("status", "result", "error", "metadata")
 
 
 def _make_key(path: str, part: str) -> str:
@@ -94,18 +94,20 @@ class _MemoryExecution(Execution):
         self._client.stage_write(_make_key(path, "error"), error)
 
 
-class MemorySessionStore(SessionStore):
-    """An in-memory SessionStore for testing and development."""
+class MemoryExecutionRepository:
+    """Persistence for execution records over a :class:`MemoryClient`.
 
-    def __init__(self, client: MemoryClient, serializer: Serializer, **_):
+    Owns the ExecutionId<->key mapping, record codec, metadata, descendant
+    queries, and deletion. The store owns transactions; writes stage into the
+    client.
+    """
+
+    def __init__(self, client: MemoryClient, serializer: Serializer):
         self._client = client
         self._serializer = serializer
 
     def _id_to_key(self, id: ExecutionId, part: str) -> str:
         return _make_key(execution_id_to_path(id), part)
-
-    async def begin_transaction(self) -> Transaction:
-        return await _MemoryTransaction(self._client).begin()
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         status_key = self._id_to_key(execution_id, "status")
@@ -151,3 +153,58 @@ class MemorySessionStore(SessionStore):
         for execution_id in execution_ids:
             for part in _PARTS:
                 self._client.stage_delete(self._id_to_key(execution_id, part))
+
+    async def set_metadata(
+        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
+    ) -> None:
+        meta_key = self._id_to_key(execution_id, "metadata")
+        current = await self._client.read(meta_key)
+        metadata = dict(current) if current else {}
+        metadata[key] = await self._serializer.serialize(value, value_type)
+        self._client.stage_write(meta_key, metadata)
+
+    async def get_metadata(
+        self, execution_id: ExecutionId, key: str, return_type: type
+    ) -> Any | None:
+        metadata = await self._client.read(self._id_to_key(execution_id, "metadata"))
+        if not metadata or key not in metadata:
+            return None
+        return await self._serializer.deserialize(metadata[key], return_type)
+
+
+class MemorySessionStore(SessionStore):
+    """An in-memory SessionStore for testing and development.
+
+    Owns the transaction boundary; delegates persistence to
+    :class:`MemoryExecutionRepository`, exposed as ``repository``.
+    """
+
+    def __init__(self, serializer: Serializer, client: MemoryClient | None = None, **_):
+        client = client if client is not None else MemoryClient()
+        self._client = client
+        self._repository = MemoryExecutionRepository(client, serializer)
+
+    @property
+    def repository(self) -> MemoryExecutionRepository:
+        return self._repository
+
+    async def begin_transaction(self) -> Transaction:
+        return await _MemoryTransaction(self._client).begin()
+
+    async def start_execution(self, execution_id: ExecutionId) -> Execution:
+        return await self._repository.start_execution(execution_id)
+
+    async def get_execution_record(
+        self, execution_id: ExecutionId, return_type: type
+    ) -> ExecutionRecord | None:
+        return await self._repository.get_execution_record(execution_id, return_type)
+
+    async def set_metadata(
+        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
+    ) -> None:
+        await self._repository.set_metadata(execution_id, key, value, value_type)
+
+    async def get_metadata(
+        self, execution_id: ExecutionId, key: str, return_type: type
+    ) -> Any | None:
+        return await self._repository.get_metadata(execution_id, key, return_type)

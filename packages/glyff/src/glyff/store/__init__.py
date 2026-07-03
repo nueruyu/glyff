@@ -1,7 +1,6 @@
-from ._memory import MemorySessionStore
-from ._memory_client import MemoryClient
+from ._memory import MemoryExecutionRepository, MemorySessionStore
 
 __all__ = [
     "MemorySessionStore",
-    "MemoryClient",
+    "MemoryExecutionRepository",
 ]

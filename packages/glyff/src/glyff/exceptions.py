@@ -47,6 +47,15 @@ class ContextNotSetError(GlyffError):
     pass
 
 
+class NoCurrentExecutionError(GlyffError):
+    """
+    Raised when per-execution metadata is accessed without an active execution
+    (for example, calling ``ctx.set_metadata`` outside an engraved call).
+    """
+
+    pass
+
+
 class SerializationError(GlyffError):
     """
     Raised when a serializer cannot convert a value to its wire representation.

@@ -6,7 +6,8 @@ from glyff import ExecutionId, ExecutionStatus
 from glyff.serialization import JsonSerializer
 from glyff.store.utils import execution_id_to_path
 
-from glyff_sqlite import SQLiteClient, SQLiteSessionStore
+from glyff_sqlite import SQLiteSessionStore
+from glyff_sqlite._sqlite_client import SQLiteClient
 
 
 def make_execution_id(
@@ -117,7 +118,7 @@ async def test_sqlite_store_returns_descendants(tmp_path: Path):
         await execution.complete(execution_id.name, str)
     await transaction.commit()
 
-    descendants = await store.get_descendants(parent)
+    descendants = await store.repository.get_descendants(parent)
 
     assert {execution_id_to_path(eid) for eid in descendants} == {
         execution_id_to_path(child_a),
@@ -137,12 +138,12 @@ async def test_sqlite_store_deletes_committed_executions(tmp_path: Path):
     await transaction.commit()
 
     delete_transaction = await store.begin_transaction()
-    await store.delete_executions([child])
-    assert await store.get_descendants(parent) == []
+    await store.repository.delete_executions([child])
+    assert await store.repository.get_descendants(parent) == []
     await delete_transaction.commit()
 
     assert await store.get_execution_record(child, str) is None
-    assert await store.get_descendants(parent) == []
+    assert await store.repository.get_descendants(parent) == []
 
 
 # -- Parallel completions ----------------------------------------------------
@@ -398,7 +399,7 @@ async def test_sqlite_begin_transaction_does_not_open_physical_connection(
 async def test_sqlite_store_constructed_with_client(tmp_path, serializer):
     client = SQLiteClient(tmp_path / "test.sqlite3")
     store = SQLiteSessionStore(client=client, serializer=serializer)
-    assert store.client is client
+    assert store._client is client
 
 
 async def test_sqlite_store_raises_on_both_path_and_client(tmp_path, serializer):

@@ -1,5 +1,3 @@
-from collections.abc import Iterable
-
 import pytest
 
 from glyff import Execution, ExecutionId, ExecutionRecord, SessionStore, Transaction
@@ -36,10 +34,14 @@ class FakeStore(SessionStore):
     ) -> ExecutionRecord | None:
         raise NotImplementedError
 
-    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
+    async def set_metadata(
+        self, execution_id: ExecutionId, key: str, value: object, value_type: type
+    ) -> None:
         raise NotImplementedError
 
-    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
+    async def get_metadata(
+        self, execution_id: ExecutionId, key: str, return_type: type
+    ) -> object | None:
         raise NotImplementedError
 
 

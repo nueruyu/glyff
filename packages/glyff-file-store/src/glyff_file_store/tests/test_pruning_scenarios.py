@@ -6,11 +6,12 @@ import json
 
 import pytest
 from glyff import ArgsHasher, EventEmitter, Session, engrave
-from glyff.event_handlers import PruningEventHandler
 from glyff.serialization import JsonSerializer
+from glyff.tests.stubs.pruning import PruningEventHandler
 from glyff.serialization.constants import DEFAULT_ENCODING
 
-from glyff_file_store import FileClient, JsonFileSessionStore
+from glyff_file_store import JsonFileSessionStore
+from glyff_file_store._file_client import FileClient
 
 
 class PruningPause(Exception):

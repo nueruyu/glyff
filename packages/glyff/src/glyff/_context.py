@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import contextvars
 from collections.abc import Iterator, Sequence
-from typing import overload
+from typing import Any, overload
 
 from ._event_system import EventEmitter
 from ._interfaces import ArgsHasher, SessionStore, Transaction
 from ._models import ExecutionId
 from ._sequencer import Sequencer
-from .exceptions import ContextNotSetError
+from .exceptions import ContextNotSetError, NoCurrentExecutionError
 
 
 class Context:
@@ -69,6 +69,45 @@ class Context:
         own.
         """
         return TransactionScope(self._store)
+
+    async def set_metadata(
+        self, key: str, value: Any, value_type: type | None = None
+    ) -> None:
+        """Attach metadata to the current execution, staged into the open
+        transaction. ``value_type`` defaults to ``type(value)``; raises
+        :class:`NoCurrentExecutionError` outside an engraved call.
+        """
+        execution_id = self._tracer.current
+        if execution_id is None:
+            raise NoCurrentExecutionError(
+                "set_metadata requires an active execution; call it from within "
+                "an engraved function."
+            )
+        await self._store.set_metadata(
+            execution_id,
+            key,
+            value,
+            type(value) if value_type is None else value_type,
+        )
+
+    async def get_metadata(
+        self,
+        key: str,
+        return_type: type,
+        *,
+        execution_id: ExecutionId | None = None,
+    ) -> Any | None:
+        """Read a per-execution metadata entry, deserialized to ``return_type``.
+
+        Defaults to the current execution; pass ``execution_id`` to read
+        another's. Returns ``None`` if the execution or key is absent.
+        """
+        target = execution_id if execution_id is not None else self._tracer.current
+        if target is None:
+            raise NoCurrentExecutionError(
+                "get_metadata requires an active execution or an explicit execution_id."
+            )
+        return await self._store.get_metadata(target, key, return_type)
 
 
 class CallStack(Sequence[ExecutionId]):

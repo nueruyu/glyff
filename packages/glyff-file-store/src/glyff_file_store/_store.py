@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 from glyff import (
@@ -115,20 +116,17 @@ class _FileExecution(Execution):
         self._client.stage_update(_EXECUTIONS_FILE, fn)
 
 
-class JsonFileSessionStore(SessionStore):
-    """Human-readable debug SessionStore backed by a JSON file.
+class FileExecutionRepository:
+    """Persistence for execution records over a :class:`FileClient`.
 
-    All data is stored as a single JSON dict in ``executions.json``.
-    Mutations are staged via ``FileClient.stage_update`` and applied
-    atomically on commit.
+    Owns the ExecutionId<->key mapping, record codec, metadata, descendant
+    queries, and deletion. The store owns transactions; writes stage into the
+    client.
     """
 
     def __init__(self, client: FileClient, serializer: JsonSerializer):
         self._client = client
         self._serializer = serializer
-
-    async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client).begin()
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         key = execution_id_to_path(execution_id)
@@ -196,3 +194,95 @@ class JsonFileSessionStore(SessionStore):
             return _encode(executions)
 
         self._client.stage_update(_EXECUTIONS_FILE, fn)
+
+    async def set_metadata(
+        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
+    ) -> None:
+        path = execution_id_to_path(execution_id)
+        serialized = await self._serializer.serialize(value, value_type)
+        value_json = serialized.decode(DEFAULT_ENCODING)
+
+        def fn(data: bytes | None) -> bytes | None:
+            executions = _decode(data)
+            stored = executions.get(path)
+            if stored is None:
+                raise LookupError(f"Execution at {path} not found")
+            metadata = stored.setdefault("metadata", {})
+            metadata[key] = value_json
+            return _encode(executions)
+
+        self._client.stage_update(_EXECUTIONS_FILE, fn)
+
+    async def get_metadata(
+        self, execution_id: ExecutionId, key: str, return_type: type
+    ) -> Any | None:
+        path = execution_id_to_path(execution_id)
+        raw = await self._client.read(_EXECUTIONS_FILE, staged=True)
+        if raw is None:
+            return None
+        stored = _decode(raw).get(path)
+        if stored is None:
+            return None
+        metadata = stored.get("metadata") or {}
+        if key not in metadata:
+            return None
+        return await self._serializer.deserialize(
+            metadata[key].encode(DEFAULT_ENCODING), return_type
+        )
+
+
+class JsonFileSessionStore(SessionStore):
+    """Human-readable debug SessionStore backed by a JSON file.
+
+    Construct with ``base_dir`` and ``session_id``. Owns the transaction
+    boundary; delegates persistence to :class:`FileExecutionRepository`
+    (``repository``). Data is a single JSON dict in ``executions.json``,
+    committed atomically. ``client`` is an internal seam for a pre-built
+    ``FileClient``.
+    """
+
+    def __init__(
+        self,
+        serializer: JsonSerializer | None = None,
+        *,
+        base_dir: str | Path | None = None,
+        session_id: str | None = None,
+        client: FileClient | None = None,
+    ):
+        if serializer is None:
+            raise TypeError("serializer is required.")
+
+        if client is None:
+            if base_dir is None or session_id is None:
+                raise TypeError("base_dir and session_id (or client) are required.")
+            client = FileClient(base_dir=base_dir, session_id=session_id)
+        elif base_dir is not None or session_id is not None:
+            raise TypeError("Pass base_dir/session_id or client, not both.")
+
+        self._client = client
+        self._repository = FileExecutionRepository(client, serializer)
+
+    @property
+    def repository(self) -> FileExecutionRepository:
+        return self._repository
+
+    async def begin_transaction(self) -> Transaction:
+        return await _ClientTransaction(self._client).begin()
+
+    async def start_execution(self, execution_id: ExecutionId) -> Execution:
+        return await self._repository.start_execution(execution_id)
+
+    async def get_execution_record(
+        self, execution_id: ExecutionId, return_type: type
+    ) -> ExecutionRecord | None:
+        return await self._repository.get_execution_record(execution_id, return_type)
+
+    async def set_metadata(
+        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
+    ) -> None:
+        await self._repository.set_metadata(execution_id, key, value, value_type)
+
+    async def get_metadata(
+        self, execution_id: ExecutionId, key: str, return_type: type
+    ) -> Any | None:
+        return await self._repository.get_metadata(execution_id, key, return_type)

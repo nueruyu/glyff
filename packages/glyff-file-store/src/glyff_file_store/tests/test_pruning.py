@@ -50,10 +50,14 @@ async def test_get_descendants_returns_strict_descendants(store_factory):
         await _complete(store, eid, "v")
 
     # Strict: root itself is excluded; the whole subtree (transitive) is returned.
-    assert set(await store.get_descendants(root)) == {child_a, grand, child_b}
+    assert set(await store.repository.get_descendants(root)) == {
+        child_a,
+        grand,
+        child_b,
+    }
     # Reconstructed ids round-trip exactly to the original keys.
-    assert set(await store.get_descendants(child_a)) == {grand}
-    assert await store.get_descendants(grand) == []
+    assert set(await store.repository.get_descendants(child_a)) == {grand}
+    assert await store.repository.get_descendants(grand) == []
 
 
 async def test_get_descendants_includes_failed_children(store_factory):
@@ -65,7 +69,7 @@ async def test_get_descendants_includes_failed_children(store_factory):
 
     # A failed child of a completed parent is unreachable on replay, so the
     # query still surfaces it for deletion.
-    assert set(await store.get_descendants(root)) == {bad}
+    assert set(await store.repository.get_descendants(root)) == {bad}
 
 
 async def test_delete_execution_removes_only_that_id_and_reindexes(store_factory):
@@ -80,7 +84,7 @@ async def test_delete_execution_removes_only_that_id_and_reindexes(store_factory
     await _complete(store, root, "root_val")
 
     tx = await store.begin_transaction()
-    await store.delete_executions([child])
+    await store.repository.delete_executions([child])
     assert await store.get_execution_record(child, str) is None
     await tx.commit()
 
@@ -97,7 +101,7 @@ async def test_delete_execution_rolls_back(store_factory):
     await _complete(store, eid, "v")
 
     tx = await store.begin_transaction()
-    await store.delete_executions([eid])
+    await store.repository.delete_executions([eid])
     await tx.rollback()
 
     rec = await store.get_execution_record(eid, str)
@@ -108,7 +112,7 @@ async def test_delete_execution_rolls_back(store_factory):
 async def test_deleted_entry_excluded_from_disk(store_factory, tmp_path, serializer):
     """After a committed delete, a fresh store reading the same file must not
     see the deleted entry."""
-    from glyff_file_store import FileClient
+    from glyff_file_store._file_client import FileClient
 
     store: JsonFileSessionStore = store_factory("del-disk")
     root = _child(None, "root")
@@ -117,7 +121,7 @@ async def test_deleted_entry_excluded_from_disk(store_factory, tmp_path, seriali
     await _complete(store, child, "cv")
 
     tx = await store.begin_transaction()
-    await store.delete_executions([child])
+    await store.repository.delete_executions([child])
     await tx.commit()
 
     reopened = JsonFileSessionStore(

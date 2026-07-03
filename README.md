@@ -34,12 +34,9 @@ async def greet(name: str, answer: str | None = None) -> str:
 
 async def main(session_id: str, answer: str | None = None):
     serializer = PydanticSerializer()
-    client = glyff_file_store.FileClient(
+    store = glyff_file_store.JsonFileSessionStore(
         base_dir=".sessions",
         session_id=session_id,
-    )
-    store = glyff_file_store.JsonFileSessionStore(
-        client=client,
         serializer=serializer,
     )
 
@@ -83,31 +80,60 @@ the provided answer instead of pausing again.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 
-## Pruning completed subtrees
+## Per-execution metadata
 
-Once a marked call completes, its result is recorded and any resume returns
-that result directly — the calls it made underneath are never replayed. Their
-records are therefore dead weight. Passing `prune_completed_descendants=True`
-to `Session` deletes a call's descendant records the moment it completes:
+Attach application data to the running call; it commits atomically with the
+call's own record. Metadata is a keyed map, serialized with the session's
+serializer, and lives as long as the execution's record.
 
 ```python
-session = glyff.Session(
+@glyff.engrave
+async def step() -> str:
+    ctx = glyff.get_context()
+    await ctx.set_metadata("trace_id", "abc-123")
+    ...
+    return await ctx.get_metadata("trace_id", str)  # "abc-123"
+```
+
+Reads default to the current execution; pass `execution_id=` to read another
+call's metadata.
+
+## Pruning completed subtrees (userland)
+
+Once a call completes, any resume returns its recorded result directly and the
+calls underneath are never replayed. Those descendant records are dead weight,
+but *when and whether* to delete them is a retention policy glyff does not ship.
+glyff knows only **what** is unreachable — a completed call's strict
+descendants; you decide the rest.
+
+Each store's `repository` exposes `get_descendants` and `delete_executions` (in
+`ExecutionId` terms). Drive them from an `ExecutionCompleted` handler to prune a
+completed call's descendants, staged in the same session:
+
+```python
+from glyff import EventEmitter, EventHandler, Session
+from glyff.events import ExecutionCompleted
+
+
+class PruneDescendants(EventHandler[ExecutionCompleted]):
+    async def handle(self, event: ExecutionCompleted) -> None:
+        repo = event.context.store.repository
+        descendants = await repo.get_descendants(event.execution_id)
+        if descendants:
+            await repo.delete_executions(descendants)
+
+
+session = Session(
     id=session_id,
     store=store,
     hasher=hasher,
-    prune_completed_descendants=True,
+    event_emitter=EventEmitter([PruneDescendants()]),
 )
 ```
 
-This is opt-in (default off) because it discards history you might otherwise
-keep for inspection. The detection of which records are unreachable lives in
-the executor; the store only answers `get_descendants` and deletes the ids it
-is handed (in one batched `delete_executions` call), so the policy applies
-uniformly across stores. Replay and resume are unaffected — only records that
-can no longer be reached are removed.
-
-Pruning fires at every completion, so a completed nested call's descendants are
-removed immediately rather than lingering until the top-level call finishes.
+Replay and resume are unaffected — only unreachable records are removed. The
+handler fires at every completion, so a nested call is pruned as soon as it
+finishes, not when its top-level ancestor does.
 
 ## Status
 

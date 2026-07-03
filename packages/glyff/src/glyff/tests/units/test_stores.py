@@ -91,7 +91,7 @@ async def test_delete_executions_requires_transaction(
     store: SessionStore = store_factory("test-delete-without-transaction")
 
     with pytest.raises(RuntimeError, match="write attempted outside a transaction"):
-        await store.delete_executions([base_execution_id])
+        await store.repository.delete_executions([base_execution_id])
 
 
 async def test_nested_child_commit_is_independent_of_parent_staging(

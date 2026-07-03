@@ -8,11 +8,11 @@ from glyff._context import Context, TransactionScope, reset_context, set_context
 from glyff._event_system import EventHandler
 from glyff._executor import execute
 from glyff._sequencer import Sequencer
-from glyff.event_handlers import PruningEventHandler
 from glyff.events import ExecutionCompleted, ExecutionFailed
-from glyff.store import MemoryClient
+from glyff.store._memory_client import MemoryClient
 from glyff.store._memory import _make_key
 from glyff.store.utils import execution_id_to_path
+from glyff.tests.stubs.pruning import PruningEventHandler
 from glyff.tests.stubs.store import StubSessionStore
 
 
@@ -402,7 +402,9 @@ async def test_failure_event_handlers_run_inside_transaction(
     class CleanupOnFailure(EventHandler[ExecutionFailed]):
         async def handle(self, event: ExecutionFailed) -> None:
             seen_exceptions.append(event.exception)
-            await event.context.store.delete_executions([nested_execution_id])
+            await event.context.store.repository.delete_executions(
+                [nested_execution_id]
+            )
 
     ctx = Context(
         session_id="failure-handler-tx",

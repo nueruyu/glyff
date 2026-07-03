@@ -9,7 +9,8 @@ from glyff.serialization import (
     JsonArgsHasher,
     JsonSerializer,
 )
-from glyff.store import MemoryClient, MemorySessionStore
+from glyff.store import MemorySessionStore
+from glyff.store._memory_client import MemoryClient
 from glyff.tests.stubs.store import StubSessionStore
 from glyff.tests.types import StoreFactory
 

@@ -1,7 +1,6 @@
-from ._sqlite_client import SQLiteClient
-from ._sqlite_store import SQLiteSessionStore
+from ._sqlite_store import SQLiteExecutionRepository, SQLiteSessionStore
 
 __all__ = [
-    "SQLiteClient",
     "SQLiteSessionStore",
+    "SQLiteExecutionRepository",
 ]

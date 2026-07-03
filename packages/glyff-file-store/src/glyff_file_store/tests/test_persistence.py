@@ -1,7 +1,8 @@
 from glyff import ArgsHasher, Session, engrave
 from glyff.serialization import JsonSerializer
 
-from glyff_file_store import FileClient, JsonFileSessionStore
+from glyff_file_store import JsonFileSessionStore
+from glyff_file_store._file_client import FileClient
 
 _json_runs: list[int] = []
 

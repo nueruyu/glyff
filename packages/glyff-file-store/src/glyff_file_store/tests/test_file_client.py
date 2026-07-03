@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 from glyff import ExecutionId, ExecutionStatus
 
-from glyff_file_store import FileClient, JsonFileSessionStore
+from glyff_file_store import JsonFileSessionStore
+from glyff_file_store._file_client import FileClient
 from glyff_file_store._file_client import _BACKUP_SUFFIX, _TEMP_PREFIX
 
 

@@ -131,50 +131,17 @@ class _SQLiteExecution(Execution):
         self._client.stage_update(_EXECUTIONS_NAMESPACE, self._key, fn)
 
 
-class SQLiteSessionStore(SessionStore):
-    """A SQLite-backed SessionStore for durable local persistence.
+class SQLiteExecutionRepository:
+    """Persistence for execution records over a :class:`SQLiteClient`.
 
-    All execution data is stored in the ``records`` table of ``SQLiteClient``
-    under the ``"executions"`` namespace. Mutations are staged via
-    ``stage_write`` / ``stage_update`` and committed atomically on commit.
+    Owns the ExecutionId<->key mapping, record codec, metadata, descendant
+    queries, and deletion. Records live in the ``records`` table under the
+    ``"executions"`` namespace; the store owns transactions.
     """
 
-    def __init__(
-        self,
-        database_path: str | Path | None = None,
-        serializer: JsonSerializer | None = None,
-        *,
-        client: SQLiteClient | None = None,
-        busy_timeout_ms: int = 30_000,
-        synchronous: str = "FULL",
-    ):
-        if serializer is None:
-            raise TypeError("serializer is required.")
-
-        if client is None:
-            if database_path is None:
-                raise TypeError("database_path or client is required.")
-            client = SQLiteClient(
-                database_path,
-                busy_timeout_ms=busy_timeout_ms,
-                synchronous=synchronous,
-            )
-        elif database_path is not None:
-            raise TypeError("Pass either database_path or client, not both.")
-
+    def __init__(self, client: SQLiteClient, serializer: JsonSerializer):
         self._client = client
         self._serializer = serializer
-
-        self._client._initialize_schema_sync()
-
-    @property
-    def client(self) -> SQLiteClient:
-        return self._client
-
-    # -- SessionStore API ------------------------------------------------------
-
-    async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client).begin()
 
     async def start_execution(self, execution_id: ExecutionId) -> Execution:
         key = execution_id_to_path(execution_id)
@@ -216,3 +183,98 @@ class SQLiteSessionStore(SessionStore):
         for execution_id in execution_ids:
             key = execution_id_to_path(execution_id)
             self._client.stage_delete(_EXECUTIONS_NAMESPACE, key)
+
+    async def set_metadata(
+        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
+    ) -> None:
+        path = execution_id_to_path(execution_id)
+        serialized = await self._serializer.serialize(value, value_type)
+        value_json = serialized.decode(DEFAULT_ENCODING)
+
+        def fn(data: bytes | None) -> bytes | None:
+            if data is None:
+                raise LookupError(f"Execution at {path} not found")
+            stored = json.loads(data.decode(DEFAULT_ENCODING))
+            metadata = stored.setdefault("metadata", {})
+            metadata[key] = value_json
+            return _to_stored_bytes(stored)
+
+        self._client.stage_update(_EXECUTIONS_NAMESPACE, path, fn)
+
+    async def get_metadata(
+        self, execution_id: ExecutionId, key: str, return_type: type
+    ) -> Any | None:
+        path = execution_id_to_path(execution_id)
+        data = await self._client.read(_EXECUTIONS_NAMESPACE, path, staged=True)
+        if data is None:
+            return None
+        stored = json.loads(data.decode(DEFAULT_ENCODING))
+        metadata = stored.get("metadata") or {}
+        if key not in metadata:
+            return None
+        return await self._serializer.deserialize(
+            metadata[key].encode(DEFAULT_ENCODING), return_type
+        )
+
+
+class SQLiteSessionStore(SessionStore):
+    """A SQLite-backed SessionStore for durable local persistence.
+
+    Owns the transaction boundary; delegates persistence to
+    :class:`SQLiteExecutionRepository`, exposed as ``repository``.
+    """
+
+    def __init__(
+        self,
+        database_path: str | Path | None = None,
+        serializer: JsonSerializer | None = None,
+        *,
+        client: SQLiteClient | None = None,
+        busy_timeout_ms: int = 30_000,
+        synchronous: str = "FULL",
+    ):
+        if serializer is None:
+            raise TypeError("serializer is required.")
+
+        if client is None:
+            if database_path is None:
+                raise TypeError("database_path or client is required.")
+            client = SQLiteClient(
+                database_path,
+                busy_timeout_ms=busy_timeout_ms,
+                synchronous=synchronous,
+            )
+        elif database_path is not None:
+            raise TypeError("Pass either database_path or client, not both.")
+
+        self._client = client
+        self._repository = SQLiteExecutionRepository(client, serializer)
+
+        self._client._initialize_schema_sync()
+
+    @property
+    def repository(self) -> SQLiteExecutionRepository:
+        return self._repository
+
+    # -- SessionStore API ------------------------------------------------------
+
+    async def begin_transaction(self) -> Transaction:
+        return await _ClientTransaction(self._client).begin()
+
+    async def start_execution(self, execution_id: ExecutionId) -> Execution:
+        return await self._repository.start_execution(execution_id)
+
+    async def get_execution_record(
+        self, execution_id: ExecutionId, return_type: type
+    ) -> ExecutionRecord | None:
+        return await self._repository.get_execution_record(execution_id, return_type)
+
+    async def set_metadata(
+        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
+    ) -> None:
+        await self._repository.set_metadata(execution_id, key, value, value_type)
+
+    async def get_metadata(
+        self, execution_id: ExecutionId, key: str, return_type: type
+    ) -> Any | None:
+        return await self._repository.get_metadata(execution_id, key, return_type)

@@ -29,27 +29,22 @@ store = SQLiteSessionStore("executions.sqlite3", JsonSerializer())
 | Name                 | Description                                                   |
 | -------------------- | ------------------------------------------------------------- |
 | `SQLiteSessionStore` | Durable `SessionStore` backed by a local SQLite database.     |
-| `SQLiteClient`       | Low-level SQLite key/value store (generic, reusable).         |
 
-## External metadata
+The underlying `SQLiteClient` is internal and not part of the public API.
 
-The underlying ``SQLiteClient`` exposes ``stage_write`` / ``stage_delete`` /
-``stage_update`` so application code can persist its own rows alongside execution
-records and commit or roll back atomically together:
+## Per-execution metadata
+
+Persist application data alongside an execution — committed atomically with its
+record — from within an engraved call:
 
 ```python
-client = SQLiteClient("session.sqlite3")
-store = SQLiteSessionStore(client=client, serializer=JsonSerializer())
-
-tx = await store.begin_transaction()
-execution = await store.start_execution(some_id)
-await execution.complete("ok", str)
-
-client.stage_write("metadata", "my_key", b"my_value")
-client.stage_delete("metadata", "old_key")
-
-await tx.commit()   # execution record + metadata commit atomically
+ctx = glyff.get_context()
+await ctx.set_metadata("my_key", {"any": "json-serializable value"})
+value = await ctx.get_metadata("my_key", dict)
 ```
+
+Metadata is a keyed map attached to the current execution and is removed if that
+execution's record is deleted.
 
 ## Transaction model
 

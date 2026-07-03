@@ -1,6 +1,5 @@
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
 from typing import Any, Callable
 
 from ._models import ExecutionId, ExecutionRecord
@@ -93,25 +92,23 @@ class SessionStore(ABC):
         ...
 
     @abstractmethod
-    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
+    async def set_metadata(
+        self, execution_id: ExecutionId, key: str, value: Any, value_type: type
+    ) -> None:
         """
-        Returns the ExecutionIds that are *strict* descendants of the given one,
-        based on the records currently held by this store.
-
-        This is a read-only structural query over the store's own data; it
-        carries no pruning policy. Callers decide what to do with the result.
+        Set a per-execution metadata entry: a keyed map on the execution
+        record, serialized with the store's serializer and staged into the
+        current transaction. Overwrites the key if present; leaves other keys
+        and the execution's status/result untouched.
         """
         ...
 
     @abstractmethod
-    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
+    async def get_metadata(
+        self, execution_id: ExecutionId, key: str, return_type: type
+    ) -> Any | None:
         """
-        Deletes the record(s) for exactly the given executions.
-
-        Deletion is staged within the current transaction and applied on commit
-        (and discarded on rollback), mirroring how writes are staged. The store
-        only deletes the executions it is given; it has no notion of children,
-        descendants, or pruning. Taking the ids as a batch lets the store stage
-        them in one pass rather than once per id.
+        Gets a per-execution metadata entry, deserialized to ``return_type``,
+        or ``None`` if the execution or key does not exist.
         """
         ...
