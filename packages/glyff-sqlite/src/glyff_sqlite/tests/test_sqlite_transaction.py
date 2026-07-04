@@ -3,7 +3,15 @@ from pathlib import Path
 import pytest
 
 from glyff_sqlite import SQLiteTransactionProvider
-from glyff_sqlite._sqlite_client import SQLiteClient
+from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
+
+
+def record(value: str) -> SQLiteExecutionRecord:
+    return SQLiteExecutionRecord(
+        status="completed",
+        result=f'"{value}"',
+        metadata="{}",
+    )
 
 
 def _client(database_path: Path) -> SQLiteClient:
@@ -17,12 +25,12 @@ async def test_sqlite_transaction_commit_closes_and_is_idempotent(tmp_path: Path
     transactions = SQLiteTransactionProvider(client)
 
     transaction = await transactions.begin_transaction()
-    client.stage_write("ns", "key", b"value")
+    client.stage_write("key", record("value"))
     await transaction.commit()
     await transaction.commit()
     await transaction.rollback()
 
-    assert await client.read("ns", "key") == b"value"
+    assert await client.read("key") == record("value")
 
 
 async def test_sqlite_transaction_rollback_closes_and_is_idempotent(tmp_path: Path):
@@ -30,12 +38,12 @@ async def test_sqlite_transaction_rollback_closes_and_is_idempotent(tmp_path: Pa
     transactions = SQLiteTransactionProvider(client)
 
     transaction = await transactions.begin_transaction()
-    client.stage_write("ns", "key", b"value")
+    client.stage_write("key", record("value"))
     await transaction.rollback()
     await transaction.rollback()
     await transaction.commit()
 
-    assert await client.read("ns", "key") is None
+    assert await client.read("key") is None
 
 
 async def test_sqlite_transaction_out_of_order_close_raises(tmp_path: Path):
@@ -50,4 +58,4 @@ async def test_sqlite_transaction_out_of_order_close_raises(tmp_path: Path):
 
     await child.rollback()
     await parent.rollback()
-    assert await client.read("ns", "key") is None
+    assert await client.read("key") is None

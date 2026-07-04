@@ -8,12 +8,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SQLiteUpdate = Callable[[bytes | None], bytes | None]
+
+@dataclass(frozen=True)
+class SQLiteExecutionRecord:
+    status: str
+    result: str | None
+    metadata: str
+
+
+SQLiteUpdate = Callable[[SQLiteExecutionRecord | None], SQLiteExecutionRecord | None]
 
 
 @dataclass(frozen=True)
 class _Write:
-    value: bytes
+    value: SQLiteExecutionRecord
 
 
 @dataclass(frozen=True)
@@ -35,18 +43,17 @@ class _SQLiteStagingBuffer:
     __slots__ = ("ops",)
 
     def __init__(self) -> None:
-        self.ops: dict[tuple[str, str], list[_StagedOp]] = {}
+        self.ops: dict[str, list[_StagedOp]] = {}
 
     def clear(self) -> None:
         self.ops.clear()
 
 
 class SQLiteClient:
-    """A generic SQLite-backed transactional key/value store.
+    """SQLite-backed transactional execution table.
 
-    Each record is identified by ``(namespace, key)`` and stored as a blob
-    in the ``records`` table. Operations are staged per-transaction and
-    committed atomically.
+    Each execution is identified by its path and stored in the ``executions``
+    table. Operations are staged per transaction and committed atomically.
     """
 
     def __init__(
@@ -101,11 +108,11 @@ class SQLiteClient:
             in_transaction = True
             connection.execute(
                 """
-                CREATE TABLE IF NOT EXISTS records (
-                    namespace TEXT NOT NULL,
-                    key TEXT NOT NULL,
-                    value BLOB NOT NULL,
-                    PRIMARY KEY (namespace, key)
+                CREATE TABLE IF NOT EXISTS executions (
+                    path TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    result TEXT,
+                    metadata TEXT NOT NULL
                 )
                 """
             )
@@ -143,17 +150,17 @@ class SQLiteClient:
 
     # -- Staging API -----------------------------------------------------------
 
-    def stage_write(self, namespace: str, key: str, value: bytes) -> None:
+    def stage_write(self, path: str, value: SQLiteExecutionRecord) -> None:
         staging = self._require_staging()
-        staging.ops.setdefault((namespace, key), []).append(_Write(value))
+        staging.ops.setdefault(path, []).append(_Write(value))
 
-    def stage_delete(self, namespace: str, key: str) -> None:
+    def stage_delete(self, path: str) -> None:
         staging = self._require_staging()
-        staging.ops.setdefault((namespace, key), []).append(_Delete())
+        staging.ops.setdefault(path, []).append(_Delete())
 
-    def stage_update(self, namespace: str, key: str, fn: SQLiteUpdate) -> None:
+    def stage_update(self, path: str, fn: SQLiteUpdate) -> None:
         staging = self._require_staging()
-        staging.ops.setdefault((namespace, key), []).append(_Update(fn))
+        staging.ops.setdefault(path, []).append(_Update(fn))
 
     async def clear_staged(self) -> None:
         self._require_staging().clear()
@@ -178,21 +185,24 @@ class SQLiteClient:
             connection.execute("BEGIN IMMEDIATE")
             in_transaction = True
 
-            for (namespace, key), ops in staging.ops.items():
-                current = self._read_value_sync(connection, namespace, key)
+            for path, ops in staging.ops.items():
+                current = self._read_value_sync(connection, path)
                 result = self._apply_ops(current, ops)
 
                 if result is None:
                     connection.execute(
-                        "DELETE FROM records WHERE namespace = ? AND key = ?",
-                        (namespace, key),
+                        "DELETE FROM executions WHERE path = ?",
+                        (path,),
                     )
                 else:
                     connection.execute(
-                        """INSERT INTO records (namespace, key, value)
-                           VALUES (?, ?, ?)
-                           ON CONFLICT(namespace, key) DO UPDATE SET value = excluded.value""",
-                        (namespace, key, result),
+                        """INSERT INTO executions (path, status, result, metadata)
+                           VALUES (?, ?, ?, ?)
+                           ON CONFLICT(path) DO UPDATE SET
+                               status = excluded.status,
+                               result = excluded.result,
+                               metadata = excluded.metadata""",
+                        (path, result.status, result.result, result.metadata),
                     )
 
             connection.execute("COMMIT")
@@ -208,7 +218,9 @@ class SQLiteClient:
             connection.close()
 
     @staticmethod
-    def _apply_ops(data: bytes | None, ops: list[_StagedOp]) -> bytes | None:
+    def _apply_ops(
+        data: SQLiteExecutionRecord | None, ops: list[_StagedOp]
+    ) -> SQLiteExecutionRecord | None:
         current = data
         for op in ops:
             if isinstance(op, _Write):
@@ -221,78 +233,71 @@ class SQLiteClient:
                 raise TypeError(f"Unknown SQLite op: {op!r}")
         return current
 
-    # -- Read / list_keys ------------------------------------------------------
+    # -- Read / list_paths -----------------------------------------------------
 
     async def read(
-        self, namespace: str, key: str, *, staged: bool = True
-    ) -> bytes | None:
-        committed = await asyncio.to_thread(self._read_committed_sync, namespace, key)
+        self, path: str, *, staged: bool = True
+    ) -> SQLiteExecutionRecord | None:
+        committed = await asyncio.to_thread(self._read_committed_sync, path)
 
         if staged:
             staging = self._current.get()
             if staging is not None:
-                ops = staging.ops.get((namespace, key))
+                ops = staging.ops.get(path)
                 if ops:
                     committed = self._apply_ops(committed, ops)
 
         return committed
 
-    def _read_committed_sync(self, namespace: str, key: str) -> bytes | None:
+    def _read_committed_sync(self, path: str) -> SQLiteExecutionRecord | None:
         connection = self._connect()
         try:
-            return self._read_value_sync(connection, namespace, key)
+            return self._read_value_sync(connection, path)
         finally:
             connection.close()
 
     @staticmethod
     def _read_value_sync(
-        connection: sqlite3.Connection, namespace: str, key: str
-    ) -> bytes | None:
+        connection: sqlite3.Connection, path: str
+    ) -> SQLiteExecutionRecord | None:
         row = connection.execute(
-            "SELECT value FROM records WHERE namespace = ? AND key = ?",
-            (namespace, key),
+            "SELECT status, result, metadata FROM executions WHERE path = ?",
+            (path,),
         ).fetchone()
-        return row[0] if row else None
+        if row is None:
+            return None
+        return SQLiteExecutionRecord(status=row[0], result=row[1], metadata=row[2])
 
-    async def list_keys(
-        self, namespace: str, prefix: str = "", *, staged: bool = True
-    ) -> set[str]:
-        committed = await asyncio.to_thread(
-            self._list_committed_keys_sync, namespace, prefix
-        )
+    async def list_paths(self, prefix: str = "", *, staged: bool = True) -> set[str]:
+        committed = await asyncio.to_thread(self._list_committed_paths_sync, prefix)
 
         if staged:
             staging = self._current.get()
             if staging is not None:
-                for (ns, key), ops in staging.ops.items():
-                    if ns != namespace:
-                        continue
-                    if not key.startswith(prefix):
+                for path, ops in staging.ops.items():
+                    if not path.startswith(prefix):
                         continue
                     final = self._apply_ops(
-                        self._read_committed_sync(namespace, key),
+                        self._read_committed_sync(path),
                         ops,
                     )
                     if final is None:
-                        committed.discard(key)
+                        committed.discard(path)
                     else:
-                        committed.add(key)
+                        committed.add(path)
 
         return committed
 
-    def _list_committed_keys_sync(self, namespace: str, prefix: str = "") -> set[str]:
+    def _list_committed_paths_sync(self, prefix: str = "") -> set[str]:
         connection = self._connect()
         try:
             if prefix:
                 rows = connection.execute(
-                    "SELECT key FROM records WHERE namespace = ? AND substr(key, 1, ?) = ?",
-                    (namespace, len(prefix), prefix),
+                    "SELECT path FROM executions WHERE substr(path, 1, ?) = ?",
+                    (len(prefix), prefix),
                 ).fetchall()
             else:
-                rows = connection.execute(
-                    "SELECT key FROM records WHERE namespace = ?",
-                    (namespace,),
-                ).fetchall()
+                rows = connection.execute("SELECT path FROM executions").fetchall()
             return {row[0] for row in rows}
         finally:
             connection.close()

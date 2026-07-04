@@ -3,8 +3,10 @@
 SQLite-backed durable `ExecutionRepository` implementation for
 [glyff](https://pypi.org/project/glyff/).
 
-This is the **production** backend: one row per execution in a SQLite database,
-WAL mode, indexed lookups, and native transaction atomicity.
+This is the **production** backend: one row per execution in a SQLite
+`executions` table, WAL mode, indexed lookups, and native transaction
+atomicity. Execution `result` and `metadata` columns are stored as readable JSON
+text, so serializers used with this backend must produce JSON text.
 
 ## Install
 

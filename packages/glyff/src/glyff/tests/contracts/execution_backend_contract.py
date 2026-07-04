@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from typing import Protocol
 
@@ -40,8 +41,15 @@ def eid(
     )
 
 
-def value(raw: bytes = b"value") -> SerializedValue:
-    return SerializedValue(raw)
+def value(raw: object = "value") -> SerializedValue:
+    return SerializedValue(
+        json.dumps(
+            raw,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
 
 
 async def save_execution(backend: BackendHandle, execution: Execution) -> None:
@@ -85,14 +93,29 @@ class ExecutionBackendContract:
         backend = backend_factory("completed")
         execution_id = eid("task")
         execution = Execution.start(execution_id)
-        execution.complete(value(b"result-bytes"))
+        execution.complete(value("result-bytes"))
 
         await save_execution(backend, execution)
 
         loaded = await backend.executions.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
-        assert loaded.result == value(b"result-bytes")
+        assert loaded.result == value("result-bytes")
+
+    async def test_completed_json_null_result_roundtrips(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("completed-null")
+        execution_id = eid("task")
+        execution = Execution.start(execution_id)
+        execution.complete(value(None))
+
+        await save_execution(backend, execution)
+
+        loaded = await backend.executions.get(execution_id)
+        assert loaded is not None
+        assert loaded.status is ExecutionStatus.COMPLETED
+        assert loaded.result == value(None)
 
     async def test_save_preserves_metadata_inside_execution(
         self, backend_factory: BackendFactory
@@ -100,15 +123,15 @@ class ExecutionBackendContract:
         backend = backend_factory("metadata")
         execution_id = eid("task")
         execution = Execution.start(execution_id)
-        execution.set_metadata("trace", value(b"trace-bytes"))
-        execution.set_metadata("other", value(b"other-bytes"))
+        execution.set_metadata("trace", value("trace-bytes"))
+        execution.set_metadata("other", value("other-bytes"))
 
         await save_execution(backend, execution)
 
         loaded = await backend.executions.get(execution_id)
         assert loaded is not None
-        assert loaded.get_metadata("trace") == Metadata("trace", value(b"trace-bytes"))
-        assert loaded.get_metadata("other") == Metadata("other", value(b"other-bytes"))
+        assert loaded.get_metadata("trace") == Metadata("trace", value("trace-bytes"))
+        assert loaded.get_metadata("other") == Metadata("other", value("other-bytes"))
 
     async def test_complete_preserves_existing_metadata(
         self, backend_factory: BackendFactory
@@ -116,16 +139,16 @@ class ExecutionBackendContract:
         backend = backend_factory("complete-keeps-metadata")
         execution_id = eid("task")
         execution = Execution.start(execution_id)
-        execution.set_metadata("trace", value(b"trace"))
-        execution.complete(value(b"result"))
+        execution.set_metadata("trace", value("trace"))
+        execution.complete(value("result"))
 
         await save_execution(backend, execution)
 
         loaded = await backend.executions.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
-        assert loaded.result == value(b"result")
-        assert loaded.get_metadata("trace") == Metadata("trace", value(b"trace"))
+        assert loaded.result == value("result")
+        assert loaded.get_metadata("trace") == Metadata("trace", value("trace"))
 
     async def test_save_overwrites_existing_aggregate(
         self, backend_factory: BackendFactory
@@ -134,20 +157,20 @@ class ExecutionBackendContract:
         execution_id = eid("task")
 
         first = Execution.start(execution_id)
-        first.set_metadata("old", value(b"old"))
+        first.set_metadata("old", value("old"))
         await save_execution(backend, first)
 
         second = Execution.start(execution_id)
-        second.set_metadata("new", value(b"new"))
-        second.complete(value(b"done"))
+        second.set_metadata("new", value("new"))
+        second.complete(value("done"))
         await save_execution(backend, second)
 
         loaded = await backend.executions.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
-        assert loaded.result == value(b"done")
+        assert loaded.result == value("done")
         assert loaded.get_metadata("old") is None
-        assert loaded.get_metadata("new") == Metadata("new", value(b"new"))
+        assert loaded.get_metadata("new") == Metadata("new", value("new"))
 
     async def test_save_requires_active_transaction(
         self, backend_factory: BackendFactory
@@ -189,7 +212,7 @@ class ExecutionBackendContract:
         backend = backend_factory("delete")
         execution_id = eid("task")
         execution = Execution.start(execution_id)
-        execution.set_metadata("trace", value(b"trace"))
+        execution.set_metadata("trace", value("trace"))
 
         await save_execution(backend, execution)
 
@@ -252,17 +275,17 @@ class ExecutionBackendContract:
         leaf2 = eid("leaf", parent=p2, args_hash="same")
 
         first = Execution.start(leaf1)
-        first.complete(value(b"one"))
+        first.complete(value("one"))
         second = Execution.start(leaf2)
-        second.complete(value(b"two"))
+        second.complete(value("two"))
         async with TransactionScope(backend.transactions):
             await backend.executions.save(first)
             await backend.executions.save(second)
 
         loaded1 = await backend.executions.get(leaf1)
         loaded2 = await backend.executions.get(leaf2)
-        assert loaded1 is not None and loaded1.result == value(b"one")
-        assert loaded2 is not None and loaded2.result == value(b"two")
+        assert loaded1 is not None and loaded1.result == value("one")
+        assert loaded2 is not None and loaded2.result == value("two")
 
     async def test_child_commit_survives_parent_rollback(
         self, backend_factory: BackendFactory
@@ -276,7 +299,7 @@ class ExecutionBackendContract:
 
         child_tx = await backend.transactions.begin_transaction()
         child_execution = Execution.start(child)
-        child_execution.complete(value(b"child"))
+        child_execution.complete(value("child"))
         await backend.executions.save(child_execution)
         await child_tx.commit()
 
@@ -343,11 +366,11 @@ class ExecutionBackendContract:
 
         grandchild_tx = await backend.transactions.begin_transaction()
         grandchild_execution = Execution.start(grandchild)
-        grandchild_execution.complete(value(b"grandchild"))
+        grandchild_execution.complete(value("grandchild"))
         await backend.executions.save(grandchild_execution)
         await grandchild_tx.commit()
 
-        child_execution.complete(value(b"child"))
+        child_execution.complete(value("child"))
         await backend.executions.save(child_execution)
         await child_tx.commit()
 
@@ -363,23 +386,24 @@ class ExecutionBackendContract:
         assert loaded_grandchild is not None
         assert loaded_grandchild.status is ExecutionStatus.COMPLETED
 
-    async def test_binary_serialized_value_roundtrips(
+    async def test_json_serialized_value_roundtrips(
         self, backend_factory: BackendFactory
     ):
-        backend = backend_factory("binary")
+        backend = backend_factory("json")
         execution_id = eid("task")
-        binary = b"\xff\xfe\x00binary\x80"
+        payload = {"answer": 42, "items": [1, 2, 3]}
+        metadata = {"trace": {"step": 1}, "ok": True}
 
         execution = Execution.start(execution_id)
-        execution.complete(value(binary))
-        execution.set_metadata("bin", value(binary))
+        execution.complete(value(payload))
+        execution.set_metadata("json", value(metadata))
 
         await save_execution(backend, execution)
 
         loaded = await backend.executions.get(execution_id)
         assert loaded is not None
-        assert loaded.result == value(binary)
-        assert loaded.get_metadata("bin") == Metadata("bin", value(binary))
+        assert loaded.result == value(payload)
+        assert loaded.get_metadata("json") == Metadata("json", value(metadata))
 
 
 class DurableBackendContract:
@@ -439,31 +463,32 @@ class DurableBackendContract:
         execution_id = eid("task")
         backend = backend_factory(session_id)
         execution = Execution.start(execution_id)
-        execution.set_metadata("trace", value(b"trace"))
+        execution.set_metadata("trace", value("trace"))
 
         await save_execution(backend, execution)
 
         reopened = backend_factory(session_id)
         loaded = await reopened.executions.get(execution_id)
         assert loaded is not None
-        assert loaded.get_metadata("trace") == Metadata("trace", value(b"trace"))
+        assert loaded.get_metadata("trace") == Metadata("trace", value("trace"))
 
-    async def test_binary_serialized_value_survives_reopen(
+    async def test_json_serialized_value_survives_reopen(
         self, backend_factory: BackendFactory
     ):
-        session_id = "durable-binary"
+        session_id = "durable-json"
         execution_id = eid("task")
-        binary = b"\xff\xfe\x00binary\x80"
+        payload = {"answer": 42, "items": [1, 2, 3]}
+        metadata = {"trace": {"step": 1}, "ok": True}
         backend = backend_factory(session_id)
 
         execution = Execution.start(execution_id)
-        execution.complete(value(binary))
-        execution.set_metadata("bin", value(binary))
+        execution.complete(value(payload))
+        execution.set_metadata("json", value(metadata))
 
         await save_execution(backend, execution)
 
         reopened = backend_factory(session_id)
         loaded = await reopened.executions.get(execution_id)
         assert loaded is not None
-        assert loaded.result == value(binary)
-        assert loaded.get_metadata("bin") == Metadata("bin", value(binary))
+        assert loaded.result == value(payload)
+        assert loaded.get_metadata("json") == Metadata("json", value(metadata))

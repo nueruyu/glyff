@@ -44,6 +44,8 @@ The underlying `FileClient` is internal and not part of the public API.
 `JsonFileBackend` stores each session under `<base_dir>/<session_id>/` in a
 single pretty-printed JSON file (`executions.json`). The execution map is read
 into memory on startup and rewritten atomically on every commit.
+Execution results and metadata are stored as embedded JSON values, so
+serializers used with this backend must produce JSON text.
 
 This format is intended for debugging and manual inspection, not as the durable
 or high-throughput backend.
