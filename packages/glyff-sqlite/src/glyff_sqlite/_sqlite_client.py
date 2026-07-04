@@ -278,7 +278,7 @@ class SQLiteClient:
                     if not path.startswith(prefix):
                         continue
                     final = self._apply_ops(
-                        self._read_committed_sync(path),
+                        await asyncio.to_thread(self._read_committed_sync, path),
                         ops,
                     )
                     if final is None:
