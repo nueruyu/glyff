@@ -152,4 +152,6 @@ class MemoryBackend:
     def __init__(self) -> None:
         client = MemoryClient()
         self.repository: ExecutionRepository = MemoryExecutionRepository(client)
-        self.transaction_provider: TransactionProvider = MemoryTransactionProvider(client)
+        self.transaction_provider: TransactionProvider = MemoryTransactionProvider(
+            client
+        )
