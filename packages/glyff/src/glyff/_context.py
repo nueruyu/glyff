@@ -7,6 +7,7 @@ from typing import Any, overload
 from ._event_system import EventEmitter
 from ._interfaces import (
     ArgsHasher,
+    Backend,
     ExecutionRepository,
     Serializer,
     Transaction,
@@ -17,22 +18,77 @@ from ._sequencer import Sequencer
 from .exceptions import ContextNotSetError, NoCurrentExecutionError
 
 
+class MetadataAccessor:
+    """Provides access to the metadata of the current execution."""
+
+    def __init__(self, ctx: Context):
+        self._ctx = ctx
+
+    async def set(self, key: str, value: Any, value_type: type | None = None) -> None:
+        """Attach metadata to the current execution, staged into the open
+        transaction. ``value_type`` defaults to ``type(value)``; raises
+        :class:`NoCurrentExecutionError` outside an engraved call.
+        """
+        execution_id = self._ctx.tracer.current
+        if execution_id is None:
+            raise NoCurrentExecutionError(
+                "set() requires an active execution; call it from within "
+                "an engraved function."
+            )
+        execution = await self._ctx.repository.get(execution_id)
+        if execution is None:
+            raise LookupError(f"Execution {execution_id} not found")
+
+        serialized = await self._ctx.serializer.serialize(
+            value,
+            type(value) if value_type is None else value_type,
+        )
+        execution.set_metadata(key, SerializedValue(serialized))
+        await self._ctx.repository.save(execution)
+
+    async def get(
+        self,
+        key: str,
+        return_type: type,
+        *,
+        execution_id: ExecutionId | None = None,
+    ) -> Any | None:
+        """Read a per-execution metadata entry, deserialized to ``return_type``.
+
+        Defaults to the current execution; pass ``execution_id`` to read
+        another's. Returns ``None`` if the execution or key is absent.
+        """
+        target = execution_id if execution_id is not None else self._ctx.tracer.current
+        if target is None:
+            raise NoCurrentExecutionError(
+                "get() requires an active execution or an explicit execution_id."
+            )
+        execution = await self._ctx.repository.get(target)
+        if execution is None:
+            return None
+
+        metadata = execution.get_metadata(key)
+        if metadata is None:
+            return None
+
+        return await self._ctx.serializer.deserialize(metadata.value.data, return_type)
+
+
 class Context:
     """Holds the execution context for a workflow session."""
 
     def __init__(
         self,
         session_id: str,
-        repository: ExecutionRepository,
-        transaction_provider: TransactionProvider,
+        backend: Backend,
         serializer: Serializer,
         sequencer: Sequencer,
         hasher: ArgsHasher,
         event_emitter: EventEmitter,
     ) -> None:
         self._session_id = session_id
-        self._repository = repository
-        self._transaction_provider = transaction_provider
+        self._repository = backend.repository
+        self._transaction_provider = backend.transaction_provider
         self._serializer = serializer
         self._sequencer = sequencer
         self._hasher = hasher
@@ -72,6 +128,11 @@ class Context:
         return self._tracer
 
     @property
+    def metadata(self) -> MetadataAccessor:
+        """Returns an accessor for managing the metadata of the current execution."""
+        return MetadataAccessor(self)
+
+    @property
     def call_stack(self) -> CallStack:
         return self._tracer.call_stack
 
@@ -87,57 +148,6 @@ class Context:
         own.
         """
         return TransactionScope(self._transaction_provider)
-
-    async def set_metadata(
-        self, key: str, value: Any, value_type: type | None = None
-    ) -> None:
-        """Attach metadata to the current execution, staged into the open
-        transaction. ``value_type`` defaults to ``type(value)``; raises
-        :class:`NoCurrentExecutionError` outside an engraved call.
-        """
-        execution_id = self._tracer.current
-        if execution_id is None:
-            raise NoCurrentExecutionError(
-                "set_metadata requires an active execution; call it from within "
-                "an engraved function."
-            )
-        execution = await self._repository.get(execution_id)
-        if execution is None:
-            raise LookupError(f"Execution {execution_id} not found")
-
-        serialized = await self._serializer.serialize(
-            value,
-            type(value) if value_type is None else value_type,
-        )
-        execution.set_metadata(key, SerializedValue(serialized))
-        await self._repository.save(execution)
-
-    async def get_metadata(
-        self,
-        key: str,
-        return_type: type,
-        *,
-        execution_id: ExecutionId | None = None,
-    ) -> Any | None:
-        """Read a per-execution metadata entry, deserialized to ``return_type``.
-
-        Defaults to the current execution; pass ``execution_id`` to read
-        another's. Returns ``None`` if the execution or key is absent.
-        """
-        target = execution_id if execution_id is not None else self._tracer.current
-        if target is None:
-            raise NoCurrentExecutionError(
-                "get_metadata requires an active execution or an explicit execution_id."
-            )
-        execution = await self._repository.get(target)
-        if execution is None:
-            return None
-
-        metadata = execution.get_metadata(key)
-        if metadata is None:
-            return None
-
-        return await self._serializer.deserialize(metadata.value.data, return_type)
 
 
 class CallStack(Sequence[ExecutionId]):

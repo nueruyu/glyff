@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 from glyff import ArgsHasher, Session, engrave
 from glyff.serialization import JsonSerializer
-
 from glyff_sqlite import SQLiteBackend
 
 _ran: set[int] = set()
@@ -58,8 +57,7 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
         backend = SQLiteBackend(db)
         async with Session(
             id="sqlite-parallel",
-            repository=backend.repository,
-            transaction_provider=backend.transaction_provider,
+            backend=backend,
             serializer=serializer,
             hasher=hasher,
         ):
@@ -73,8 +71,7 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
     backend = SQLiteBackend(db)
     async with Session(
         id="sqlite-parallel",
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         hasher=hasher,
     ):

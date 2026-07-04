@@ -41,7 +41,7 @@ class ContextNotSetError(GlyffError):
 class NoCurrentExecutionError(GlyffError):
     """
     Raised when per-execution metadata is accessed without an active execution
-    (for example, calling ``ctx.set_metadata`` outside an engraved call).
+    (for example, calling ``ctx.metadata.set`` outside an engraved call).
     """
 
     pass

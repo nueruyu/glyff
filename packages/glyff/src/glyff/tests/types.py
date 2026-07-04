@@ -1,19 +1,12 @@
-from typing import Callable, Protocol
+from typing import Callable
 
 from glyff import (
     ArgsHasher,
+    Backend,
     EventEmitter,
-    ExecutionRepository,
     Serializer,
     Session,
-    TransactionProvider,
 )
-
-
-class Backend(Protocol):
-    repository: ExecutionRepository
-    transaction_provider: TransactionProvider
-
 
 BackendFactory = Callable[[str], Backend]
 
@@ -27,8 +20,7 @@ def make_session(
 ) -> Session:
     return Session(
         id=session_id,
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         hasher=hasher,
         event_emitter=event_emitter,

@@ -41,8 +41,7 @@ async def main(session_id: str, answer: str | None = None):
 
     session = glyff.Session(
         id=session_id,
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         hasher=PydanticArgsHasher(),
     )
@@ -91,9 +90,9 @@ serializer, and lives as long as the execution's record.
 @glyff.engrave
 async def step() -> str:
     ctx = glyff.get_context()
-    await ctx.set_metadata("trace_id", "abc-123")
+    await ctx.metadata.set("trace_id", "abc-123")
     ...
-    return await ctx.get_metadata("trace_id", str)  # "abc-123"
+    return await ctx.metadata.get("trace_id", str)  # "abc-123"
 ```
 
 Reads default to the current execution; pass `execution_id=` to read another
@@ -135,8 +134,7 @@ backend = glyff_file_store.JsonFileBackend(
 )
 session = Session(
     id=session_id,
-    repository=backend.repository,
-    transaction_provider=backend.transaction_provider,
+    backend=backend,
     serializer=serializer,
     hasher=hasher,
     event_emitter=EventEmitter([PruneDescendants(backend.repository)]),

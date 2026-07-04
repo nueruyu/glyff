@@ -73,8 +73,7 @@ async def test_fresh_run_prunes_whole_subtree(
     backend = JsonFileBackend(base_dir=tmp_path, session_id="prune-fresh")
     async with Session(
         id="prune-fresh",
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         hasher=hasher,
         event_emitter=_pruning_emitter(backend),
@@ -95,8 +94,7 @@ async def test_disabled_flag_retains_descendants(
     backend = JsonFileBackend(base_dir=tmp_path, session_id="prune-off")
     async with Session(
         id="prune-off",
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         hasher=hasher,
     ):
@@ -114,8 +112,7 @@ async def test_replay_after_prune_is_correct(
     backend = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
         id=sid,
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         hasher=hasher,
         event_emitter=_pruning_emitter(backend),
@@ -126,8 +123,7 @@ async def test_replay_after_prune_is_correct(
     reopened = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
         id=sid,
-        repository=reopened.repository,
-        transaction_provider=reopened.transaction_provider,
+        backend=reopened,
         serializer=serializer,
         hasher=hasher,
         event_emitter=_pruning_emitter(reopened),
@@ -196,8 +192,7 @@ async def test_nested_completion_prunes_mid_session(
     with pytest.raises(PruningPause):
         async with Session(
             id=sid,
-            repository=backend.repository,
-            transaction_provider=backend.transaction_provider,
+            backend=backend,
             serializer=serializer,
             hasher=hasher,
             event_emitter=_pruning_emitter(backend),
@@ -215,8 +210,7 @@ async def test_nested_completion_prunes_mid_session(
     reopened = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
         id=sid,
-        repository=reopened.repository,
-        transaction_provider=reopened.transaction_provider,
+        backend=reopened,
         serializer=serializer,
         hasher=hasher,
         event_emitter=_pruning_emitter(reopened),

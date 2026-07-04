@@ -96,6 +96,17 @@ class FileTransactionProvider(TransactionProvider):
 
 
 class JsonFileBackend:
+    """A file-backed backend for glyff, intended for debugging and inspection.
+
+    This backend stores the entire execution history for a session in a single,
+    pretty-printed JSON file. It requires a serializer that produces
+    JSON-compatible bytes, such as JsonSerializer or PydanticSerializer, because
+    execution results and metadata are stored as embedded JSON values.
+
+    The entire state is loaded into memory on startup and rewritten atomically
+    on each commit, making it unsuitable for high-throughput or large-scale use.
+    """
+
     def __init__(self, *, base_dir: str | Path, session_id: str):
         client = FileClient(base_dir=base_dir, session_id=session_id)
         self.repository: ExecutionRepository = FileExecutionRepository(client)

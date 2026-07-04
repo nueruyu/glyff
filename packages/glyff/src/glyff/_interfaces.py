@@ -1,7 +1,7 @@
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from ._models import Execution, ExecutionId
 
@@ -71,3 +71,13 @@ class ArgsHasher(ABC):
     ) -> str:
         """Creates a deterministic hash from a function's arguments."""
         ...
+
+
+class Backend(Protocol):
+    """A bundle of persistence-related collaborators."""
+
+    @property
+    def repository(self) -> ExecutionRepository: ...
+
+    @property
+    def transaction_provider(self) -> TransactionProvider: ...

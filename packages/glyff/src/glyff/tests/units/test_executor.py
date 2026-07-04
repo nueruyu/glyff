@@ -88,8 +88,7 @@ async def test_completion_prunes_descendants_when_enabled(
     emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
     ctx = Context(
         session_id="prune-on",
-        repository=mock_backend.repository,
-        transaction_provider=mock_backend.transaction_provider,
+        backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -138,8 +137,7 @@ async def test_nested_completion_prunes(
     emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
     ctx = Context(
         session_id="prune-nested",
-        repository=mock_backend.repository,
-        transaction_provider=mock_backend.transaction_provider,
+        backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -424,8 +422,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
 
     ctx = Context(
         session_id="failure-handler-tx",
-        repository=mock_backend.repository,
-        transaction_provider=mock_backend.transaction_provider,
+        backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -485,8 +482,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     )
     ctx = Context(
         session_id="complete-fails",
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -528,8 +524,7 @@ async def test_completed_handler_failure_does_not_roll_back_completion(
     backend = StubBackend(client=MemoryClient())
     ctx = Context(
         session_id="completed-handler-fails",
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,

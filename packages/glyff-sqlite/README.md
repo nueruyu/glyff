@@ -42,8 +42,8 @@ record — from within an engraved call:
 
 ```python
 ctx = glyff.get_context()
-await ctx.set_metadata("my_key", {"any": "json-serializable value"})
-value = await ctx.get_metadata("my_key", dict)
+await ctx.metadata.set("my_key", {"any": "json-serializable value"})
+value = await ctx.metadata.get("my_key", dict)
 ```
 
 Metadata is a keyed map attached to the current execution and is removed if that

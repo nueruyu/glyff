@@ -1,8 +1,9 @@
 def test_old_session_store_names_are_not_public():
-    import glyff
-    import glyff.store
     import glyff_file_store
     import glyff_sqlite
+
+    import glyff
+    import glyff.store
 
     assert not hasattr(glyff, "SessionStore")
     assert not hasattr(glyff.store, "MemorySessionStore")
@@ -11,10 +12,13 @@ def test_old_session_store_names_are_not_public():
 
 
 def test_new_backend_names_are_public():
-    import glyff.store
     import glyff_file_store
     import glyff_sqlite
 
+    import glyff
+    import glyff.store
+
+    assert hasattr(glyff, "Backend")
     assert hasattr(glyff.store, "MemoryBackend")
     assert hasattr(glyff_file_store, "JsonFileBackend")
     assert hasattr(glyff_sqlite, "SQLiteBackend")

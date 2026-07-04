@@ -29,7 +29,9 @@ def _json_text(value: Any) -> str:
     )
 
 
-def _to_execution(execution_id: ExecutionId, record: SQLiteExecutionRecord) -> Execution:
+def _to_execution(
+    execution_id: ExecutionId, record: SQLiteExecutionRecord
+) -> Execution:
     stored = {
         "status": record.status,
         "result": json.loads(record.result) if record.result is not None else None,
@@ -83,6 +85,17 @@ class SQLiteTransactionProvider(TransactionProvider):
 
 
 class SQLiteBackend:
+    """A durable, SQLite-backed backend for glyff.
+
+    This backend stores each execution in a row in a SQLite database, providing
+    transactional guarantees and indexed lookups. It is suitable for production
+    use.
+
+    It requires a serializer that produces JSON-compatible bytes, such as
+    JsonSerializer or PydanticSerializer, because execution results and metadata
+    are stored as JSON text columns for readability and queryability.
+    """
+
     def __init__(
         self,
         database_path: str | Path,
@@ -97,4 +110,6 @@ class SQLiteBackend:
         )
         client._initialize_schema_sync()
         self.repository: ExecutionRepository = SQLiteExecutionRepository(client)
-        self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(client)
+        self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(
+            client
+        )

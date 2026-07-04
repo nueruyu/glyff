@@ -2,6 +2,7 @@ from ._context import Context, reset_context, set_context
 from ._event_system import EventEmitter
 from ._interfaces import (
     ArgsHasher,
+    Backend,
     ExecutionRepository,
     Serializer,
     TransactionProvider,
@@ -21,15 +22,13 @@ class Session:
         self,
         id: str,
         *,
-        repository: ExecutionRepository,
-        transaction_provider: TransactionProvider,
+        backend: Backend,
         serializer: Serializer,
         hasher: ArgsHasher,
         event_emitter: EventEmitter | None = None,
     ) -> None:
         self._id = id
-        self._repository = repository
-        self._transaction_provider = transaction_provider
+        self._backend = backend
         self._hasher = hasher
         self._serializer = serializer
         self._event_emitter = event_emitter or EventEmitter([])
@@ -44,18 +43,17 @@ class Session:
     @property
     def repository(self) -> ExecutionRepository:
         """Returns the ExecutionRepository used by this Session."""
-        return self._repository
+        return self._backend.repository
 
     @property
     def transaction_provider(self) -> TransactionProvider:
         """Returns the TransactionProvider used by this Session."""
-        return self._transaction_provider
+        return self._backend.transaction_provider
 
     async def __aenter__(self) -> "Session":
         self._context = Context(
             session_id=self._id,
-            repository=self._repository,
-            transaction_provider=self._transaction_provider,
+            backend=self._backend,
             serializer=self._serializer,
             sequencer=Sequencer(),
             hasher=self._hasher,

@@ -55,8 +55,7 @@ async def test_json_parallel_children_durable_after_root_interrupt(
         backend = backend_factory(sid)
         async with Session(
             id=sid,
-            repository=backend.repository,
-            transaction_provider=backend.transaction_provider,
+            backend=backend,
             serializer=serializer,
             hasher=hasher,
         ):
@@ -69,8 +68,7 @@ async def test_json_parallel_children_durable_after_root_interrupt(
     backend = backend_factory(sid)
     async with Session(
         id=sid,
-        repository=backend.repository,
-        transaction_provider=backend.transaction_provider,
+        backend=backend,
         serializer=serializer,
         hasher=hasher,
     ):
