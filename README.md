@@ -115,10 +115,10 @@ descendants; you decide the rest.
 The context execution repository exposes `descendants_of` and `delete_many` (in
 `ExecutionId` terms). Drive them from an `ExecutionCompleted` handler. The event
 fires *after* the completion is durably committed, so the handler opens its own
-transaction. A pruning failure cannot roll back the already committed completed
-execution; however, with the current event emitter behavior, handler exceptions
-may still propagate to the caller. Final handler failure semantics are tracked
-separately in [issue #35](https://github.com/nueruyu/glyff/issues/35):
+transaction. Event handlers are best-effort post-transaction observers: handler
+exceptions are logged and do not affect the execution result or the original
+exception. Handlers run sequentially in registration order; long-running work
+should be explicitly offloaded by the handler.
 
 ```python
 from glyff import EventEmitter, EventHandler, ExecutionRepository, Session

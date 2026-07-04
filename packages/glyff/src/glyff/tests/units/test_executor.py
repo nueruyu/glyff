@@ -1,3 +1,4 @@
+import logging
 import traceback
 from unittest.mock import AsyncMock
 
@@ -528,6 +529,51 @@ async def test_execution_failed_emits_after_body_transaction_closes(
     assert await mock_backend.repository.get(scratch_id) is None
 
 
+async def test_failed_handler_failure_does_not_replace_original_exception(
+    base_execution_id: ExecutionId,
+    serializer: Serializer,
+    hasher,
+    caplog,
+):
+    class FailingFailedHandler(EventHandler[ExecutionFailed]):
+        async def handle(self, event: ExecutionFailed) -> None:
+            raise RuntimeError("handler failed")
+
+    backend = StubBackend(client=MemoryClient())
+    ctx = Context(
+        session_id="failed-handler-fails",
+        backend=backend,
+        serializer=serializer,
+        sequencer=Sequencer(),
+        hasher=hasher,
+        event_emitter=EventEmitter([FailingFailedHandler()]),
+    )
+    token = set_context(ctx)
+    try:
+
+        async def sample_func():
+            raise ValueError("original")
+
+        with caplog.at_level(logging.ERROR, logger="glyff._event_system"):
+            with pytest.raises(ValueError, match="original"):
+                await execute(
+                    ctx=ctx,
+                    execution_id=base_execution_id,
+                    func=sample_func,
+                    args=(),
+                    kwargs={},
+                    return_type=str,
+                )
+    finally:
+        reset_context(token)
+
+    assert "Event handler failed" in caplog.text
+    assert "handler failed" in caplog.text
+    record = await backend.repository.get(base_execution_id)
+    assert record is not None
+    assert record.status == ExecutionStatus.STARTED
+
+
 async def test_execution_save_failure_rolls_back_complete_transaction(
     base_execution_id: ExecutionId,
     serializer: Serializer,
@@ -585,10 +631,11 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     assert len(backend.get_calls("rollback")) == 1
 
 
-async def test_completed_handler_failure_does_not_roll_back_completion(
+async def test_completed_handler_failure_does_not_affect_result_or_completion(
     base_execution_id: ExecutionId,
     serializer: Serializer,
     hasher,
+    caplog,
 ):
     class FailingCompletedHandler(EventHandler[ExecutionCompleted]):
         async def handle(self, event: ExecutionCompleted) -> None:
@@ -609,8 +656,8 @@ async def test_completed_handler_failure_does_not_roll_back_completion(
         async def sample_func():
             return "hello"
 
-        with pytest.raises(RuntimeError, match="handler failed"):
-            await execute(
+        with caplog.at_level(logging.ERROR, logger="glyff._event_system"):
+            result = await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
                 func=sample_func,
@@ -621,10 +668,13 @@ async def test_completed_handler_failure_does_not_roll_back_completion(
     finally:
         reset_context(token)
 
+    assert result == "hello"
     record = await backend.repository.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.COMPLETED
     assert not backend.get_calls("rollback")
+    assert "Event handler failed" in caplog.text
+    assert "handler failed" in caplog.text
 
 
 async def test_nested_child_commits_without_losing_parent_staging(
