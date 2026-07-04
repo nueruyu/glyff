@@ -1,8 +1,21 @@
-from ._context import get_context
+from ._context import MetadataAccessor, TransactionScope, get_context
 from ._engrave import engrave
 from ._event_system import Event, EventEmitter, EventHandler
-from ._interfaces import ArgsHasher, Execution, Serializer, SessionStore, Transaction
-from ._models import ExecutionId, ExecutionRecord, ExecutionStatus
+from ._interfaces import (
+    ArgsHasher,
+    Backend,
+    ExecutionRepository,
+    Serializer,
+    Transaction,
+    TransactionProvider,
+)
+from ._models import (
+    Execution,
+    ExecutionId,
+    ExecutionStatus,
+    Metadata,
+    SerializedValue,
+)
 from ._session import Session
 
 __all__ = [
@@ -12,12 +25,17 @@ __all__ = [
     "EventHandler",
     "EventEmitter",
     "ArgsHasher",
+    "Backend",
     "Serializer",
-    "SessionStore",
     "Transaction",
+    "TransactionProvider",
+    "TransactionScope",
+    "ExecutionRepository",
     "Execution",
     "ExecutionId",
-    "ExecutionRecord",
     "ExecutionStatus",
+    "Metadata",
+    "MetadataAccessor",
+    "SerializedValue",
     "get_context",
 ]

@@ -7,8 +7,8 @@ import asyncio
 
 import pytest
 
-from glyff import ArgsHasher, Session, engrave
-from glyff.tests.types import StoreFactory
+from glyff import ArgsHasher, engrave
+from glyff.tests.types import BackendFactory, make_session
 
 _ran: set[int] = set()
 _interrupt_root: bool = False
@@ -32,7 +32,7 @@ def reset_state():
 @engrave
 async def pard_child(i: int) -> int:
     # Yield control so siblings genuinely interleave their START/COMPLETE
-    # transactions on the shared store.
+    # transactions on the shared backend.
     await asyncio.sleep(0)
     _ran.add(i)
     return i * 10
@@ -48,15 +48,15 @@ async def pard_root() -> int:
 
 
 async def test_parallel_children_are_each_durable_after_root_interrupt(
-    store_factory: StoreFactory, hasher: ArgsHasher
+    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
 ):
     global _interrupt_root
-    store = store_factory("parallel-durability")
+    backend = backend_factory("parallel-durability")
 
     # Run 1: all children complete in parallel, then the root is interrupted.
     _interrupt_root = True
     with pytest.raises(RootInterrupted):
-        async with Session(id="parallel-durability", store=store, hasher=hasher):
+        async with make_session("parallel-durability", backend, hasher, serializer):
             await pard_root()
     assert _ran == set(range(_N))
 
@@ -64,7 +64,7 @@ async def test_parallel_children_are_each_durable_after_root_interrupt(
     # rather than re-run — none was lost to a concurrent sibling's commit.
     _ran.clear()
     _interrupt_root = False
-    async with Session(id="parallel-durability", store=store, hasher=hasher):
+    async with make_session("parallel-durability", backend, hasher, serializer):
         total = await pard_root()
 
     assert total == sum(i * 10 for i in range(_N))

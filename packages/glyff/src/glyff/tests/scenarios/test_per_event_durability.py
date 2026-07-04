@@ -4,8 +4,8 @@ reused (not re-executed) on resume."""
 
 import pytest
 
-from glyff import ArgsHasher, Session, engrave
-from glyff.tests.types import StoreFactory
+from glyff import ArgsHasher, engrave
+from glyff.tests.types import BackendFactory, make_session
 
 _calls: list[str] = []
 _interrupt_root: bool = False
@@ -41,15 +41,15 @@ async def ped_root() -> str:
 
 
 async def test_completed_child_is_reused_after_parent_interrupts(
-    store_factory: StoreFactory, hasher: ArgsHasher
+    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
 ):
     global _interrupt_root
-    store = store_factory("per-event-child-reuse")
+    backend = backend_factory("per-event-child-reuse")
 
     # Run 1: the child completes, then the root is interrupted afterwards.
     _interrupt_root = True
     with pytest.raises(RootInterrupted):
-        async with Session(id="per-event-child-reuse", store=store, hasher=hasher):
+        async with make_session("per-event-child-reuse", backend, hasher, serializer):
             await ped_root()
     assert _calls == ["root", "child"]
 
@@ -58,7 +58,7 @@ async def test_completed_child_is_reused_after_parent_interrupts(
     # was interrupted.
     _calls.clear()
     _interrupt_root = False
-    async with Session(id="per-event-child-reuse", store=store, hasher=hasher):
+    async with make_session("per-event-child-reuse", backend, hasher, serializer):
         result = await ped_root()
 
     assert result == "child"

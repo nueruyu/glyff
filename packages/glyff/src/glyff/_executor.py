@@ -1,7 +1,7 @@
 from typing import Any, Callable
 
 from ._context import Context
-from ._models import ExecutionId, ExecutionStatus
+from ._models import Execution, ExecutionId, ExecutionStatus, SerializedValue
 from .events import ExecutionCompleted, ExecutionFailed
 
 
@@ -17,43 +17,61 @@ async def execute(
     Orchestrates the execution of a regular (awaitable) task: cache checks,
     per-event durable recording, and exception handling.
 
-    START, the function body, and COMPLETE each use separate store transaction
-    scopes, so a completed descendant can commit while an ancestor body is
-    still running.
+    START uses its own transaction so interrupted calls are retryable. The
+    function body and COMPLETE share a transaction so metadata written through
+    ctx.metadata commits atomically with the completed execution record.
     """
-    store = ctx.store
+    repository = ctx.repository
+    serializer = ctx.serializer
     sequencer = ctx.sequencer
     tracer = ctx.tracer
 
-    record = await store.get_execution_record(execution_id, return_type)
-    if record and record.status == ExecutionStatus.COMPLETED:
-        return record.result
+    cached = await repository.get(execution_id)
+    if cached is not None and cached.status == ExecutionStatus.COMPLETED:
+        assert cached.result is not None
+        return await serializer.deserialize(cached.result.data, return_type)
 
     async with ctx.get_transaction_scope():
         await sequencer.reset_for_call(execution_id)
-        execution = await store.start_execution(execution_id)
+        if await repository.get(execution_id) is None:
+            await repository.save(Execution.start(execution_id))
 
     tracer.start(execution_id)
+
+    func_exception: Exception | None = None
+
     try:
-        async with ctx.get_transaction_scope() as scope:
+        async with ctx.get_transaction_scope():
             try:
                 result = await func(*args, **kwargs)
             except Exception as e:
-                await ctx.event_emitter.emit(
-                    ExecutionFailed(
-                        context=ctx,
-                        execution_id=execution_id,
-                        exception=e,
-                    )
-                )
-                await scope.commit()
+                func_exception = e
                 raise
 
-        async with ctx.get_transaction_scope():
-            await execution.complete(result, return_type)
-            await ctx.event_emitter.emit(
-                ExecutionCompleted(context=ctx, execution_id=execution_id)
+            execution = await repository.get(execution_id)
+            if execution is None:
+                raise LookupError(f"Execution {execution_id} not found")
+
+            serialized = await serializer.serialize(result, return_type)
+            execution.complete(SerializedValue(serialized))
+            await repository.save(execution)
+
+        await ctx.event_emitter.emit(
+            ExecutionCompleted(
+                context=ctx,
+                execution_id=execution_id,
             )
+        )
         return result
+    except Exception:
+        if func_exception is not None:
+            await ctx.event_emitter.emit(
+                ExecutionFailed(
+                    context=ctx,
+                    execution_id=execution_id,
+                    exception=func_exception,
+                )
+            )
+        raise
     finally:
         tracer.end()

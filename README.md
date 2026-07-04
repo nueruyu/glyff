@@ -34,18 +34,15 @@ async def greet(name: str, answer: str | None = None) -> str:
 
 async def main(session_id: str, answer: str | None = None):
     serializer = PydanticSerializer()
-    client = glyff_file_store.FileClient(
+    backend = glyff_file_store.JsonFileBackend(
         base_dir=".sessions",
         session_id=session_id,
-    )
-    store = glyff_file_store.JsonFileSessionStore(
-        client=client,
-        serializer=serializer,
     )
 
     session = glyff.Session(
         id=session_id,
-        store=store,
+        backend=backend,
+        serializer=serializer,
         hasher=PydanticArgsHasher(),
     )
 
@@ -73,41 +70,88 @@ the provided answer instead of pausing again.
 
 ## Behavior
 
-- Marked function calls are recorded in a session-scoped store, keyed by
+- Marked function calls are recorded in a session-scoped execution repository, keyed by
   function identity, arguments, and call position.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
-- Exceptions raised by a call are non-terminal by default: completed work is
-  committed, the interrupted call remains `STARTED`, and the original exception
-  propagates so the caller can decide whether to resume later.
+- An exception persists nothing: the interrupted call stays `STARTED` (retried
+  on resume), completed descendant work remains committed, and the original
+  exception propagates.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 
-## Pruning completed subtrees
+## Per-execution metadata
 
-Once a marked call completes, its result is recorded and any resume returns
-that result directly — the calls it made underneath are never replayed. Their
-records are therefore dead weight. Passing `prune_completed_descendants=True`
-to `Session` deletes a call's descendant records the moment it completes:
+Attach application data to the running call. Metadata is owned by the
+`Execution` aggregate: `ctx.metadata.set(...)` stages metadata into the
+currently active transaction, serialized with the session's serializer. During
+normal engraved execution, metadata set in the function body commits atomically
+with the execution's `COMPLETED` status and result.
+
+If completing the current execution fails, metadata staged through
+`ctx.metadata.set(...)` in that function body is rolled back with the completion
+write.
 
 ```python
-session = glyff.Session(
+@glyff.engrave
+async def step() -> str:
+    ctx = glyff.get_context()
+    await ctx.metadata.set("trace_id", "abc-123")
+    ...
+    return await ctx.metadata.get("trace_id", str)  # "abc-123"
+```
+
+Reads default to the current execution; pass `execution_id=` to read another
+call's metadata.
+
+## Pruning completed subtrees (userland)
+
+Once a call completes, any resume returns its recorded result directly and the
+calls underneath are never replayed. Those descendant records are dead weight,
+but *when and whether* to delete them is a retention policy glyff does not ship.
+glyff knows only **what** is unreachable — a completed call's strict
+descendants; you decide the rest.
+
+The context execution repository exposes `descendants_of` and `delete_many` (in
+`ExecutionId` terms). Drive them from an `ExecutionCompleted` handler. The event
+fires *after* the completion is durably committed, so the handler opens its own
+transaction. Event handlers are best-effort post-transaction observers: handler
+exceptions are logged and do not affect the execution result or the original
+exception. Handlers run sequentially in registration order; long-running work
+should be explicitly offloaded by the handler.
+
+```python
+from glyff import EventEmitter, EventHandler, ExecutionRepository, Session
+from glyff.events import ExecutionCompleted
+
+
+class PruneDescendants(EventHandler[ExecutionCompleted]):
+    def __init__(self, repository: ExecutionRepository):
+        self._repository = repository
+
+    async def handle(self, event: ExecutionCompleted) -> None:
+        async with event.context.get_transaction_scope():
+            descendants = await self._repository.descendants_of(event.execution_id)
+            if descendants:
+                await self._repository.delete_many(descendants)
+
+
+backend = glyff_file_store.JsonFileBackend(
+    base_dir=".sessions",
+    session_id=session_id,
+)
+session = Session(
     id=session_id,
-    store=store,
+    backend=backend,
+    serializer=serializer,
     hasher=hasher,
-    prune_completed_descendants=True,
+    event_emitter=EventEmitter([PruneDescendants(backend.repository)]),
 )
 ```
 
-This is opt-in (default off) because it discards history you might otherwise
-keep for inspection. The detection of which records are unreachable lives in
-the executor; the store only answers `get_descendants` and deletes the ids it
-is handed (in one batched `delete_executions` call), so the policy applies
-uniformly across stores. Replay and resume are unaffected — only records that
-can no longer be reached are removed.
-
-Pruning fires at every completion, so a completed nested call's descendants are
-removed immediately rather than lingering until the top-level call finishes.
+Replay and resume are unaffected — only unreachable records are removed. The
+handler fires at every completion, so a nested call is pruned as soon as it
+finishes, not when its top-level ancestor does.
 
 ## Status
 
@@ -118,8 +162,8 @@ Early development. APIs may change before v1.0.
 | Package                                           | Description                                                    |
 | ------------------------------------------------- | -------------------------------------------------------------- |
 | [`glyff`](./packages/glyff)                       | Core primitive. In-memory only, standard library dependencies. |
-| [`glyff-file-store`](./packages/glyff-file-store) | Append-only file-backed session store (debug).                 |
-| [`glyff-sqlite`](./packages/glyff-sqlite)         | SQLite-backed durable session store (production).              |
+| [`glyff-file-store`](./packages/glyff-file-store) | File-backed execution repository (debug).                      |
+| [`glyff-sqlite`](./packages/glyff-sqlite)         | SQLite-backed durable execution repository (production).       |
 | [`glyff-pydantic`](./packages/glyff-pydantic)     | Pydantic-typed serialization and arg hashing.                  |
 
 ```bash

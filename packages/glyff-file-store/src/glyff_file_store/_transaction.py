@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from typing import Any
 
 from glyff import Transaction
 
+from glyff_file_store._file_client import FileClient
+
 
 class _ClientTransaction(Transaction):
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: FileClient) -> None:
         self._client = client
         self._closed = False
         self._lock = asyncio.Lock()

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -31,17 +30,48 @@ class ExecutionId:
 
 
 class ExecutionStatus(Enum):
-    """Represents the lifecycle state of a task."""
+    """Represents the lifecycle state of a task execution."""
 
     STARTED = auto()
     COMPLETED = auto()
-    FAILED = auto()
 
 
 @dataclass(frozen=True)
-class ExecutionRecord:
-    """Represents the persisted state and outcome of a single execution."""
+class SerializedValue:
+    """A serializer-neutral persisted value owned by an Execution aggregate."""
 
+    data: bytes
+
+
+@dataclass(frozen=True)
+class Metadata:
+    """Child entity/value object inside the Execution aggregate."""
+
+    key: str
+    value: SerializedValue
+
+
+@dataclass
+class Execution:
+    """Aggregate Root for a single task execution."""
+
+    id: ExecutionId
     status: ExecutionStatus
-    result: Any | None = None
-    error: str | None = None
+    result: SerializedValue | None = None
+    metadata: dict[str, Metadata] = field(default_factory=dict)
+
+    @classmethod
+    def start(cls, execution_id: ExecutionId) -> "Execution":
+        return cls(id=execution_id, status=ExecutionStatus.STARTED)
+
+    def complete(self, result: SerializedValue) -> None:
+        if self.status is ExecutionStatus.COMPLETED:
+            raise ValueError(f"Cannot complete execution {self.id}: already completed")
+        self.status = ExecutionStatus.COMPLETED
+        self.result = result
+
+    def set_metadata(self, key: str, value: SerializedValue) -> None:
+        self.metadata[key] = Metadata(key=key, value=value)
+
+    def get_metadata(self, key: str) -> Metadata | None:
+        return self.metadata.get(key)

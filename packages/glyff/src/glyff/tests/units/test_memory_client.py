@@ -4,7 +4,7 @@ an uncommitted transaction must observe the staged view, consistent with
 
 import pytest
 
-from glyff.store import MemoryClient
+from glyff.store._memory_client import MemoryClient
 from glyff.store._memory import _MemoryTransaction
 
 

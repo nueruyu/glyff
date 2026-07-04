@@ -1,121 +1,74 @@
-"""Unit tests for the memory store's pruning mechanism and its full-path key
-scheme (which also makes keys collision-free across different parents)."""
+from typing import cast
 
-from glyff import ExecutionId
-from glyff.store import (
-    MemoryClient,
-    MemorySessionStore,
-)
-from glyff.store.utils import execution_id_to_path, path_to_execution_id
+from glyff import Execution, ExecutionId, ExecutionStatus, SerializedValue
+from glyff._context import TransactionScope
+from glyff.store import MemoryBackend, MemoryExecutionRepository
+from glyff.store._memory import _make_key
+from glyff.store.utils import execution_id_to_path
 
 
-def _store(serializer) -> MemorySessionStore:
-    return MemorySessionStore(client=MemoryClient(), serializer=serializer)
+async def _save(backend: MemoryBackend, execution: Execution) -> None:
+    async with TransactionScope(backend.transaction_provider):
+        await backend.repository.save(execution)
 
 
-def _child(parent, name, seq=0, h="h0") -> ExecutionId:
-    return ExecutionId(parent_id=parent, name=name, sequence=seq, args_hash=h)
+async def test_descendants_of_returns_strict_transitive_descendants(serializer):
+    backend = MemoryBackend()
+    root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
+    a = ExecutionId(parent_id=root, name="a", sequence=0, args_hash="a")
+    b = ExecutionId(parent_id=root, name="b", sequence=0, args_hash="b")
+    grand = ExecutionId(parent_id=a, name="grand", sequence=0, args_hash="g")
+
+    for eid in (root, a, b, grand):
+        await _save(backend, Execution.start(eid))
+
+    assert set(await backend.repository.descendants_of(root)) == {a, b, grand}
+    assert set(await backend.repository.descendants_of(a)) == {grand}
+    assert await backend.repository.descendants_of(grand) == []
 
 
-async def _complete(
-    store: MemorySessionStore, eid: ExecutionId, value, rtype=str
-) -> None:
-    tx = await store.begin_transaction()
-    ex = await store.start_execution(eid)
-    await ex.complete(value, rtype)
-    await tx.commit()
+async def test_delete_many_removes_execution_parts(serializer):
+    backend = MemoryBackend()
+    eid = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
+    execution = Execution.start(eid)
+    execution.complete(SerializedValue(await serializer.serialize("ok", str)))
+    execution.set_metadata("k", SerializedValue(await serializer.serialize("v", str)))
+    await _save(backend, execution)
+
+    async with TransactionScope(backend.transaction_provider):
+        await backend.repository.delete_many([eid])
+
+    assert await backend.repository.get(eid) is None
 
 
-async def test_get_descendants_strict_and_transitive(serializer):
-    store = _store(serializer)
-    root = _child(None, "root")
-    a = _child(root, "a")
-    grand = _child(a, "grand")
-    b = _child(root, "b")
-    for eid in (root, a, grand, b):
-        await _complete(store, eid, "v")
+async def test_descendants_ignore_metadata_only_orphans(serializer):
+    backend = MemoryBackend()
+    root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
+    child = ExecutionId(parent_id=root, name="child", sequence=0, args_hash="c")
+    path = execution_id_to_path(child)
+    repository = cast(MemoryExecutionRepository, backend.repository)
+    repository._client.data[_make_key(path, "metadata")] = {"k": b'"v"'}
 
-    assert set(await store.get_descendants(root)) == {a, grand, b}
-    assert set(await store.get_descendants(a)) == {grand}
-    assert await store.get_descendants(grand) == []
+    assert await backend.repository.descendants_of(root) == []
 
 
-async def test_delete_execution_removes_only_that_id(serializer):
-    store = _store(serializer)
-    root = _child(None, "root")
-    child = _child(root, "child")
-    await _complete(store, root, "rv")
-    await _complete(store, child, "cv")
+async def test_delete_one_descendant_preserves_siblings(serializer):
+    backend = MemoryBackend()
+    root = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
+    p1 = ExecutionId(parent_id=root, name="p1", sequence=0, args_hash="p1")
+    p2 = ExecutionId(parent_id=root, name="p2", sequence=0, args_hash="p2")
+    leaf1 = ExecutionId(parent_id=p1, name="leaf", sequence=0, args_hash="l1")
+    leaf2 = ExecutionId(parent_id=p2, name="leaf", sequence=0, args_hash="l2")
 
-    tx = await store.begin_transaction()
-    await store.delete_executions([child])
-    await tx.commit()
+    for eid in (root, p1, p2, leaf1, leaf2):
+        execution = Execution.start(eid)
+        execution.complete(SerializedValue(await serializer.serialize("ok", str)))
+        await _save(backend, execution)
 
-    assert await store.get_execution_record(child, str) is None
-    root_rec = await store.get_execution_record(root, str)
-    assert root_rec is not None and root_rec.result == "rv"
+    async with TransactionScope(backend.transaction_provider):
+        await backend.repository.delete_many([leaf1])
 
-
-async def test_delete_execution_rolls_back(serializer):
-    store = _store(serializer)
-    eid = _child(None, "root")
-    await _complete(store, eid, "v")
-
-    tx = await store.begin_transaction()
-    await store.delete_executions([eid])
-    await tx.rollback()
-
-    rec = await store.get_execution_record(eid, str)
-    assert rec is not None and rec.result == "v"
-
-
-async def test_full_path_keys_avoid_cross_parent_collision(serializer):
-    """Two children with identical (name, sequence, args_hash) under different
-    parents must remain independent records (the old flat key scheme collided)."""
-    store = _store(serializer)
-    p1 = _child(None, "p1")
-    p2 = _child(None, "p2")
-    leaf_under_p1 = _child(p1, "leaf", 0, "samehash")
-    leaf_under_p2 = _child(p2, "leaf", 0, "samehash")
-
-    await _complete(store, leaf_under_p1, "one")
-    await _complete(store, leaf_under_p2, "two")
-
-    leaf_under_p1_rec = await store.get_execution_record(leaf_under_p1, str)
-    leaf_under_p2_rec = await store.get_execution_record(leaf_under_p2, str)
-    assert leaf_under_p1_rec is not None
-    assert leaf_under_p2_rec is not None
-    assert leaf_under_p1_rec.result == "one"
-    assert leaf_under_p2_rec.result == "two"
-
-    # Deleting one leaf does not touch the colliding sibling under the other parent.
-    tx = await store.begin_transaction()
-    await store.delete_executions([leaf_under_p1])
-    await tx.commit()
-    assert await store.get_execution_record(leaf_under_p1, str) is None
-    leaf_under_p2_rec = await store.get_execution_record(leaf_under_p2, str)
-    assert leaf_under_p2_rec is not None
-    assert leaf_under_p2_rec.result == "two"
-
-
-async def test_all_keys_includes_staged_excludes_deleted():
-    client = MemoryClient()
-    token, _ = client.begin_staging()
-    try:
-        client.stage_write("execution::a::status", 1)
-        await client.commit_staged()
-    finally:
-        client.end_staging(token)
-
-    token, _ = client.begin_staging()
-    try:
-        client.stage_write("execution::b::status", 2)
-        client.stage_delete("execution::a::status")
-        assert client.all_keys() == {"execution::b::status"}
-    finally:
-        client.end_staging(token)
-
-
-def test_execution_path_roundtrip(base_execution_id: ExecutionId):
-    nested = _child(_child(base_execution_id, "mid", 2, "abc"), "leaf", 5, "def456")
-    assert path_to_execution_id(execution_id_to_path(nested)) == nested
+    assert await backend.repository.get(leaf1) is None
+    leaf2_record = await backend.repository.get(leaf2)
+    assert leaf2_record is not None
+    assert leaf2_record.status is ExecutionStatus.COMPLETED

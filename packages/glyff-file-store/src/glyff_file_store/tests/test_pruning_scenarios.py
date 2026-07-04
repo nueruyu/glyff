@@ -3,34 +3,36 @@ file store. Proves that registering ``PruningEventHandler`` deletes the history
 of a task's descendants once it completes, without changing replay."""
 
 import json
+from typing import cast
 
 import pytest
 from glyff import ArgsHasher, EventEmitter, Session, engrave
-from glyff.event_handlers import PruningEventHandler
 from glyff.serialization import JsonSerializer
 from glyff.serialization.constants import DEFAULT_ENCODING
+from glyff.tests.stubs.pruning import PruningEventHandler
 
-from glyff_file_store import FileClient, JsonFileSessionStore
+from glyff_file_store import FileExecutionRepository, JsonFileBackend
 
 
 class PruningPause(Exception):
     pass
 
 
-async def _read_executions(store: JsonFileSessionStore) -> dict[str, object]:
-    raw = await store._client.read("executions.json")
+async def _read_execution_map(backend: JsonFileBackend) -> dict[str, object]:
+    repository = cast(FileExecutionRepository, backend.repository)
+    raw = await repository._client.read("executions.json")
     if raw is None:
         return {}
     return json.loads(raw.decode(DEFAULT_ENCODING))
 
 
-async def _leaf_names(store: JsonFileSessionStore) -> list[str]:
-    executions = await _read_executions(store)
-    return [eid.split("/")[-1].split("#")[0] for eid in executions]
+async def _leaf_names(backend: JsonFileBackend) -> list[str]:
+    execution_map = await _read_execution_map(backend)
+    return [eid.split("/")[-1].split("#")[0] for eid in execution_map]
 
 
-def _pruning_emitter() -> EventEmitter:
-    return EventEmitter([PruningEventHandler()])
+def _pruning_emitter(backend: JsonFileBackend) -> EventEmitter:
+    return EventEmitter([PruningEventHandler(backend.repository)])
 
 
 # --------------------------------------------------------------------------
@@ -68,56 +70,63 @@ async def pr_root() -> int:
 async def test_fresh_run_prunes_whole_subtree(
     tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
-    store = JsonFileSessionStore(
-        client=FileClient(base_dir=tmp_path, session_id="prune-fresh"),
-        serializer=serializer,
-    )
+    backend = JsonFileBackend(base_dir=tmp_path, session_id="prune-fresh")
     async with Session(
-        id="prune-fresh", store=store, hasher=hasher, event_emitter=_pruning_emitter()
+        id="prune-fresh",
+        backend=backend,
+        serializer=serializer,
+        hasher=hasher,
+        event_emitter=_pruning_emitter(backend),
     ):
         result = await pr_root()
 
     assert result == (0 + 1) + (10 + 11)
     assert set(_runs) == {"root", "mid0", "mid10", "leaf0", "leaf1", "leaf10", "leaf11"}
 
-    executions = await _read_executions(store)
-    assert all("/" not in eid for eid in executions)
-    assert set(await _leaf_names(store)) == {"pr_root"}
+    execution_map = await _read_execution_map(backend)
+    assert all("/" not in eid for eid in execution_map)
+    assert set(await _leaf_names(backend)) == {"pr_root"}
 
 
 async def test_disabled_flag_retains_descendants(
     tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
-    store = JsonFileSessionStore(
-        client=FileClient(base_dir=tmp_path, session_id="prune-off"),
+    backend = JsonFileBackend(base_dir=tmp_path, session_id="prune-off")
+    async with Session(
+        id="prune-off",
+        backend=backend,
         serializer=serializer,
-    )
-    async with Session(id="prune-off", store=store, hasher=hasher):
+        hasher=hasher,
+    ):
         await pr_root()
 
-    executions = await _read_executions(store)
-    assert any("/" in eid for eid in executions)
-    assert "pr_leaf" in await _leaf_names(store)
+    execution_map = await _read_execution_map(backend)
+    assert any("/" in eid for eid in execution_map)
+    assert "pr_leaf" in await _leaf_names(backend)
 
 
 async def test_replay_after_prune_is_correct(
     tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
 ):
     sid = "prune-replay"
-    store = JsonFileSessionStore(
-        client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
-    )
+    backend = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
-        id=sid, store=store, hasher=hasher, event_emitter=_pruning_emitter()
+        id=sid,
+        backend=backend,
+        serializer=serializer,
+        hasher=hasher,
+        event_emitter=_pruning_emitter(backend),
     ):
         first = await pr_root()
 
     _runs.clear()
-    store2 = JsonFileSessionStore(
-        client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
-    )
+    reopened = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
-        id=sid, store=store2, hasher=hasher, event_emitter=_pruning_emitter()
+        id=sid,
+        backend=reopened,
+        serializer=serializer,
+        hasher=hasher,
+        event_emitter=_pruning_emitter(reopened),
     ):
         second = await pr_root()
 
@@ -179,16 +188,18 @@ async def test_nested_completion_prunes_mid_session(
     sid = "prune-interrupt"
 
     _sc_interrupt = True
-    store = JsonFileSessionStore(
-        client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
-    )
+    backend = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     with pytest.raises(PruningPause):
         async with Session(
-            id=sid, store=store, hasher=hasher, event_emitter=_pruning_emitter()
+            id=sid,
+            backend=backend,
+            serializer=serializer,
+            hasher=hasher,
+            event_emitter=_pruning_emitter(backend),
         ):
             await sc_root()
 
-    names = await _leaf_names(store)
+    names = await _leaf_names(backend)
     assert "sc_root" in names
     assert "sc_child_a" in names
     assert "sc_child_b" in names
@@ -196,11 +207,13 @@ async def test_nested_completion_prunes_mid_session(
 
     _sc_runs.clear()
     _sc_interrupt = False
-    store2 = JsonFileSessionStore(
-        client=FileClient(base_dir=tmp_path, session_id=sid), serializer=serializer
-    )
+    reopened = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
-        id=sid, store=store2, hasher=hasher, event_emitter=_pruning_emitter()
+        id=sid,
+        backend=reopened,
+        serializer=serializer,
+        hasher=hasher,
+        event_emitter=_pruning_emitter(reopened),
     ):
         result = await sc_root()
 
@@ -209,6 +222,6 @@ async def test_nested_completion_prunes_mid_session(
     assert "grand" not in _sc_runs
     assert _sc_runs == ["child_b_start", "child_b_end"]
 
-    executions = await _read_executions(store2)
-    assert all("/" not in eid for eid in executions)
-    assert set(await _leaf_names(store2)) == {"sc_root"}
+    execution_map = await _read_execution_map(reopened)
+    assert all("/" not in eid for eid in execution_map)
+    assert set(await _leaf_names(reopened)) == {"sc_root"}

@@ -2,13 +2,76 @@ from __future__ import annotations
 
 import contextvars
 from collections.abc import Iterator, Sequence
-from typing import overload
+from typing import Any, overload
 
 from ._event_system import EventEmitter
-from ._interfaces import ArgsHasher, SessionStore, Transaction
-from ._models import ExecutionId
+from ._interfaces import (
+    ArgsHasher,
+    Backend,
+    ExecutionRepository,
+    Serializer,
+    Transaction,
+    TransactionProvider,
+)
+from ._models import ExecutionId, SerializedValue
 from ._sequencer import Sequencer
-from .exceptions import ContextNotSetError
+from .exceptions import ContextNotSetError, NoCurrentExecutionError
+
+
+class MetadataAccessor:
+    """Provides access to the metadata of the current execution."""
+
+    def __init__(self, ctx: Context):
+        self._ctx = ctx
+
+    async def set(self, key: str, value: Any, value_type: type | None = None) -> None:
+        """Attach metadata to the current execution, staged into the open
+        transaction. ``value_type`` defaults to ``type(value)``; raises
+        :class:`NoCurrentExecutionError` outside an engraved call.
+        """
+        execution_id = self._ctx.tracer.current
+        if execution_id is None:
+            raise NoCurrentExecutionError(
+                "set() requires an active execution; call it from within "
+                "an engraved function."
+            )
+        execution = await self._ctx.repository.get(execution_id)
+        if execution is None:
+            raise LookupError(f"Execution {execution_id} not found")
+
+        serialized = await self._ctx.serializer.serialize(
+            value,
+            type(value) if value_type is None else value_type,
+        )
+        execution.set_metadata(key, SerializedValue(serialized))
+        await self._ctx.repository.save(execution)
+
+    async def get(
+        self,
+        key: str,
+        return_type: type,
+        *,
+        execution_id: ExecutionId | None = None,
+    ) -> Any | None:
+        """Read a per-execution metadata entry, deserialized to ``return_type``.
+
+        Defaults to the current execution; pass ``execution_id`` to read
+        another's. Returns ``None`` if the execution or key is absent.
+        """
+        target = execution_id if execution_id is not None else self._ctx.tracer.current
+        if target is None:
+            raise NoCurrentExecutionError(
+                "get() requires an active execution or an explicit execution_id."
+            )
+        execution = await self._ctx.repository.get(target)
+        if execution is None:
+            return None
+
+        metadata = execution.get_metadata(key)
+        if metadata is None:
+            return None
+
+        return await self._ctx.serializer.deserialize(metadata.value.data, return_type)
 
 
 class Context:
@@ -17,13 +80,16 @@ class Context:
     def __init__(
         self,
         session_id: str,
-        store: SessionStore,
+        backend: Backend,
+        serializer: Serializer,
         sequencer: Sequencer,
         hasher: ArgsHasher,
         event_emitter: EventEmitter,
     ) -> None:
         self._session_id = session_id
-        self._store = store
+        self._repository = backend.repository
+        self._transaction_provider = backend.transaction_provider
+        self._serializer = serializer
         self._sequencer = sequencer
         self._hasher = hasher
         self._event_emitter = event_emitter
@@ -34,8 +100,16 @@ class Context:
         return self._session_id
 
     @property
-    def store(self) -> SessionStore:
-        return self._store
+    def repository(self) -> ExecutionRepository:
+        return self._repository
+
+    @property
+    def serializer(self) -> Serializer:
+        return self._serializer
+
+    @property
+    def transaction_provider(self) -> TransactionProvider:
+        return self._transaction_provider
 
     @property
     def sequencer(self) -> Sequencer:
@@ -54,6 +128,11 @@ class Context:
         return self._tracer
 
     @property
+    def metadata(self) -> MetadataAccessor:
+        """Returns an accessor for managing the metadata of the current execution."""
+        return MetadataAccessor(self)
+
+    @property
     def call_stack(self) -> CallStack:
         return self._tracer.call_stack
 
@@ -62,13 +141,8 @@ class Context:
         return self._tracer.current
 
     def get_transaction_scope(self) -> TransactionScope:
-        """Return a fresh transaction scope.
-
-        The executor opens independent scopes for START, the function body,
-        and COMPLETE so each durable boundary can commit or roll back on its
-        own.
-        """
-        return TransactionScope(self._store)
+        """Return a fresh transaction scope."""
+        return TransactionScope(self._transaction_provider)
 
 
 class CallStack(Sequence[ExecutionId]):
@@ -136,17 +210,17 @@ class ExecutionTracer:
 
 
 class TransactionScope:
-    """A single-use transaction scope around a SessionStore."""
+    """A single-use transaction scope around a TransactionProvider."""
 
-    def __init__(self, store: SessionStore):
-        self._store = store
+    def __init__(self, transaction_provider: TransactionProvider):
+        self._transaction_provider = transaction_provider
         self._transaction: Transaction | None = None
         self._closed = False
 
     async def __aenter__(self) -> "TransactionScope":
         if self._closed or self._transaction is not None:
             raise RuntimeError("TransactionScope cannot be re-entered.")
-        self._transaction = await self._store.begin_transaction()
+        self._transaction = await self._transaction_provider.begin_transaction()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:

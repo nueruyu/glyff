@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from typing import Any
 
 from glyff import Transaction
 
+from glyff_sqlite._sqlite_client import SQLiteClient
+
 
 class _ClientTransaction(Transaction):
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: SQLiteClient) -> None:
         self._client = client
         self._closed = False
         self._lock = asyncio.Lock()

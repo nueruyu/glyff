@@ -3,15 +3,14 @@ from __future__ import annotations
 import asyncio
 import contextvars
 from collections.abc import Iterable
-from typing import Any
 
-from .._interfaces import Execution, Serializer, SessionStore, Transaction
-from .._models import ExecutionId, ExecutionRecord, ExecutionStatus
+from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
+from .._models import Execution, ExecutionId, Metadata, SerializedValue
 from ._memory_client import MemoryClient
 from .utils import execution_id_to_path, path_to_execution_id
 
 _KEY_PREFIX = "execution::"
-_PARTS = ("status", "result", "error")
+_PARTS = ("status", "result", "metadata")
 
 
 def _make_key(path: str, part: str) -> str:
@@ -21,7 +20,9 @@ def _make_key(path: str, part: str) -> str:
 def _key_to_path(key: str) -> str | None:
     if not key.startswith(_KEY_PREFIX):
         return None
-    body, _, _ = key[len(_KEY_PREFIX) :].rpartition("::")
+    body, _, part = key[len(_KEY_PREFIX) :].rpartition("::")
+    if part != "status":
+        return None
     return body or None
 
 
@@ -68,77 +69,63 @@ class _MemoryTransaction(Transaction):
                 self._client.end_staging(self._token)
 
 
-class _MemoryExecution(Execution):
-    def __init__(
-        self,
-        client: MemoryClient,
-        serializer: Serializer,
-        execution_id: ExecutionId,
-    ):
+class MemoryExecutionRepository(ExecutionRepository):
+    """In-memory Execution aggregate repository."""
+
+    def __init__(self, client: MemoryClient):
         self._client = client
-        self._serializer = serializer
-        self._id = execution_id
 
-    async def complete(self, value: Any, return_type: type) -> None:
-        path = execution_id_to_path(self._id)
-        self._client.stage_write(_make_key(path, "status"), ExecutionStatus.COMPLETED)
-        serialized_result = await self._serializer.serialize(value, return_type)
-        self._client.stage_write(
-            _make_key(path, "result"),
-            serialized_result,
-        )
+    def _id_to_key(self, execution_id: ExecutionId, part: str) -> str:
+        return _make_key(execution_id_to_path(execution_id), part)
 
-    async def fail(self, error: str) -> None:
-        path = execution_id_to_path(self._id)
-        self._client.stage_write(_make_key(path, "status"), ExecutionStatus.FAILED)
-        self._client.stage_write(_make_key(path, "error"), error)
-
-
-class MemorySessionStore(SessionStore):
-    """An in-memory SessionStore for testing and development."""
-
-    def __init__(self, client: MemoryClient, serializer: Serializer, **_):
-        self._client = client
-        self._serializer = serializer
-
-    def _id_to_key(self, id: ExecutionId, part: str) -> str:
-        return _make_key(execution_id_to_path(id), part)
-
-    async def begin_transaction(self) -> Transaction:
-        return await _MemoryTransaction(self._client).begin()
-
-    async def start_execution(self, execution_id: ExecutionId) -> Execution:
-        status_key = self._id_to_key(execution_id, "status")
-        if await self._client.read(status_key) is None:
-            self._client.stage_write(status_key, ExecutionStatus.STARTED)
-        return _MemoryExecution(self._client, self._serializer, execution_id)
-
-    async def get_execution_record(
-        self, execution_id: ExecutionId, return_type: type
-    ) -> ExecutionRecord | None:
-        status: ExecutionStatus | None = await self._client.read(
-            self._id_to_key(execution_id, "status")
-        )
-        if not status:
+    async def get(self, execution_id: ExecutionId) -> Execution | None:
+        status = await self._client.read(self._id_to_key(execution_id, "status"))
+        if status is None:
             return None
 
-        result = None
-        error = None
+        result_data = await self._client.read(self._id_to_key(execution_id, "result"))
+        raw_metadata = await self._client.read(
+            self._id_to_key(execution_id, "metadata")
+        )
 
-        if status == ExecutionStatus.COMPLETED:
-            serialized_value = await self._client.read(
-                self._id_to_key(execution_id, "result")
+        metadata: dict[str, Metadata] = {}
+        if isinstance(raw_metadata, dict):
+            for key, value in raw_metadata.items():
+                if isinstance(value, bytes):
+                    metadata[key] = Metadata(key=key, value=SerializedValue(value))
+
+        return Execution(
+            id=execution_id,
+            status=status,
+            result=SerializedValue(result_data)
+            if isinstance(result_data, bytes)
+            else None,
+            metadata=metadata,
+        )
+
+    async def save(self, execution: Execution) -> None:
+        self._client.stage_write(
+            self._id_to_key(execution.id, "status"),
+            execution.status,
+        )
+
+        if execution.result is not None:
+            self._client.stage_write(
+                self._id_to_key(execution.id, "result"),
+                execution.result.data,
             )
-            if serialized_value:
-                result = await self._serializer.deserialize(
-                    serialized_value, return_type
-                )
-        elif status == ExecutionStatus.FAILED:
-            error = await self._client.read(self._id_to_key(execution_id, "error"))
+        else:
+            self._client.stage_delete(self._id_to_key(execution.id, "result"))
 
-        return ExecutionRecord(status=status, result=result, error=error)
+        if execution.metadata:
+            self._client.stage_write(
+                self._id_to_key(execution.id, "metadata"),
+                {key: item.value.data for key, item in execution.metadata.items()},
+            )
+        else:
+            self._client.stage_delete(self._id_to_key(execution.id, "metadata"))
 
-    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
+    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
         prefix = execution_id_to_path(execution_id) + "/"
         paths: set[str] = set()
         for key in self._client.all_keys():
@@ -147,7 +134,24 @@ class MemorySessionStore(SessionStore):
                 paths.add(path)
         return [path_to_execution_id(p) for p in paths]
 
-    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
+    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
         for execution_id in execution_ids:
             for part in _PARTS:
                 self._client.stage_delete(self._id_to_key(execution_id, part))
+
+
+class MemoryTransactionProvider(TransactionProvider):
+    def __init__(self, client: MemoryClient):
+        self._client = client
+
+    async def begin_transaction(self) -> Transaction:
+        return await _MemoryTransaction(self._client).begin()
+
+
+class MemoryBackend:
+    def __init__(self) -> None:
+        client = MemoryClient()
+        self.repository: ExecutionRepository = MemoryExecutionRepository(client)
+        self.transaction_provider: TransactionProvider = MemoryTransactionProvider(
+            client
+        )

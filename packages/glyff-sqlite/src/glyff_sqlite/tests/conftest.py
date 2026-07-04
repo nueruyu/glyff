@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from glyff import ArgsHasher, ExecutionId
 from glyff.serialization import JsonArgsHasher, JsonSerializer
-from glyff_sqlite import SQLiteSessionStore
+from glyff_sqlite import SQLiteBackend
 
 
 @pytest.fixture
@@ -24,8 +24,8 @@ def hasher() -> ArgsHasher:
 
 
 @pytest.fixture
-def store_factory(tmp_path: Path, serializer: JsonSerializer):
-    def factory(session_id: str) -> SQLiteSessionStore:
-        return SQLiteSessionStore(tmp_path / f"{session_id}.sqlite3", serializer)
+def backend_factory(tmp_path: Path):
+    def factory(session_id: str) -> SQLiteBackend:
+        return SQLiteBackend(tmp_path / f"{session_id}.sqlite3")
 
     return factory

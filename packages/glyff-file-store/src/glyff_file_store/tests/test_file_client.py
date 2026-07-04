@@ -2,9 +2,10 @@ import os
 from pathlib import Path
 
 import pytest
-from glyff import ExecutionId, ExecutionStatus
+from glyff import Execution, ExecutionId, ExecutionStatus, SerializedValue
 
-from glyff_file_store import FileClient, JsonFileSessionStore
+from glyff_file_store import FileExecutionRepository, FileTransactionProvider
+from glyff_file_store._file_client import FileClient
 from glyff_file_store._file_client import _BACKUP_SUFFIX, _TEMP_PREFIX
 
 
@@ -544,25 +545,27 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     tmp_path, serializer
 ):
     client = FileClient(base_dir=tmp_path, session_id="shared-file-client")
-    store = JsonFileSessionStore(client=client, serializer=serializer)
+    repository = FileExecutionRepository(client)
+    transaction_provider = FileTransactionProvider(client)
 
     parent = ExecutionId(parent_id=None, name="parent", sequence=0, args_hash="p")
     child = ExecutionId(parent_id=parent, name="child", sequence=0, args_hash="c")
 
-    parent_tx = await store.begin_transaction()
-    await store.start_execution(parent)
+    parent_tx = await transaction_provider.begin_transaction()
+    await repository.save(Execution.start(parent))
 
     def parent_meta(data: bytes | None) -> bytes | None:
         return b'{"state":"parent"}'
 
     client.stage_update("metadata/parent.json", parent_meta)
 
-    child_tx = await store.begin_transaction()
-    child_execution = await store.start_execution(child)
-    await child_execution.complete("child", str)
+    child_tx = await transaction_provider.begin_transaction()
+    child_execution = Execution.start(child)
+    child_execution.complete(SerializedValue(await serializer.serialize("child", str)))
+    await repository.save(child_execution)
     await child_tx.commit()
 
-    child_record = await store.get_execution_record(child, str)
+    child_record = await repository.get(child)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 

@@ -14,15 +14,6 @@ class GlyffError(GlyffException):
     pass
 
 
-class ExecutionFailedError(GlyffError):
-    """
-    Raised when attempting to execute a task that has previously failed
-    and its failure state is engraved.
-    """
-
-    pass
-
-
 class TypeHintResolutionError(GlyffError):
     """
     Raised when type hints for an engraved function cannot be resolved.
@@ -42,6 +33,15 @@ class MissingTypeHintError(GlyffError):
 class ContextNotSetError(GlyffError):
     """
     Raised when a workflow context is required but has not been configured.
+    """
+
+    pass
+
+
+class NoCurrentExecutionError(GlyffError):
+    """
+    Raised when per-execution metadata is accessed without an active execution
+    (for example, calling ``ctx.metadata.set`` outside an engraved call).
     """
 
     pass

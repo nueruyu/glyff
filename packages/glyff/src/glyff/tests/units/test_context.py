@@ -1,8 +1,6 @@
-from collections.abc import Iterable
-
 import pytest
 
-from glyff import Execution, ExecutionId, ExecutionRecord, SessionStore, Transaction
+from glyff import Transaction, TransactionProvider
 from glyff._context import TransactionScope, get_context
 from glyff.exceptions import ContextNotSetError
 
@@ -19,7 +17,7 @@ class FakeTransaction(Transaction):
         self.rollbacks += 1
 
 
-class FakeStore(SessionStore):
+class FakeTransactions(TransactionProvider):
     def __init__(self) -> None:
         self.transaction = FakeTransaction()
         self.begins = 0
@@ -28,20 +26,6 @@ class FakeStore(SessionStore):
         self.begins += 1
         return self.transaction
 
-    async def start_execution(self, execution_id: ExecutionId) -> Execution:
-        raise NotImplementedError
-
-    async def get_execution_record(
-        self, execution_id: ExecutionId, return_type: type
-    ) -> ExecutionRecord | None:
-        raise NotImplementedError
-
-    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        raise NotImplementedError
-
-    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
-        raise NotImplementedError
-
 
 def test_get_context_raises_custom_error_when_unset():
     with pytest.raises(ContextNotSetError, match="Workflow context is not set"):
@@ -49,7 +33,7 @@ def test_get_context_raises_custom_error_when_unset():
 
 
 async def test_transaction_scope_commits_on_normal_exit():
-    store = FakeStore()
+    store = FakeTransactions()
 
     async with TransactionScope(store):
         pass
@@ -60,7 +44,7 @@ async def test_transaction_scope_commits_on_normal_exit():
 
 
 async def test_transaction_scope_rolls_back_on_exception():
-    store = FakeStore()
+    store = FakeTransactions()
 
     with pytest.raises(ValueError, match="boom"):
         async with TransactionScope(store):
@@ -71,7 +55,7 @@ async def test_transaction_scope_rolls_back_on_exception():
 
 
 async def test_explicit_commit_prevents_exit_rollback():
-    store = FakeStore()
+    store = FakeTransactions()
 
     with pytest.raises(ValueError, match="boom"):
         async with TransactionScope(store) as scope:
@@ -83,7 +67,7 @@ async def test_explicit_commit_prevents_exit_rollback():
 
 
 async def test_transaction_scope_cannot_close_twice():
-    store = FakeStore()
+    store = FakeTransactions()
 
     async with TransactionScope(store) as scope:
         await scope.commit()

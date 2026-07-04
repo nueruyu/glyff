@@ -1,14 +1,14 @@
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
-from ._models import ExecutionId, ExecutionRecord
+from ._models import Execution, ExecutionId
 
 
 class Transaction(ABC):
     """
-    A transaction context for a SessionStore.
+    A transaction context for a TransactionProvider.
     Actual commit/rollback logic is delegated to this object.
     """
 
@@ -23,20 +23,29 @@ class Transaction(ABC):
         ...
 
 
-class Execution(ABC):
-    """
-    Represents a single task execution, handling its outcome.
-    """
+class TransactionProvider(ABC):
+    """Provides transactions for TransactionScope."""
 
     @abstractmethod
-    async def complete(self, value: Any, return_type: type) -> None:
-        """Marks the task as successfully completed with a result."""
+    async def begin_transaction(self) -> Transaction:
+        """Begins a transaction and returns a transaction object."""
         ...
 
+
+class ExecutionRepository(ABC):
+    """Repository for Execution aggregates."""
+
     @abstractmethod
-    async def fail(self, error: str) -> None:
-        """Marks the task as failed with an error message."""
-        ...
+    async def get(self, execution_id: ExecutionId) -> Execution | None: ...
+
+    @abstractmethod
+    async def save(self, execution: Execution) -> None: ...
+
+    @abstractmethod
+    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]: ...
+
+    @abstractmethod
+    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None: ...
 
 
 class Serializer(ABC):
@@ -64,54 +73,11 @@ class ArgsHasher(ABC):
         ...
 
 
-class SessionStore(ABC):
-    """
-    Protocol for a store that persists the state and results of task calls.
-    """
+class Backend(Protocol):
+    """A bundle of persistence-related collaborators."""
 
-    @abstractmethod
-    async def begin_transaction(self) -> Transaction:
-        """Begins a transaction and returns a transaction object."""
-        ...
+    @property
+    def repository(self) -> ExecutionRepository: ...
 
-    @abstractmethod
-    async def start_execution(self, execution_id: ExecutionId) -> Execution:
-        """
-        Records that a task has started and returns an execution object
-        to manage its outcome.
-        """
-        ...
-
-    @abstractmethod
-    async def get_execution_record(
-        self, execution_id: ExecutionId, return_type: type
-    ) -> ExecutionRecord | None:
-        """
-        Gets the persisted state of a task.
-        The result, if any, is deserialized to the given type.
-        """
-        ...
-
-    @abstractmethod
-    async def get_descendants(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        """
-        Returns the ExecutionIds that are *strict* descendants of the given one,
-        based on the records currently held by this store.
-
-        This is a read-only structural query over the store's own data; it
-        carries no pruning policy. Callers decide what to do with the result.
-        """
-        ...
-
-    @abstractmethod
-    async def delete_executions(self, execution_ids: Iterable[ExecutionId]) -> None:
-        """
-        Deletes the record(s) for exactly the given executions.
-
-        Deletion is staged within the current transaction and applied on commit
-        (and discarded on rollback), mirroring how writes are staged. The store
-        only deletes the executions it is given; it has no notion of children,
-        descendants, or pruning. Taking the ids as a batch lets the store stage
-        them in one pass rather than once per id.
-        """
-        ...
+    @property
+    def transaction_provider(self) -> TransactionProvider: ...

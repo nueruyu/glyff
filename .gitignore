@@ -10,3 +10,6 @@ node_modules/
 /.local/
 __pycache__/
 *.pyc
+
+.coverage
+coverage.xml

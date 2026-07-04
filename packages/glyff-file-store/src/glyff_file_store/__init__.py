@@ -1,7 +1,11 @@
-from ._file_client import FileClient
-from ._store import JsonFileSessionStore
+from ._store import (
+    FileExecutionRepository,
+    FileTransactionProvider,
+    JsonFileBackend,
+)
 
 __all__ = [
-    "FileClient",
-    "JsonFileSessionStore",
+    "JsonFileBackend",
+    "FileExecutionRepository",
+    "FileTransactionProvider",
 ]

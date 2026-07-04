@@ -1,10 +1,12 @@
 # glyff-sqlite
 
-SQLite-backed durable `SessionStore` implementation for
+SQLite-backed durable `ExecutionRepository` implementation for
 [glyff](https://pypi.org/project/glyff/).
 
-This is the **production** backend: one row per execution in a SQLite database,
-WAL mode, indexed lookups, and native transaction atomicity.
+This is the **production** backend: one row per execution in a SQLite
+`executions` table, WAL mode, indexed lookups, and native transaction
+atomicity. Execution `result` and `metadata` columns are stored as readable JSON
+text, so serializers used with this backend must produce JSON text.
 
 ## Install
 
@@ -18,38 +20,39 @@ This package depends on `glyff>=0.1.0` (no additional runtime dependencies —
 ## Usage
 
 ```python
-from glyff.serialization import JsonSerializer
-from glyff_sqlite import SQLiteSessionStore
+from glyff_sqlite import SQLiteBackend
 
-store = SQLiteSessionStore("executions.sqlite3", JsonSerializer())
+backend = SQLiteBackend("executions.sqlite3")
 ```
 
 ## Public API
 
-| Name                 | Description                                                   |
-| -------------------- | ------------------------------------------------------------- |
-| `SQLiteSessionStore` | Durable `SessionStore` backed by a local SQLite database.     |
-| `SQLiteClient`       | Low-level SQLite key/value store (generic, reusable).         |
+| Name                        | Description                                          |
+| --------------------------- | ---------------------------------------------------- |
+| `SQLiteBackend`             | Bundle exposing repository and transaction provider. |
+| `SQLiteExecutionRepository` | Durable repository backed by local SQLite.           |
+| `SQLiteTransactionProvider` | Transaction provider for the SQLite backend.         |
 
-## External metadata
+The underlying `SQLiteClient` is internal and not part of the public API.
 
-The underlying ``SQLiteClient`` exposes ``stage_write`` / ``stage_delete`` /
-``stage_update`` so application code can persist its own rows alongside execution
-records and commit or roll back atomically together:
+## Per-execution metadata
+
+Persist application data alongside an execution from within an engraved call:
 
 ```python
-client = SQLiteClient("session.sqlite3")
-store = SQLiteSessionStore(client=client, serializer=JsonSerializer())
-
-tx = await store.begin_transaction()
-execution = await store.start_execution(some_id)
-await execution.complete("ok", str)
-
-client.stage_write("metadata", "my_key", b"my_value")
-client.stage_delete("metadata", "old_key")
-
-await tx.commit()   # execution record + metadata commit atomically
+ctx = glyff.get_context()
+await ctx.metadata.set("my_key", {"any": "json-serializable value"})
+value = await ctx.metadata.get("my_key", dict)
 ```
+
+Metadata is a keyed map owned by the current `Execution` aggregate.
+`ctx.metadata.set(...)` stages metadata into the currently active transaction.
+During normal engraved execution, metadata set in the function body commits
+atomically with the execution's `COMPLETED` status and result. If completing
+the current execution fails, metadata staged through `ctx.metadata.set(...)` in
+that function body is rolled back with the completion write.
+
+Metadata is removed if that execution's record is deleted.
 
 ## Transaction model
 

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from types import UnionType
 from typing import Generic, TypeVar, Union, get_args, get_origin
+
+logger = logging.getLogger(__name__)
 
 
 class Event(ABC):
@@ -62,7 +65,7 @@ class EventHandler(ABC, Generic[E]):
 
 
 class EventEmitter:
-    """Manages event handlers and dispatches events."""
+    """Manages best-effort event handlers and dispatches events."""
 
     def __init__(self, handlers: list[EventHandler]) -> None:
         self._handler_map = self._resolve_handler_map(handlers)
@@ -78,7 +81,11 @@ class EventEmitter:
         return handler_map
 
     async def emit(self, event: Event) -> None:
-        """Dispatches an event to all handlers registered for its type."""
+        """Dispatch an event to handlers registered for its type.
+
+        Handlers run sequentially in registration order. Handler exceptions are
+        logged and do not stop later handlers or propagate to the caller.
+        """
         handlers_to_run: list[EventHandler] = []
         seen_handlers: set[EventHandler] = set()
         for event_type in type(event).__mro__:
@@ -90,4 +97,11 @@ class EventEmitter:
                 seen_handlers.add(handler)
                 handlers_to_run.append(handler)
         for handler in handlers_to_run:
-            await handler.handle(event)
+            try:
+                await handler.handle(event)
+            except Exception:
+                logger.exception(
+                    "Event handler failed: handler=%s event=%s",
+                    type(handler).__qualname__,
+                    type(event).__qualname__,
+                )
