@@ -13,7 +13,27 @@ asyncio_mode = "auto"
 [dependency-groups]
 dev = [
     "pyright>=1.1",
+    "pytest-cov>=6.0",
     "ruff>=0.11",
+]
+
+[tool.coverage.run]
+branch = true
+source = [
+    "glyff",
+    "glyff_file_store",
+    "glyff_pydantic",
+    "glyff_sqlite",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
 ]
 
 [tool.ruff]
