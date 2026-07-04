@@ -19,12 +19,7 @@ async def execute(
 
     START, the function body, and COMPLETE each use separate transaction
     scopes, so a completed descendant can commit while an ancestor body is
-    still running. An exception persists nothing: the body scope rolls back and
-    the record stays ``STARTED`` (retried on resume); ``ExecutionFailed`` is a
-    notification only. ``ExecutionCompleted`` is emitted *after* the COMPLETE
-    scope commits, so completion is durable before any handler runs and a
-    handler (e.g. pruning/GC) must open its own transaction — its failure cannot
-    roll back the completion.
+    still running.
     """
     repository = ctx.repository
     serializer = ctx.serializer
@@ -50,8 +45,6 @@ async def execute(
             async with ctx.get_transaction_scope():
                 result = await func(*args, **kwargs)
         except Exception as e:
-            # Never persist on exception: the body scope has rolled back and the
-            # record stays STARTED (retried on resume). Only notify.
             await ctx.event_emitter.emit(
                 ExecutionFailed(context=ctx, execution_id=execution_id, exception=e)
             )
@@ -65,9 +58,6 @@ async def execute(
             execution.complete(SerializedValue(serialized))
             await repository.save(execution)
 
-        # Emitted outside the COMPLETE scope: completion is already durable, so
-        # a handler (pruning/GC) runs in its own transaction and cannot roll the
-        # completion back.
         await ctx.event_emitter.emit(
             ExecutionCompleted(context=ctx, execution_id=execution_id)
         )

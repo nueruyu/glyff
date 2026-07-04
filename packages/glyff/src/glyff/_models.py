@@ -30,11 +30,7 @@ class ExecutionId:
 
 
 class ExecutionStatus(Enum):
-    """Represents the lifecycle state of a task execution.
-
-    There is no failed state: an exception persists nothing, so an interrupted
-    call stays ``STARTED`` and is retried on resume.
-    """
+    """Represents the lifecycle state of a task execution."""
 
     STARTED = auto()
     COMPLETED = auto()

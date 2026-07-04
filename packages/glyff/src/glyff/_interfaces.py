@@ -33,7 +33,7 @@ class TransactionProvider(ABC):
 
 
 class ExecutionRepository(ABC):
-    """DDD Repository for Execution aggregates."""
+    """Repository for Execution aggregates."""
 
     @abstractmethod
     async def get(self, execution_id: ExecutionId) -> Execution | None: ...
