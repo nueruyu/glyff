@@ -27,11 +27,8 @@ async def execute(
     tracer = ctx.tracer
 
     cached = await repository.get(execution_id)
-    if (
-        cached is not None
-        and cached.status == ExecutionStatus.COMPLETED
-        and cached.result is not None
-    ):
+    if cached is not None and cached.status == ExecutionStatus.COMPLETED:
+        assert cached.result is not None
         return await serializer.deserialize(cached.result.data, return_type)
 
     async with ctx.get_transaction_scope():

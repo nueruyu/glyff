@@ -43,7 +43,7 @@ class SerializedValue:
     data: bytes
 
 
-@dataclass
+@dataclass(frozen=True)
 class Metadata:
     """Child entity/value object inside the Execution aggregate."""
 
