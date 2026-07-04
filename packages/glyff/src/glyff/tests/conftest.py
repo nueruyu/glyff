@@ -62,8 +62,8 @@ def test_context(
 ) -> Context:
     return Context(
         session_id=str(uuid.uuid4()),
-        executions=mock_backend.executions,
-        transactions=mock_backend.transactions,
+        repository=mock_backend.repository,
+        transaction_provider=mock_backend.transaction_provider,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,

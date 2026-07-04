@@ -76,10 +76,10 @@ class StubBackend:
     def __init__(self, client: MemoryClient):
         self.calls: list[Call] = []
         self._client = client
-        self.executions = StubExecutionRepository(
+        self.repository = StubExecutionRepository(
             self._record, MemoryExecutionRepository(client)
         )
-        self.transactions = StubTransactionProvider(
+        self.transaction_provider = StubTransactionProvider(
             self._record, MemoryTransactionProvider(client)
         )
 

@@ -80,8 +80,8 @@ async def test_sqlite_backend_stores_execution_columns_as_readable_json(
     execution.complete(SerializedValue(b'{"answer":42}'))
     execution.set_metadata("trace", SerializedValue(b'{"step":1}'))
 
-    async with TransactionScope(backend.transactions):
-        await backend.executions.save(execution)
+    async with TransactionScope(backend.transaction_provider):
+        await backend.repository.save(execution)
 
     client = SQLiteClient(db)
     rows = await client.read_sql(

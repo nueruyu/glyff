@@ -18,21 +18,21 @@ class PruningPause(Exception):
     pass
 
 
-async def _read_executions(backend: JsonFileBackend) -> dict[str, object]:
-    executions = cast(FileExecutionRepository, backend.executions)
-    raw = await executions._client.read("executions.json")
+async def _read_execution_map(backend: JsonFileBackend) -> dict[str, object]:
+    repository = cast(FileExecutionRepository, backend.repository)
+    raw = await repository._client.read("executions.json")
     if raw is None:
         return {}
     return json.loads(raw.decode(DEFAULT_ENCODING))
 
 
 async def _leaf_names(backend: JsonFileBackend) -> list[str]:
-    executions = await _read_executions(backend)
-    return [eid.split("/")[-1].split("#")[0] for eid in executions]
+    execution_map = await _read_execution_map(backend)
+    return [eid.split("/")[-1].split("#")[0] for eid in execution_map]
 
 
 def _pruning_emitter(backend: JsonFileBackend) -> EventEmitter:
-    return EventEmitter([PruningEventHandler(backend.executions)])
+    return EventEmitter([PruningEventHandler(backend.repository)])
 
 
 # --------------------------------------------------------------------------
@@ -73,8 +73,8 @@ async def test_fresh_run_prunes_whole_subtree(
     backend = JsonFileBackend(base_dir=tmp_path, session_id="prune-fresh")
     async with Session(
         id="prune-fresh",
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=hasher,
         event_emitter=_pruning_emitter(backend),
@@ -84,8 +84,8 @@ async def test_fresh_run_prunes_whole_subtree(
     assert result == (0 + 1) + (10 + 11)
     assert set(_runs) == {"root", "mid0", "mid10", "leaf0", "leaf1", "leaf10", "leaf11"}
 
-    executions = await _read_executions(backend)
-    assert all("/" not in eid for eid in executions)
+    execution_map = await _read_execution_map(backend)
+    assert all("/" not in eid for eid in execution_map)
     assert set(await _leaf_names(backend)) == {"pr_root"}
 
 
@@ -95,15 +95,15 @@ async def test_disabled_flag_retains_descendants(
     backend = JsonFileBackend(base_dir=tmp_path, session_id="prune-off")
     async with Session(
         id="prune-off",
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=hasher,
     ):
         await pr_root()
 
-    executions = await _read_executions(backend)
-    assert any("/" in eid for eid in executions)
+    execution_map = await _read_execution_map(backend)
+    assert any("/" in eid for eid in execution_map)
     assert "pr_leaf" in await _leaf_names(backend)
 
 
@@ -114,8 +114,8 @@ async def test_replay_after_prune_is_correct(
     backend = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
         id=sid,
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=hasher,
         event_emitter=_pruning_emitter(backend),
@@ -126,8 +126,8 @@ async def test_replay_after_prune_is_correct(
     reopened = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
         id=sid,
-        executions=reopened.executions,
-        transactions=reopened.transactions,
+        repository=reopened.repository,
+        transaction_provider=reopened.transaction_provider,
         serializer=serializer,
         hasher=hasher,
         event_emitter=_pruning_emitter(reopened),
@@ -196,8 +196,8 @@ async def test_nested_completion_prunes_mid_session(
     with pytest.raises(PruningPause):
         async with Session(
             id=sid,
-            executions=backend.executions,
-            transactions=backend.transactions,
+            repository=backend.repository,
+            transaction_provider=backend.transaction_provider,
             serializer=serializer,
             hasher=hasher,
             event_emitter=_pruning_emitter(backend),
@@ -215,8 +215,8 @@ async def test_nested_completion_prunes_mid_session(
     reopened = JsonFileBackend(base_dir=tmp_path, session_id=sid)
     async with Session(
         id=sid,
-        executions=reopened.executions,
-        transactions=reopened.transactions,
+        repository=reopened.repository,
+        transaction_provider=reopened.transaction_provider,
         serializer=serializer,
         hasher=hasher,
         event_emitter=_pruning_emitter(reopened),
@@ -228,6 +228,6 @@ async def test_nested_completion_prunes_mid_session(
     assert "grand" not in _sc_runs
     assert _sc_runs == ["child_b_start", "child_b_end"]
 
-    executions = await _read_executions(reopened)
-    assert all("/" not in eid for eid in executions)
+    execution_map = await _read_execution_map(reopened)
+    assert all("/" not in eid for eid in execution_map)
     assert set(await _leaf_names(reopened)) == {"sc_root"}

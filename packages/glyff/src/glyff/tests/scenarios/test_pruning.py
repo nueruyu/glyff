@@ -39,12 +39,12 @@ def _committed_paths(backend) -> set[str]:
     """Path body of every committed key (depth shows in the '/'-separated path:
     only the root has a depth-1 path)."""
     return {
-        p for k in backend.executions._client.data if (p := _key_to_path(k)) is not None
+        p for k in backend.repository._client.data if (p := _key_to_path(k)) is not None
     }
 
 
 def _pruning_emitter(backend) -> EventEmitter:
-    return EventEmitter([PruningEventHandler(backend.executions)])
+    return EventEmitter([PruningEventHandler(backend.repository)])
 
 
 async def test_descendant_records_are_gone_after_completion(

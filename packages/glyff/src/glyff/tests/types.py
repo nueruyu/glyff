@@ -11,8 +11,8 @@ from glyff import (
 
 
 class Backend(Protocol):
-    executions: ExecutionRepository
-    transactions: TransactionProvider
+    repository: ExecutionRepository
+    transaction_provider: TransactionProvider
 
 
 BackendFactory = Callable[[str], Backend]
@@ -27,8 +27,8 @@ def make_session(
 ) -> Session:
     return Session(
         id=session_id,
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=hasher,
         event_emitter=event_emitter,

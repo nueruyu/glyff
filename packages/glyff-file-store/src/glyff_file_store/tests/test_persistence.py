@@ -23,8 +23,8 @@ async def test_completed_record_replays_across_instances(
     backend = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
     async with Session(
         id=session_id,
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=hasher,
     ):
@@ -36,8 +36,8 @@ async def test_completed_record_replays_across_instances(
     reopened = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
     async with Session(
         id=session_id,
-        executions=reopened.executions,
-        transactions=reopened.transactions,
+        repository=reopened.repository,
+        transaction_provider=reopened.transaction_provider,
         serializer=serializer,
         hasher=hasher,
     ):
@@ -66,8 +66,8 @@ async def test_multiple_completed_records_replay_across_instances(
     backend = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
     async with Session(
         id=session_id,
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=hasher,
     ):
@@ -80,8 +80,8 @@ async def test_multiple_completed_records_replay_across_instances(
     reopened = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
     async with Session(
         id=session_id,
-        executions=reopened.executions,
-        transactions=reopened.transactions,
+        repository=reopened.repository,
+        transaction_provider=reopened.transaction_provider,
         serializer=serializer,
         hasher=hasher,
     ):

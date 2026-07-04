@@ -96,5 +96,5 @@ class SQLiteBackend:
             synchronous=synchronous,
         )
         client._initialize_schema_sync()
-        self.executions: ExecutionRepository = SQLiteExecutionRepository(client)
-        self.transactions: TransactionProvider = SQLiteTransactionProvider(client)
+        self.repository: ExecutionRepository = SQLiteExecutionRepository(client)
+        self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(client)

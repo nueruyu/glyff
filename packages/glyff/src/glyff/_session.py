@@ -21,15 +21,15 @@ class Session:
         self,
         id: str,
         *,
-        executions: ExecutionRepository,
-        transactions: TransactionProvider,
+        repository: ExecutionRepository,
+        transaction_provider: TransactionProvider,
         serializer: Serializer,
         hasher: ArgsHasher,
         event_emitter: EventEmitter | None = None,
     ) -> None:
         self._id = id
-        self._executions = executions
-        self._transactions = transactions
+        self._repository = repository
+        self._transaction_provider = transaction_provider
         self._hasher = hasher
         self._serializer = serializer
         self._event_emitter = event_emitter or EventEmitter([])
@@ -42,20 +42,20 @@ class Session:
         return self._id
 
     @property
-    def executions(self) -> ExecutionRepository:
+    def repository(self) -> ExecutionRepository:
         """Returns the ExecutionRepository used by this Session."""
-        return self._executions
+        return self._repository
 
     @property
-    def transactions(self) -> TransactionProvider:
+    def transaction_provider(self) -> TransactionProvider:
         """Returns the TransactionProvider used by this Session."""
-        return self._transactions
+        return self._transaction_provider
 
     async def __aenter__(self) -> "Session":
         self._context = Context(
             session_id=self._id,
-            executions=self._executions,
-            transactions=self._transactions,
+            repository=self._repository,
+            transaction_provider=self._transaction_provider,
             serializer=self._serializer,
             sequencer=Sequencer(),
             hasher=self._hasher,

@@ -58,8 +58,8 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
         backend = SQLiteBackend(db)
         async with Session(
             id="sqlite-parallel",
-            executions=backend.executions,
-            transactions=backend.transactions,
+            repository=backend.repository,
+            transaction_provider=backend.transaction_provider,
             serializer=serializer,
             hasher=hasher,
         ):
@@ -73,8 +73,8 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
     backend = SQLiteBackend(db)
     async with Session(
         id="sqlite-parallel",
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=hasher,
     ):

@@ -26,12 +26,12 @@ async def execute(
     handler (e.g. pruning/GC) must open its own transaction — its failure cannot
     roll back the completion.
     """
-    executions = ctx.executions
+    repository = ctx.repository
     serializer = ctx.serializer
     sequencer = ctx.sequencer
     tracer = ctx.tracer
 
-    cached = await executions.get(execution_id)
+    cached = await repository.get(execution_id)
     if (
         cached is not None
         and cached.status == ExecutionStatus.COMPLETED
@@ -41,8 +41,8 @@ async def execute(
 
     async with ctx.get_transaction_scope():
         await sequencer.reset_for_call(execution_id)
-        if await executions.get(execution_id) is None:
-            await executions.save(Execution.start(execution_id))
+        if await repository.get(execution_id) is None:
+            await repository.save(Execution.start(execution_id))
 
     tracer.start(execution_id)
     try:
@@ -58,12 +58,12 @@ async def execute(
             raise
 
         async with ctx.get_transaction_scope():
-            execution = await executions.get(execution_id)
+            execution = await repository.get(execution_id)
             if execution is None:
                 raise LookupError(f"Execution {execution_id} not found")
             serialized = await serializer.serialize(result, return_type)
             execution.complete(SerializedValue(serialized))
-            await executions.save(execution)
+            await repository.save(execution)
 
         # Emitted outside the COMPLETE scope: completion is already durable, so
         # a handler (pruning/GC) runs in its own transaction and cannot roll the

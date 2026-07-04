@@ -23,16 +23,16 @@ class Context:
     def __init__(
         self,
         session_id: str,
-        executions: ExecutionRepository,
-        transactions: TransactionProvider,
+        repository: ExecutionRepository,
+        transaction_provider: TransactionProvider,
         serializer: Serializer,
         sequencer: Sequencer,
         hasher: ArgsHasher,
         event_emitter: EventEmitter,
     ) -> None:
         self._session_id = session_id
-        self._executions = executions
-        self._transactions = transactions
+        self._repository = repository
+        self._transaction_provider = transaction_provider
         self._serializer = serializer
         self._sequencer = sequencer
         self._hasher = hasher
@@ -44,16 +44,16 @@ class Context:
         return self._session_id
 
     @property
-    def executions(self) -> ExecutionRepository:
-        return self._executions
+    def repository(self) -> ExecutionRepository:
+        return self._repository
 
     @property
     def serializer(self) -> Serializer:
         return self._serializer
 
     @property
-    def transactions(self) -> TransactionProvider:
-        return self._transactions
+    def transaction_provider(self) -> TransactionProvider:
+        return self._transaction_provider
 
     @property
     def sequencer(self) -> Sequencer:
@@ -86,7 +86,7 @@ class Context:
         and COMPLETE so each durable boundary can commit or roll back on its
         own.
         """
-        return TransactionScope(self._transactions)
+        return TransactionScope(self._transaction_provider)
 
     async def set_metadata(
         self, key: str, value: Any, value_type: type | None = None
@@ -101,7 +101,7 @@ class Context:
                 "set_metadata requires an active execution; call it from within "
                 "an engraved function."
             )
-        execution = await self._executions.get(execution_id)
+        execution = await self._repository.get(execution_id)
         if execution is None:
             raise LookupError(f"Execution {execution_id} not found")
 
@@ -110,7 +110,7 @@ class Context:
             type(value) if value_type is None else value_type,
         )
         execution.set_metadata(key, SerializedValue(serialized))
-        await self._executions.save(execution)
+        await self._repository.save(execution)
 
     async def get_metadata(
         self,
@@ -129,7 +129,7 @@ class Context:
             raise NoCurrentExecutionError(
                 "get_metadata requires an active execution or an explicit execution_id."
             )
-        execution = await self._executions.get(target)
+        execution = await self._repository.get(target)
         if execution is None:
             return None
 
@@ -207,15 +207,15 @@ class ExecutionTracer:
 class TransactionScope:
     """A single-use transaction scope around a TransactionProvider."""
 
-    def __init__(self, transactions: TransactionProvider):
-        self._transactions = transactions
+    def __init__(self, transaction_provider: TransactionProvider):
+        self._transaction_provider = transaction_provider
         self._transaction: Transaction | None = None
         self._closed = False
 
     async def __aenter__(self) -> "TransactionScope":
         if self._closed or self._transaction is not None:
             raise RuntimeError("TransactionScope cannot be re-entered.")
-        self._transaction = await self._transactions.begin_transaction()
+        self._transaction = await self._transaction_provider.begin_transaction()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:

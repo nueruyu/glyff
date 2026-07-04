@@ -545,27 +545,27 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     tmp_path, serializer
 ):
     client = FileClient(base_dir=tmp_path, session_id="shared-file-client")
-    executions = FileExecutionRepository(client)
-    transactions = FileTransactionProvider(client)
+    repository = FileExecutionRepository(client)
+    transaction_provider = FileTransactionProvider(client)
 
     parent = ExecutionId(parent_id=None, name="parent", sequence=0, args_hash="p")
     child = ExecutionId(parent_id=parent, name="child", sequence=0, args_hash="c")
 
-    parent_tx = await transactions.begin_transaction()
-    await executions.save(Execution.start(parent))
+    parent_tx = await transaction_provider.begin_transaction()
+    await repository.save(Execution.start(parent))
 
     def parent_meta(data: bytes | None) -> bytes | None:
         return b'{"state":"parent"}'
 
     client.stage_update("metadata/parent.json", parent_meta)
 
-    child_tx = await transactions.begin_transaction()
+    child_tx = await transaction_provider.begin_transaction()
     child_execution = Execution.start(child)
     child_execution.complete(SerializedValue(await serializer.serialize("child", str)))
-    await executions.save(child_execution)
+    await repository.save(child_execution)
     await child_tx.commit()
 
-    child_record = await executions.get(child)
+    child_record = await repository.get(child)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 

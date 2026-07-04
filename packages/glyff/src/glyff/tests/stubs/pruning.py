@@ -20,11 +20,11 @@ class PruningEventHandler(EventHandler[ExecutionCompleted]):
     the GC is decoupled from the completion commit.
     """
 
-    def __init__(self, executions: ExecutionRepository):
-        self._executions = executions
+    def __init__(self, repository: ExecutionRepository):
+        self._repository = repository
 
     async def handle(self, event: ExecutionCompleted) -> None:
         async with event.context.get_transaction_scope():
-            descendants = await self._executions.descendants_of(event.execution_id)
+            descendants = await self._repository.descendants_of(event.execution_id)
             if descendants:
-                await self._executions.delete_many(descendants)
+                await self._repository.delete_many(descendants)

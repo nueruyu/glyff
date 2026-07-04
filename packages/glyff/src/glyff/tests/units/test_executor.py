@@ -25,7 +25,7 @@ from glyff.tests.stubs.store import StubBackend, StubExecutionRepository
 
 
 async def _result(backend: StubBackend, serializer, eid: ExecutionId, typ: type):
-    execution = await backend.executions.get(eid)
+    execution = await backend.repository.get(eid)
     if execution is None or execution.result is None:
         return None
     return await serializer.deserialize(execution.result.data, typ)
@@ -34,7 +34,7 @@ async def _result(backend: StubBackend, serializer, eid: ExecutionId, typ: type)
 @pytest.fixture
 def transaction_scope_factory(mock_backend: StubBackend):
     def factory():
-        return TransactionScope(mock_backend.transactions)
+        return TransactionScope(mock_backend.transaction_provider)
 
     return factory
 
@@ -85,11 +85,11 @@ async def test_completion_prunes_descendants_when_enabled(
     hasher,
     serializer: Serializer,
 ):
-    emitter = EventEmitter([PruningEventHandler(mock_backend.executions)])
+    emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
     ctx = Context(
         session_id="prune-on",
-        executions=mock_backend.executions,
-        transactions=mock_backend.transactions,
+        repository=mock_backend.repository,
+        transaction_provider=mock_backend.transaction_provider,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -107,7 +107,7 @@ async def test_completion_prunes_descendants_when_enabled(
                 execution.complete(
                     SerializedValue(await serializer.serialize("child", str))
                 )
-                await mock_backend.executions.save(execution)
+                await mock_backend.repository.save(execution)
             return "hello"
 
         result = await execute(
@@ -135,11 +135,11 @@ async def test_nested_completion_prunes(
     hasher,
     serializer: Serializer,
 ):
-    emitter = EventEmitter([PruningEventHandler(mock_backend.executions)])
+    emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
     ctx = Context(
         session_id="prune-nested",
-        executions=mock_backend.executions,
-        transactions=mock_backend.transactions,
+        repository=mock_backend.repository,
+        transaction_provider=mock_backend.transaction_provider,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -270,7 +270,7 @@ async def test_general_exception_persists_nothing(
     assert not test_context.tracer.call_stack
     # Nothing is persisted on exception: the record stays STARTED (retried on
     # resume), the body scope rolled back, and no failure is written.
-    record = await mock_backend.executions.get(base_execution_id)
+    record = await mock_backend.repository.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.STARTED
     assert len(mock_backend.get_calls("commit")) == 1
@@ -300,7 +300,7 @@ async def test_application_pause_is_retryable(
             return_type=str,
         )
 
-    record = await mock_backend.executions.get(base_execution_id)
+    record = await mock_backend.repository.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.STARTED
 
@@ -316,7 +316,7 @@ async def test_application_pause_is_retryable(
         return_type=str,
     )
     assert result == "answer"
-    completed = await mock_backend.executions.get(base_execution_id)
+    completed = await mock_backend.repository.get(base_execution_id)
     assert completed is not None
     assert completed.status == ExecutionStatus.COMPLETED
 
@@ -353,7 +353,7 @@ async def test_start_is_committed_before_function_body_runs(
     test_context: Context,
 ):
     async def sample_func():
-        record = await mock_backend.executions.get(base_execution_id)
+        record = await mock_backend.repository.get(base_execution_id)
         assert record is not None
         assert record.status == ExecutionStatus.STARTED
         return "hello"
@@ -387,7 +387,7 @@ async def test_function_exception_rolls_back_body_scope_writes(
         assert test_context.current_execution_id == base_execution_id
         execution = Execution.start(scratch_id)
         execution.complete(SerializedValue(await serializer.serialize("saved", str)))
-        await test_context.executions.save(execution)
+        await test_context.repository.save(execution)
         raise ValueError("oops")
 
     with pytest.raises(ValueError, match="oops"):
@@ -402,7 +402,7 @@ async def test_function_exception_rolls_back_body_scope_writes(
 
     # Writes made directly in the failing body scope are rolled back — nothing
     # is persisted on exception.
-    assert await mock_backend.executions.get(scratch_id) is None
+    assert await mock_backend.repository.get(scratch_id) is None
 
 
 async def test_failure_handler_can_clean_up_in_its_own_transaction(
@@ -420,12 +420,12 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
         async def handle(self, event: ExecutionFailed) -> None:
             seen_exceptions.append(event.exception)
             async with event.context.get_transaction_scope():
-                await event.context.executions.delete_many([nested_execution_id])
+                await event.context.repository.delete_many([nested_execution_id])
 
     ctx = Context(
         session_id="failure-handler-tx",
-        executions=mock_backend.executions,
-        transactions=mock_backend.transactions,
+        repository=mock_backend.repository,
+        transaction_provider=mock_backend.transaction_provider,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -438,7 +438,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
             execution.complete(
                 SerializedValue(await serializer.serialize("child", str))
             )
-            await mock_backend.executions.save(execution)
+            await mock_backend.repository.save(execution)
 
         async def sample_func():
             raise ValueError("oops")
@@ -461,8 +461,8 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
     assert len(seen_exceptions) == 1
     assert isinstance(seen_exceptions[0], ValueError)
     assert str(seen_exceptions[0]) == "oops"
-    assert await mock_backend.executions.get(nested_execution_id) is None
-    record = await mock_backend.executions.get(base_execution_id)
+    assert await mock_backend.repository.get(nested_execution_id) is None
+    record = await mock_backend.repository.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.STARTED
 
@@ -480,13 +480,13 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
 
     client = MemoryClient()
     backend = StubBackend(client)
-    backend.executions = FailingCompleteRepository(
+    backend.repository = FailingCompleteRepository(
         backend._record, MemoryExecutionRepository(client)
     )
     ctx = Context(
         session_id="complete-fails",
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -510,7 +510,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     finally:
         reset_context(token)
 
-    record = await backend.executions.get(base_execution_id)
+    record = await backend.repository.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.STARTED
     assert len(backend.get_calls("rollback")) == 1
@@ -528,8 +528,8 @@ async def test_completed_handler_failure_does_not_roll_back_completion(
     backend = StubBackend(client=MemoryClient())
     ctx = Context(
         session_id="completed-handler-fails",
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
@@ -553,7 +553,7 @@ async def test_completed_handler_failure_does_not_roll_back_completion(
     finally:
         reset_context(token)
 
-    record = await backend.executions.get(base_execution_id)
+    record = await backend.repository.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.COMPLETED
     assert not backend.get_calls("rollback")
@@ -576,7 +576,7 @@ async def test_nested_child_commits_without_losing_parent_staging(
         return "child"
 
     async def parent_func():
-        await test_context.executions.save(Execution.start(marker_id))
+        await test_context.repository.save(Execution.start(marker_id))
         child = await execute(
             ctx=test_context,
             execution_id=nested_execution_id,
@@ -585,10 +585,10 @@ async def test_nested_child_commits_without_losing_parent_staging(
             kwargs={},
             return_type=str,
         )
-        marker = await test_context.executions.get(marker_id)
+        marker = await test_context.repository.get(marker_id)
         assert marker is not None
         assert marker.status == ExecutionStatus.STARTED
-        child_record = await test_context.executions.get(nested_execution_id)
+        child_record = await test_context.repository.get(nested_execution_id)
         assert child_record is not None
         assert child_record.status == ExecutionStatus.COMPLETED
         return child
@@ -603,10 +603,10 @@ async def test_nested_child_commits_without_losing_parent_staging(
     )
 
     assert result == "child"
-    marker = await mock_backend.executions.get(marker_id)
+    marker = await mock_backend.repository.get(marker_id)
     assert marker is not None
     assert marker.status == ExecutionStatus.STARTED
-    child_record = await mock_backend.executions.get(nested_execution_id)
+    child_record = await mock_backend.repository.get(nested_execution_id)
     assert child_record is not None
     assert child_record.status == ExecutionStatus.COMPLETED
 
@@ -632,6 +632,6 @@ async def test_base_exception_after_start_keeps_started_record(
     assert len(mock_backend.get_calls("commit")) == 1
     assert len(mock_backend.get_calls("rollback")) == 1
 
-    record = await mock_backend.executions.get(base_execution_id)
+    record = await mock_backend.repository.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.STARTED

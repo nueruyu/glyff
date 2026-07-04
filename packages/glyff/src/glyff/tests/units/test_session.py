@@ -11,14 +11,14 @@ def test_session_requires_explicit_keyword_collaborators(
 
     session = Session(
         id="id",
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=hasher,
     )
 
-    assert session.executions is backend.executions
-    assert session.transactions is backend.transactions
+    assert session.repository is backend.repository
+    assert session.transaction_provider is backend.transaction_provider
 
 
 def test_session_rejects_old_positional_usage(
@@ -27,13 +27,13 @@ def test_session_rejects_old_positional_usage(
     backend = MemoryBackend()
 
     with pytest.raises(TypeError):
-        Session("id", backend.executions, hasher)  # type: ignore[call-arg]
+        Session("id", backend.repository, hasher)  # type: ignore[call-arg]
 
 
 def test_session_rejects_store_keyword(hasher: ArgsHasher, serializer: Serializer):
     backend = MemoryBackend()
     kwargs = {
-        "store": backend.executions,
+        "store": backend.repository,
         "serializer": serializer,
         "hasher": hasher,
     }

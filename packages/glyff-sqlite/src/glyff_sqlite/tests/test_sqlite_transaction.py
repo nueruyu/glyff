@@ -22,9 +22,9 @@ def _client(database_path: Path) -> SQLiteClient:
 
 async def test_sqlite_transaction_commit_closes_and_is_idempotent(tmp_path: Path):
     client = _client(tmp_path / "commit.sqlite3")
-    transactions = SQLiteTransactionProvider(client)
+    transaction_provider = SQLiteTransactionProvider(client)
 
-    transaction = await transactions.begin_transaction()
+    transaction = await transaction_provider.begin_transaction()
     client.stage_write("key", record("value"))
     await transaction.commit()
     await transaction.commit()
@@ -35,9 +35,9 @@ async def test_sqlite_transaction_commit_closes_and_is_idempotent(tmp_path: Path
 
 async def test_sqlite_transaction_rollback_closes_and_is_idempotent(tmp_path: Path):
     client = _client(tmp_path / "rollback.sqlite3")
-    transactions = SQLiteTransactionProvider(client)
+    transaction_provider = SQLiteTransactionProvider(client)
 
-    transaction = await transactions.begin_transaction()
+    transaction = await transaction_provider.begin_transaction()
     client.stage_write("key", record("value"))
     await transaction.rollback()
     await transaction.rollback()
@@ -48,10 +48,10 @@ async def test_sqlite_transaction_rollback_closes_and_is_idempotent(tmp_path: Pa
 
 async def test_sqlite_transaction_out_of_order_close_raises(tmp_path: Path):
     client = _client(tmp_path / "out-of-order.sqlite3")
-    transactions = SQLiteTransactionProvider(client)
+    transaction_provider = SQLiteTransactionProvider(client)
 
-    parent = await transactions.begin_transaction()
-    child = await transactions.begin_transaction()
+    parent = await transaction_provider.begin_transaction()
+    child = await transaction_provider.begin_transaction()
 
     with pytest.raises(RuntimeError):
         await parent.commit()

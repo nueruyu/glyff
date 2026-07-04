@@ -19,8 +19,8 @@ from glyff import (
 
 
 class BackendHandle(Protocol):
-    executions: ExecutionRepository
-    transactions: TransactionProvider
+    repository: ExecutionRepository
+    transaction_provider: TransactionProvider
 
 
 BackendFactory = Callable[[str], BackendHandle]
@@ -53,8 +53,8 @@ def value(raw: object = "value") -> SerializedValue:
 
 
 async def save_execution(backend: BackendHandle, execution: Execution) -> None:
-    async with TransactionScope(backend.transactions):
-        await backend.executions.save(execution)
+    async with TransactionScope(backend.transaction_provider):
+        await backend.repository.save(execution)
 
 
 class ExecutionBackendContract:
@@ -62,18 +62,18 @@ class ExecutionBackendContract:
     def backend_factory(self) -> BackendFactory:
         raise NotImplementedError
 
-    async def test_backend_exposes_separate_repository_and_transactions(
+    async def test_backend_exposes_separate_repository_and_transaction_provider(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("shape")
-        assert backend.executions is not backend.transactions
-        assert isinstance(backend.executions, ExecutionRepository)
-        assert isinstance(backend.transactions, TransactionProvider)
-        assert not hasattr(backend.executions, "serializer")
+        assert backend.repository is not backend.transaction_provider
+        assert isinstance(backend.repository, ExecutionRepository)
+        assert isinstance(backend.transaction_provider, TransactionProvider)
+        assert not hasattr(backend.repository, "serializer")
 
     async def test_get_missing_returns_none(self, backend_factory: BackendFactory):
         backend = backend_factory("missing")
-        assert await backend.executions.get(eid("missing")) is None
+        assert await backend.repository.get(eid("missing")) is None
 
     async def test_save_started_then_get(self, backend_factory: BackendFactory):
         backend = backend_factory("started")
@@ -81,7 +81,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, Execution.start(execution_id))
 
-        loaded = await backend.executions.get(execution_id)
+        loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
         assert loaded.result is None
@@ -97,7 +97,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.executions.get(execution_id)
+        loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == value("result-bytes")
@@ -112,7 +112,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.executions.get(execution_id)
+        loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == value(None)
@@ -128,7 +128,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.executions.get(execution_id)
+        loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         assert loaded.get_metadata("trace") == Metadata("trace", value("trace-bytes"))
         assert loaded.get_metadata("other") == Metadata("other", value("other-bytes"))
@@ -144,7 +144,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.executions.get(execution_id)
+        loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == value("result")
@@ -165,7 +165,7 @@ class ExecutionBackendContract:
         second.complete(value("done"))
         await save_execution(backend, second)
 
-        loaded = await backend.executions.get(execution_id)
+        loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == value("done")
@@ -177,34 +177,34 @@ class ExecutionBackendContract:
     ):
         backend = backend_factory("save-no-tx")
         with pytest.raises(RuntimeError):
-            await backend.executions.save(Execution.start(eid("task")))
+            await backend.repository.save(Execution.start(eid("task")))
 
     async def test_delete_many_requires_active_transaction(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("delete-no-tx")
         with pytest.raises(RuntimeError):
-            await backend.executions.delete_many([eid("task")])
+            await backend.repository.delete_many([eid("task")])
 
     async def test_rollback_discards_save(self, backend_factory: BackendFactory):
         backend = backend_factory("rollback-save")
         execution_id = eid("task")
 
-        tx = await backend.transactions.begin_transaction()
-        await backend.executions.save(Execution.start(execution_id))
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(Execution.start(execution_id))
         await tx.rollback()
 
-        assert await backend.executions.get(execution_id) is None
+        assert await backend.repository.get(execution_id) is None
 
     async def test_commit_persists_save(self, backend_factory: BackendFactory):
         backend = backend_factory("commit-save")
         execution_id = eid("task")
 
-        tx = await backend.transactions.begin_transaction()
-        await backend.executions.save(Execution.start(execution_id))
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(Execution.start(execution_id))
         await tx.commit()
 
-        assert await backend.executions.get(execution_id) is not None
+        assert await backend.repository.get(execution_id) is not None
 
     async def test_delete_many_removes_execution_and_metadata(
         self, backend_factory: BackendFactory
@@ -216,17 +216,17 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        async with TransactionScope(backend.transactions):
-            await backend.executions.delete_many([execution_id])
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.delete_many([execution_id])
 
-        assert await backend.executions.get(execution_id) is None
+        assert await backend.repository.get(execution_id) is None
 
     async def test_delete_many_ignores_missing_ids(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("delete-missing")
-        async with TransactionScope(backend.transactions):
-            await backend.executions.delete_many([eid("missing")])
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.delete_many([eid("missing")])
 
     async def test_delete_rollback_preserves_execution(
         self, backend_factory: BackendFactory
@@ -236,11 +236,11 @@ class ExecutionBackendContract:
 
         await save_execution(backend, Execution.start(execution_id))
 
-        tx = await backend.transactions.begin_transaction()
-        await backend.executions.delete_many([execution_id])
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.delete_many([execution_id])
         await tx.rollback()
 
-        loaded = await backend.executions.get(execution_id)
+        loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
 
@@ -253,11 +253,11 @@ class ExecutionBackendContract:
         grandchild = eid("grandchild", parent=child)
         sibling = eid("sibling")
 
-        async with TransactionScope(backend.transactions):
+        async with TransactionScope(backend.transaction_provider):
             for execution_id in [root, child, grandchild, sibling]:
-                await backend.executions.save(Execution.start(execution_id))
+                await backend.repository.save(Execution.start(execution_id))
 
-        descendants = await backend.executions.descendants_of(root)
+        descendants = await backend.repository.descendants_of(root)
         assert set(descendants) == {child, grandchild}
         assert root not in descendants
         assert sibling not in descendants
@@ -278,12 +278,12 @@ class ExecutionBackendContract:
         first.complete(value("one"))
         second = Execution.start(leaf2)
         second.complete(value("two"))
-        async with TransactionScope(backend.transactions):
-            await backend.executions.save(first)
-            await backend.executions.save(second)
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.save(first)
+            await backend.repository.save(second)
 
-        loaded1 = await backend.executions.get(leaf1)
-        loaded2 = await backend.executions.get(leaf2)
+        loaded1 = await backend.repository.get(leaf1)
+        loaded2 = await backend.repository.get(leaf2)
         assert loaded1 is not None and loaded1.result == value("one")
         assert loaded2 is not None and loaded2.result == value("two")
 
@@ -294,19 +294,19 @@ class ExecutionBackendContract:
         root = eid("root")
         child = eid("child", parent=root)
 
-        parent_tx = await backend.transactions.begin_transaction()
-        await backend.executions.save(Execution.start(root))
+        parent_tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(Execution.start(root))
 
-        child_tx = await backend.transactions.begin_transaction()
+        child_tx = await backend.transaction_provider.begin_transaction()
         child_execution = Execution.start(child)
         child_execution.complete(value("child"))
-        await backend.executions.save(child_execution)
+        await backend.repository.save(child_execution)
         await child_tx.commit()
 
         await parent_tx.rollback()
 
-        assert await backend.executions.get(root) is None
-        loaded_child = await backend.executions.get(child)
+        assert await backend.repository.get(root) is None
+        loaded_child = await backend.repository.get(child)
         assert loaded_child is not None
         assert loaded_child.status is ExecutionStatus.COMPLETED
 
@@ -317,32 +317,32 @@ class ExecutionBackendContract:
         root = eid("root")
         child = eid("child", parent=root)
 
-        parent_tx = await backend.transactions.begin_transaction()
-        await backend.executions.save(Execution.start(root))
+        parent_tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(Execution.start(root))
 
-        child_tx = await backend.transactions.begin_transaction()
-        await backend.executions.save(Execution.start(child))
+        child_tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(Execution.start(child))
         await child_tx.rollback()
 
-        staged_root = await backend.executions.get(root)
+        staged_root = await backend.repository.get(root)
         assert staged_root is not None
         assert staged_root.status is ExecutionStatus.STARTED
-        assert await backend.executions.get(child) is None
+        assert await backend.repository.get(child) is None
 
         await parent_tx.commit()
 
-        committed_root = await backend.executions.get(root)
+        committed_root = await backend.repository.get(root)
         assert committed_root is not None
         assert committed_root.status is ExecutionStatus.STARTED
-        assert await backend.executions.get(child) is None
+        assert await backend.repository.get(child) is None
 
     async def test_out_of_order_transaction_close_raises(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("out-of-order")
 
-        parent_tx = await backend.transactions.begin_transaction()
-        child_tx = await backend.transactions.begin_transaction()
+        parent_tx = await backend.transaction_provider.begin_transaction()
+        child_tx = await backend.transaction_provider.begin_transaction()
 
         with pytest.raises(RuntimeError):
             await parent_tx.commit()
@@ -358,31 +358,31 @@ class ExecutionBackendContract:
         child = eid("child", parent=root)
         grandchild = eid("grandchild", parent=child)
 
-        root_tx = await backend.transactions.begin_transaction()
-        await backend.executions.save(Execution.start(root))
+        root_tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(Execution.start(root))
 
-        child_tx = await backend.transactions.begin_transaction()
+        child_tx = await backend.transaction_provider.begin_transaction()
         child_execution = Execution.start(child)
 
-        grandchild_tx = await backend.transactions.begin_transaction()
+        grandchild_tx = await backend.transaction_provider.begin_transaction()
         grandchild_execution = Execution.start(grandchild)
         grandchild_execution.complete(value("grandchild"))
-        await backend.executions.save(grandchild_execution)
+        await backend.repository.save(grandchild_execution)
         await grandchild_tx.commit()
 
         child_execution.complete(value("child"))
-        await backend.executions.save(child_execution)
+        await backend.repository.save(child_execution)
         await child_tx.commit()
 
         await root_tx.rollback()
 
-        assert await backend.executions.get(root) is None
+        assert await backend.repository.get(root) is None
 
-        loaded_child = await backend.executions.get(child)
+        loaded_child = await backend.repository.get(child)
         assert loaded_child is not None
         assert loaded_child.status is ExecutionStatus.COMPLETED
 
-        loaded_grandchild = await backend.executions.get(grandchild)
+        loaded_grandchild = await backend.repository.get(grandchild)
         assert loaded_grandchild is not None
         assert loaded_grandchild.status is ExecutionStatus.COMPLETED
 
@@ -400,7 +400,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.executions.get(execution_id)
+        loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         assert loaded.result == value(payload)
         assert loaded.get_metadata("json") == Metadata("json", value(metadata))
@@ -421,7 +421,7 @@ class DurableBackendContract:
         await save_execution(backend, Execution.start(execution_id))
 
         reopened = backend_factory(session_id)
-        loaded = await reopened.executions.get(execution_id)
+        loaded = await reopened.repository.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
 
@@ -434,11 +434,11 @@ class DurableBackendContract:
 
         await save_execution(backend, Execution.start(execution_id))
 
-        async with TransactionScope(backend.transactions):
-            await backend.executions.delete_many([execution_id])
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.delete_many([execution_id])
 
         reopened = backend_factory(session_id)
-        assert await reopened.executions.get(execution_id) is None
+        assert await reopened.repository.get(execution_id) is None
 
     async def test_rolled_back_delete_does_not_survive_reopen(
         self, backend_factory: BackendFactory
@@ -449,12 +449,12 @@ class DurableBackendContract:
 
         await save_execution(backend, Execution.start(execution_id))
 
-        tx = await backend.transactions.begin_transaction()
-        await backend.executions.delete_many([execution_id])
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.delete_many([execution_id])
         await tx.rollback()
 
         reopened = backend_factory(session_id)
-        loaded = await reopened.executions.get(execution_id)
+        loaded = await reopened.repository.get(execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
 
@@ -468,7 +468,7 @@ class DurableBackendContract:
         await save_execution(backend, execution)
 
         reopened = backend_factory(session_id)
-        loaded = await reopened.executions.get(execution_id)
+        loaded = await reopened.repository.get(execution_id)
         assert loaded is not None
         assert loaded.get_metadata("trace") == Metadata("trace", value("trace"))
 
@@ -488,7 +488,7 @@ class DurableBackendContract:
         await save_execution(backend, execution)
 
         reopened = backend_factory(session_id)
-        loaded = await reopened.executions.get(execution_id)
+        loaded = await reopened.repository.get(execution_id)
         assert loaded is not None
         assert loaded.result == value(payload)
         assert loaded.get_metadata("json") == Metadata("json", value(metadata))

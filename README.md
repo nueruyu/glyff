@@ -41,8 +41,8 @@ async def main(session_id: str, answer: str | None = None):
 
     session = glyff.Session(
         id=session_id,
-        executions=backend.executions,
-        transactions=backend.transactions,
+        repository=backend.repository,
+        transaction_provider=backend.transaction_provider,
         serializer=serializer,
         hasher=PydanticArgsHasher(),
     )
@@ -119,14 +119,14 @@ from glyff.events import ExecutionCompleted
 
 
 class PruneDescendants(EventHandler[ExecutionCompleted]):
-    def __init__(self, executions: ExecutionRepository):
-        self._executions = executions
+    def __init__(self, repository: ExecutionRepository):
+        self._repository = repository
 
     async def handle(self, event: ExecutionCompleted) -> None:
         async with event.context.get_transaction_scope():
-            descendants = await self._executions.descendants_of(event.execution_id)
+            descendants = await self._repository.descendants_of(event.execution_id)
             if descendants:
-                await self._executions.delete_many(descendants)
+                await self._repository.delete_many(descendants)
 
 
 backend = glyff_file_store.JsonFileBackend(
@@ -135,11 +135,11 @@ backend = glyff_file_store.JsonFileBackend(
 )
 session = Session(
     id=session_id,
-    executions=backend.executions,
-    transactions=backend.transactions,
+    repository=backend.repository,
+    transaction_provider=backend.transaction_provider,
     serializer=serializer,
     hasher=hasher,
-    event_emitter=EventEmitter([PruneDescendants(backend.executions)]),
+    event_emitter=EventEmitter([PruneDescendants(backend.repository)]),
 )
 ```
 

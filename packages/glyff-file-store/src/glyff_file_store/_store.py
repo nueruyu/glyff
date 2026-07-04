@@ -98,5 +98,5 @@ class FileTransactionProvider(TransactionProvider):
 class JsonFileBackend:
     def __init__(self, *, base_dir: str | Path, session_id: str):
         client = FileClient(base_dir=base_dir, session_id=session_id)
-        self.executions: ExecutionRepository = FileExecutionRepository(client)
-        self.transactions: TransactionProvider = FileTransactionProvider(client)
+        self.repository: ExecutionRepository = FileExecutionRepository(client)
+        self.transaction_provider: TransactionProvider = FileTransactionProvider(client)
