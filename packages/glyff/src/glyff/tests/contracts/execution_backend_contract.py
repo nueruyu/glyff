@@ -239,6 +239,31 @@ class ExecutionBackendContract:
         assert root not in descendants
         assert sibling not in descendants
 
+    async def test_same_frame_under_different_parents_do_not_collide(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("collision")
+        p1 = eid("p1")
+        p2 = eid("p2")
+        # Identical (name, sequence, args_hash) frame under different parents
+        # must remain independent records (the full-path key scheme guarantees
+        # this; a flat key scheme would collide).
+        leaf1 = eid("leaf", parent=p1, args_hash="same")
+        leaf2 = eid("leaf", parent=p2, args_hash="same")
+
+        first = Execution.start(leaf1)
+        first.complete(value(b"one"))
+        second = Execution.start(leaf2)
+        second.complete(value(b"two"))
+        async with TransactionScope(backend.transactions):
+            await backend.executions.save(first)
+            await backend.executions.save(second)
+
+        loaded1 = await backend.executions.get(leaf1)
+        loaded2 = await backend.executions.get(leaf2)
+        assert loaded1 is not None and loaded1.result == value(b"one")
+        assert loaded2 is not None and loaded2.result == value(b"two")
+
     async def test_child_commit_survives_parent_rollback(
         self, backend_factory: BackendFactory
     ):

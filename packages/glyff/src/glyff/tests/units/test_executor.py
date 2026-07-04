@@ -277,6 +277,50 @@ async def test_general_exception_persists_nothing(
     assert len(mock_backend.get_calls("rollback")) == 1
 
 
+async def test_application_pause_is_retryable(
+    mock_backend: StubBackend,
+    base_execution_id: ExecutionId,
+    test_context: Context,
+):
+    # Regression guard: an application-owned pause exception stamps no failure.
+    # The record stays STARTED and the call completes when retried (resumed).
+    class ApplicationPause(Exception):
+        pass
+
+    async def paused():
+        raise ApplicationPause("waiting")
+
+    with pytest.raises(ApplicationPause):
+        await execute(
+            ctx=test_context,
+            execution_id=base_execution_id,
+            func=paused,
+            args=(),
+            kwargs={},
+            return_type=str,
+        )
+
+    record = await mock_backend.executions.get(base_execution_id)
+    assert record is not None
+    assert record.status == ExecutionStatus.STARTED
+
+    async def resumed():
+        return "answer"
+
+    result = await execute(
+        ctx=test_context,
+        execution_id=base_execution_id,
+        func=resumed,
+        args=(),
+        kwargs={},
+        return_type=str,
+    )
+    assert result == "answer"
+    completed = await mock_backend.executions.get(base_execution_id)
+    assert completed is not None
+    assert completed.status == ExecutionStatus.COMPLETED
+
+
 async def test_original_traceback_is_preserved_on_function_exception(
     base_execution_id: ExecutionId,
     test_context: Context,
