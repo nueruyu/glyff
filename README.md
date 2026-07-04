@@ -82,9 +82,15 @@ the provided answer instead of pausing again.
 
 ## Per-execution metadata
 
-Attach application data to the running call; it commits atomically with the
-call's own record. Metadata is a keyed map, serialized with the session's
-serializer, and lives as long as the execution's record.
+Attach application data to the running call. Metadata is owned by the
+`Execution` aggregate: `ctx.metadata.set(...)` stages metadata into the
+currently active transaction, serialized with the session's serializer. During
+normal engraved execution, metadata set in the function body commits atomically
+with the execution's `COMPLETED` status and result.
+
+If completing the current execution fails, metadata staged through
+`ctx.metadata.set(...)` in that function body is rolled back with the completion
+write.
 
 ```python
 @glyff.engrave
@@ -109,8 +115,10 @@ descendants; you decide the rest.
 The context execution repository exposes `descendants_of` and `delete_many` (in
 `ExecutionId` terms). Drive them from an `ExecutionCompleted` handler. The event
 fires *after* the completion is durably committed, so the handler opens its own
-transaction — GC is decoupled from the completion, and a prune failure never
-rolls it back:
+transaction. A pruning failure cannot roll back the already committed completed
+execution; however, with the current event emitter behavior, handler exceptions
+may still propagate to the caller. Final handler failure semantics are tracked
+separately in [issue #35](https://github.com/nueruyu/glyff/issues/35):
 
 ```python
 from glyff import EventEmitter, EventHandler, ExecutionRepository, Session

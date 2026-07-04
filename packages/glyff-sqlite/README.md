@@ -37,8 +37,7 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 
 ## Per-execution metadata
 
-Persist application data alongside an execution — committed atomically with its
-record — from within an engraved call:
+Persist application data alongside an execution from within an engraved call:
 
 ```python
 ctx = glyff.get_context()
@@ -46,8 +45,14 @@ await ctx.metadata.set("my_key", {"any": "json-serializable value"})
 value = await ctx.metadata.get("my_key", dict)
 ```
 
-Metadata is a keyed map attached to the current execution and is removed if that
-execution's record is deleted.
+Metadata is a keyed map owned by the current `Execution` aggregate.
+`ctx.metadata.set(...)` stages metadata into the currently active transaction.
+During normal engraved execution, metadata set in the function body commits
+atomically with the execution's `COMPLETED` status and result. If completing
+the current execution fails, metadata staged through `ctx.metadata.set(...)` in
+that function body is rolled back with the completion write.
+
+Metadata is removed if that execution's record is deleted.
 
 ## Transaction model
 

@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from .._models import Execution, ExecutionId, ExecutionStatus, Metadata, SerializedValue
+from ..exceptions import SerializationError
 from ..serialization._utils import stable_json_dumps
 from ..serialization.constants import DEFAULT_ENCODING
 
@@ -21,11 +22,34 @@ _STATUS_NAMES = {
 }
 _NAME_TO_STATUS = {name: status for status, name in _STATUS_NAMES.items()}
 
+_TEXT_BACKEND_JSON_ERROR = (
+    "Text execution backends require SerializedValue.data to contain UTF-8 "
+    "encoded JSON text. Use a JSON serializer such as JsonSerializer or "
+    "PydanticSerializer."
+)
 
-def _pack_value(value: SerializedValue | None) -> Any | None:
+
+def validate_json_text_value(value: SerializedValue, *, context: str = "value") -> Any:
+    """Return the decoded JSON value required by text execution backends."""
+    try:
+        data = value.data.decode(DEFAULT_ENCODING)
+    except UnicodeDecodeError as exc:
+        raise SerializationError(
+            f"{_TEXT_BACKEND_JSON_ERROR} Invalid {context}: data is not valid UTF-8."
+        ) from exc
+
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise SerializationError(
+            f"{_TEXT_BACKEND_JSON_ERROR} Invalid {context}: data is not valid JSON."
+        ) from exc
+
+
+def _pack_value(value: SerializedValue | None, *, context: str) -> Any | None:
     if value is None:
         return None
-    return json.loads(value.data.decode(DEFAULT_ENCODING))
+    return validate_json_text_value(value, context=context)
 
 
 def _unpack_value(value: object) -> SerializedValue | None:
@@ -33,7 +57,10 @@ def _unpack_value(value: object) -> SerializedValue | None:
 
 
 def _pack_metadata(metadata: dict[str, Metadata]) -> dict[str, Any]:
-    return {key: _pack_value(item.value) for key, item in metadata.items()}
+    return {
+        key: _pack_value(item.value, context=f"metadata key {key!r}")
+        for key, item in metadata.items()
+    }
 
 
 def _unpack_metadata(raw: object) -> dict[str, Metadata]:
@@ -54,7 +81,7 @@ def execution_to_dict(execution: Execution) -> dict[str, Any]:
     """Serialize an Execution aggregate to a JSON-ready dict."""
     return {
         "status": _STATUS_NAMES[execution.status],
-        "result": _pack_value(execution.result),
+        "result": _pack_value(execution.result, context="result"),
         "metadata": _pack_metadata(execution.metadata),
     }
 

@@ -16,6 +16,7 @@ from glyff import (
     TransactionProvider,
     TransactionScope,
 )
+from glyff.exceptions import SerializationError
 
 
 class BackendHandle(Protocol):
@@ -404,6 +405,76 @@ class ExecutionBackendContract:
         assert loaded is not None
         assert loaded.result == value(payload)
         assert loaded.get_metadata("json") == Metadata("json", value(metadata))
+
+
+class TextBackendContract:
+    @pytest.fixture
+    def backend_factory(self) -> BackendFactory:
+        raise NotImplementedError
+
+    async def test_rejects_non_json_result_bytes(self, backend_factory: BackendFactory):
+        backend = backend_factory("invalid-result")
+        execution = Execution.start(eid("task"))
+        execution.complete(SerializedValue(b"\xff"))
+
+        with pytest.raises(SerializationError) as excinfo:
+            await save_execution(backend, execution)
+
+        message = str(excinfo.value)
+        assert "Text execution backends require SerializedValue.data" in message
+        assert "UTF-8 encoded JSON text" in message
+        assert "result" in message
+
+    async def test_rejects_non_json_metadata_bytes(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("invalid-metadata")
+        execution = Execution.start(eid("task"))
+        execution.set_metadata("trace", SerializedValue(b"not-json"))
+
+        with pytest.raises(SerializationError) as excinfo:
+            await save_execution(backend, execution)
+
+        message = str(excinfo.value)
+        assert "Text execution backends require SerializedValue.data" in message
+        assert "UTF-8 encoded JSON text" in message
+        assert "metadata key 'trace'" in message
+
+
+class BinarySafeBackendContract:
+    @pytest.fixture
+    def backend_factory(self) -> BackendFactory:
+        raise NotImplementedError
+
+    async def test_roundtrips_arbitrary_result_bytes(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("binary-result")
+        execution_id = eid("task")
+        execution = Execution.start(execution_id)
+        execution.complete(SerializedValue(b"\xff"))
+
+        await save_execution(backend, execution)
+
+        loaded = await backend.repository.get(execution_id)
+        assert loaded is not None
+        assert loaded.result == SerializedValue(b"\xff")
+
+    async def test_roundtrips_arbitrary_metadata_bytes(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("binary-metadata")
+        execution_id = eid("task")
+        execution = Execution.start(execution_id)
+        execution.set_metadata("trace", SerializedValue(b"not-json"))
+
+        await save_execution(backend, execution)
+
+        loaded = await backend.repository.get(execution_id)
+        assert loaded is not None
+        assert loaded.get_metadata("trace") == Metadata(
+            "trace", SerializedValue(b"not-json")
+        )
 
 
 class DurableBackendContract:

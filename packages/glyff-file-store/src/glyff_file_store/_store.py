@@ -100,7 +100,7 @@ class JsonFileBackend:
 
     This backend stores the entire execution history for a session in a single,
     pretty-printed JSON file. It requires a serializer that produces
-    JSON-compatible bytes, such as JsonSerializer or PydanticSerializer, because
+    UTF-8 JSON text bytes, such as JsonSerializer or PydanticSerializer, because
     execution results and metadata are stored as embedded JSON values.
 
     The entire state is loaded into memory on startup and rewritten atomically

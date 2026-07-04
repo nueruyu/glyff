@@ -3,11 +3,14 @@ import pytest
 from glyff.tests.contracts.execution_backend_contract import (
     DurableBackendContract,
     ExecutionBackendContract,
+    TextBackendContract,
 )
 from glyff_sqlite import SQLiteBackend
 
 
-class TestSQLiteBackendContract(ExecutionBackendContract, DurableBackendContract):
+class TestSQLiteBackendContract(
+    ExecutionBackendContract, DurableBackendContract, TextBackendContract
+):
     @pytest.fixture
     def backend_factory(self, tmp_path):
         def factory(session_id: str):

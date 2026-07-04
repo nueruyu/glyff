@@ -141,12 +141,7 @@ class Context:
         return self._tracer.current
 
     def get_transaction_scope(self) -> TransactionScope:
-        """Return a fresh transaction scope.
-
-        The executor opens independent scopes for START, the function body,
-        and COMPLETE so each durable boundary can commit or roll back on its
-        own.
-        """
+        """Return a fresh transaction scope."""
         return TransactionScope(self._transaction_provider)
 
 

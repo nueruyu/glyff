@@ -17,9 +17,9 @@ async def execute(
     Orchestrates the execution of a regular (awaitable) task: cache checks,
     per-event durable recording, and exception handling.
 
-    START, the function body, and COMPLETE each use separate transaction
-    scopes, so a completed descendant can commit while an ancestor body is
-    still running.
+    START uses its own transaction so interrupted calls are retryable. The
+    function body and COMPLETE share a transaction so metadata written through
+    ctx.metadata commits atomically with the completed execution record.
     """
     repository = ctx.repository
     serializer = ctx.serializer
@@ -37,27 +37,41 @@ async def execute(
             await repository.save(Execution.start(execution_id))
 
     tracer.start(execution_id)
-    try:
-        try:
-            async with ctx.get_transaction_scope():
-                result = await func(*args, **kwargs)
-        except Exception as e:
-            await ctx.event_emitter.emit(
-                ExecutionFailed(context=ctx, execution_id=execution_id, exception=e)
-            )
-            raise
 
+    func_exception: Exception | None = None
+
+    try:
         async with ctx.get_transaction_scope():
+            try:
+                result = await func(*args, **kwargs)
+            except Exception as e:
+                func_exception = e
+                raise
+
             execution = await repository.get(execution_id)
             if execution is None:
                 raise LookupError(f"Execution {execution_id} not found")
+
             serialized = await serializer.serialize(result, return_type)
             execution.complete(SerializedValue(serialized))
             await repository.save(execution)
 
         await ctx.event_emitter.emit(
-            ExecutionCompleted(context=ctx, execution_id=execution_id)
+            ExecutionCompleted(
+                context=ctx,
+                execution_id=execution_id,
+            )
         )
         return result
+    except Exception:
+        if func_exception is not None:
+            await ctx.event_emitter.emit(
+                ExecutionFailed(
+                    context=ctx,
+                    execution_id=execution_id,
+                    exception=func_exception,
+                )
+            )
+        raise
     finally:
         tracer.end()

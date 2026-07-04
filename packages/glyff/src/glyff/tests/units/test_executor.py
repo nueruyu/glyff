@@ -76,7 +76,7 @@ async def test_successful_execution(
         ExecutionStatus.COMPLETED,
     ]
     assert await _result(mock_backend, serializer, base_execution_id, str) == "hello"
-    assert len(mock_backend.get_calls("commit")) == 3
+    assert len(mock_backend.get_calls("commit")) == 2
 
 
 async def test_completion_prunes_descendants_when_enabled(
@@ -464,6 +464,70 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
     assert record.status == ExecutionStatus.STARTED
 
 
+async def test_execution_failed_emits_after_body_transaction_closes(
+    mock_backend: StubBackend,
+    base_execution_id: ExecutionId,
+    hasher,
+    serializer: Serializer,
+):
+    scratch_id = ExecutionId(
+        parent_id=base_execution_id,
+        name="scratch",
+        sequence=0,
+        args_hash="state",
+    )
+    handler_saw_scratch: list[bool] = []
+    write_errors: list[str] = []
+
+    class ObserveFailure(EventHandler[ExecutionFailed]):
+        async def handle(self, event: ExecutionFailed) -> None:
+            mock_backend._record("failure_handler")
+            handler_saw_scratch.append(
+                await event.context.repository.get(scratch_id) is not None
+            )
+            try:
+                await event.context.repository.delete_many([scratch_id])
+            except RuntimeError as exc:
+                write_errors.append(str(exc))
+
+    ctx = Context(
+        session_id="failure-handler-after-rollback",
+        backend=mock_backend,
+        serializer=serializer,
+        sequencer=Sequencer(),
+        hasher=hasher,
+        event_emitter=EventEmitter([ObserveFailure()]),
+    )
+    token = set_context(ctx)
+    try:
+
+        async def sample_func():
+            execution = Execution.start(scratch_id)
+            execution.complete(
+                SerializedValue(await serializer.serialize("scratch", str))
+            )
+            await ctx.repository.save(execution)
+            raise ValueError("oops")
+
+        with pytest.raises(ValueError, match="oops"):
+            await execute(
+                ctx=ctx,
+                execution_id=base_execution_id,
+                func=sample_func,
+                args=(),
+                kwargs={},
+                return_type=str,
+            )
+    finally:
+        reset_context(token)
+
+    call_names = [call.name for call in mock_backend.calls]
+    assert call_names.index("rollback") < call_names.index("failure_handler")
+    assert handler_saw_scratch == [False]
+    assert write_errors == ["MemoryClient write attempted outside a transaction."]
+    assert await mock_backend.repository.get(scratch_id) is None
+
+
 async def test_execution_save_failure_rolls_back_complete_transaction(
     base_execution_id: ExecutionId,
     serializer: Serializer,
@@ -474,6 +538,12 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
             if execution.status is ExecutionStatus.COMPLETED:
                 raise RuntimeError("complete failed")
             await super().save(execution)
+
+    failed_events: list[ExecutionFailed] = []
+
+    class RecordFailures(EventHandler[ExecutionFailed]):
+        async def handle(self, event: ExecutionFailed) -> None:
+            failed_events.append(event)
 
     client = MemoryClient()
     backend = StubBackend(client)
@@ -486,12 +556,13 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
         serializer=serializer,
         sequencer=Sequencer(),
         hasher=hasher,
-        event_emitter=EventEmitter([]),
+        event_emitter=EventEmitter([RecordFailures()]),
     )
     token = set_context(ctx)
     try:
 
         async def sample_func():
+            await ctx.metadata.set("trace", {"step": 1})
             return "hello"
 
         with pytest.raises(RuntimeError, match="complete failed"):
@@ -509,6 +580,8 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     record = await backend.repository.get(base_execution_id)
     assert record is not None
     assert record.status == ExecutionStatus.STARTED
+    assert record.get_metadata("trace") is None
+    assert failed_events == []
     assert len(backend.get_calls("rollback")) == 1
 
 

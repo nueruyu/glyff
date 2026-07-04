@@ -91,7 +91,7 @@ class SQLiteBackend:
     transactional guarantees and indexed lookups. It is suitable for production
     use.
 
-    It requires a serializer that produces JSON-compatible bytes, such as
+    It requires a serializer that produces UTF-8 JSON text bytes, such as
     JsonSerializer or PydanticSerializer, because execution results and metadata
     are stored as JSON text columns for readability and queryability.
     """
