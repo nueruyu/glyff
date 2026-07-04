@@ -6,9 +6,8 @@ File-backed `ExecutionRepository` implementation for
 This package provides a human-readable debug backend:
 
 - `JsonFileBackend` provides a file-backed execution repository and transaction
-  provider. It stores a pretty-printed JSON execution map, loads the
-  whole log into memory at startup, and rewrites the entire file atomically on
-  each commit.
+  provider. It stores executions in a single pretty-printed JSON map and
+  rewrites that file atomically on each commit.
 
 For the durable production backend, see
 [`glyff-sqlite`](https://pypi.org/project/glyff-sqlite/).
@@ -43,7 +42,7 @@ The underlying `FileClient` is internal and not part of the public API.
 
 `JsonFileBackend` stores each session under `<base_dir>/<session_id>/` in a
 single pretty-printed JSON file (`executions.json`). The execution map is read
-into memory on startup and rewritten atomically on every commit.
+from that file on access and rewritten atomically on every commit.
 Execution results and metadata are stored as embedded JSON values, so
 serializers used with this backend must produce JSON text.
 
