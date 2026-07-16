@@ -1,9 +1,10 @@
-"""Reference pruning handler for the test suites.
+"""Reference pruning handler.
 
 glyff ships no pruning handler — *when/whether* to delete unreachable records
 is a userland policy. This is what userland would write: on completion, delete
 the completed call's descendants via the context execution repository, staged
-into the current transaction.
+into the current transaction. It is exposed through :mod:`glyff.testing` as a
+ready-made handler for tests and as a reference implementation to copy.
 """
 
 from __future__ import annotations

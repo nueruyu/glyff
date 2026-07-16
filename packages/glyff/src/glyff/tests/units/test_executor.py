@@ -21,7 +21,7 @@ from glyff.store import MemoryExecutionRepository
 from glyff.store._memory import _make_key
 from glyff.store._memory_client import MemoryClient
 from glyff.store.utils import execution_id_to_path
-from glyff.tests.stubs.pruning import PruningEventHandler
+from glyff.testing import PruningEventHandler
 from glyff.tests.stubs.store import StubBackend, StubExecutionRepository
 
 

@@ -9,7 +9,7 @@ import pytest
 from glyff import ArgsHasher, EventEmitter, Session, engrave
 from glyff.serialization import JsonSerializer
 from glyff.serialization.constants import DEFAULT_ENCODING
-from glyff.tests.stubs.pruning import PruningEventHandler
+from glyff.testing import PruningEventHandler
 
 from glyff_file_store import FileExecutionRepository, JsonFileBackend
 

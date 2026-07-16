@@ -128,6 +128,11 @@ toml = [
 name = "glyff"
 source = { editable = "packages/glyff" }
 
+[package.optional-dependencies]
+testing = [
+    { name = "pytest" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
@@ -136,6 +141,8 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "pytest", marker = "extra == 'testing'", specifier = ">=8.0" }]
+provides-extras = ["testing"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -4,7 +4,7 @@ import pytest
 
 from glyff import ArgsHasher, EventEmitter, engrave
 from glyff.store._memory import _key_to_path
-from glyff.tests.stubs.pruning import PruningEventHandler
+from glyff.testing import PruningEventHandler
 from glyff.tests.types import BackendFactory, make_session
 
 _runs: list[str] = []

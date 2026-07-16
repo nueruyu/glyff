@@ -18,6 +18,11 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.optional-dependencies]
+# The glyff.testing conformance contracts are pytest test classes, so the
+# public testing surface needs pytest available.
+testing = ["pytest>=8.0"]
+
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"

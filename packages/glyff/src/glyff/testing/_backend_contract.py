@@ -1,3 +1,10 @@
+"""Reusable pytest conformance contracts for glyff execution backends.
+
+A backend implementation verifies it honours the glyff storage contract by
+subclassing the relevant bases here and supplying a ``backend_factory``
+fixture. See :mod:`glyff.testing` for the public entry point.
+"""
+
 from __future__ import annotations
 
 import json

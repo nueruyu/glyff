@@ -1,6 +1,6 @@
 import pytest
 
-from glyff.tests.contracts.execution_backend_contract import (
+from glyff.testing import (
     DurableBackendContract,
     ExecutionBackendContract,
     TextBackendContract,
