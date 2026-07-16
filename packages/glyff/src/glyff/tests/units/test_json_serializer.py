@@ -3,8 +3,14 @@ import inspect
 
 import pytest
 
-from glyff.exceptions import SerializationError
-from glyff.serialization import JsonArgsHasher, JsonSerializer
+from glyff.exceptions import SerializationError, UnserializableArgumentError
+from glyff.serialization import (
+    JsonArgsHasher,
+    JsonSerializer,
+    OpaqueContext,
+    OpaquePolicy,
+    QualnameOpaque,
+)
 
 
 def sample_func(a: int, b: str = "default"):
@@ -116,7 +122,21 @@ async def test_serialize_non_serializable_raises_custom_error(
         await serializer.serialize(object(), object)
 
 
-def test_hash_unserializable_arg_uses_class_qualified_name(hasher: JsonArgsHasher):
+def test_hash_opaque_arg_raises_by_default(hasher: JsonArgsHasher):
+    def func_with_obj(a: object):
+        pass
+
+    sig = inspect.signature(func_with_obj)
+
+    # By default an opaque value (no value representation) is rejected rather than
+    # hashed by class name, so distinct instances can never silently collide.
+    with pytest.raises(UnserializableArgumentError):
+        hasher.hash_args(func_with_obj, sig, (MyPlainClass("id1"),), {})
+
+
+def test_hash_opaque_arg_by_class_with_qualname_policy():
+    hasher = JsonArgsHasher(opaque_policy=QualnameOpaque())
+
     def func_with_obj(a: object):
         pass
 
@@ -126,9 +146,8 @@ def test_hash_unserializable_arg_uses_class_qualified_name(hasher: JsonArgsHashe
     second = hasher.hash_args(func_with_obj, sig, (MyPlainClass("id2"),), {})
     different = hasher.hash_args(func_with_obj, sig, (object(),), {})
 
-    # Unserializable values are identified by their class, so instances of the same
-    # class hash identically (state is intentionally ignored) while instances of a
-    # different class differ.
+    # With the opt-in qualname policy, opaque values are identified by their class:
+    # instances of the same class collapse to one hash while a different class differs.
     assert first == second
     assert first != different
 
@@ -234,13 +253,23 @@ def test_class_method_hash_is_stable(hasher: JsonArgsHasher):
     assert h1 == h2
 
 
-def test_hash_method_on_plain_class_uses_class_qualified_name(hasher: JsonArgsHasher):
+def test_hash_plain_self_raises_by_default(hasher: JsonArgsHasher):
     func = MyPlainClass.method
     sig = inspect.signature(func)
 
-    # A plain (non-dataclass) `self` is hashed by its class qualified name, so calls on
-    # different instances of the same class collapse to the same hash while arguments
-    # still differentiate the call.
+    # A plain (non-dataclass) `self` has no value representation, so by default it is
+    # rejected instead of being collapsed to its class name.
+    with pytest.raises(UnserializableArgumentError):
+        hasher.hash_args(func, sig, (MyPlainClass("id1"), 10), {})
+
+
+def test_hash_plain_self_by_class_with_qualname_policy():
+    hasher = JsonArgsHasher(opaque_policy=QualnameOpaque())
+    func = MyPlainClass.method
+    sig = inspect.signature(func)
+
+    # Opt in to qualname hashing to treat the receiver as a stateless service: calls on
+    # different instances of the same class collapse while arguments still differentiate.
     h1 = hasher.hash_args(func, sig, (MyPlainClass("id1"), 10), {})
     h2 = hasher.hash_args(func, sig, (MyPlainClass("id2"), 10), {})
     h3 = hasher.hash_args(func, sig, (MyPlainClass("id1"), 20), {})
@@ -249,11 +278,12 @@ def test_hash_method_on_plain_class_uses_class_qualified_name(hasher: JsonArgsHa
     assert h1 != h3
 
 
-def test_hash_dataclass_with_nested_plain_service(hasher: JsonArgsHasher):
-    """A dataclass (state matters) holding plain, non-deepcopyable services hashes.
+def test_hash_dataclass_with_nested_plain_service():
+    """A dataclass (state matters) holding plain, non-deepcopyable services.
 
-    The dataclass state differentiates calls while nested plain services are identified
-    by their class, even when they hold members that cannot be deep-copied.
+    Under the default policy a nested opaque member is rejected; with the qualname
+    policy it is identified by its class while the dataclass state differentiates calls,
+    even when the member holds objects that cannot be deep-copied.
     """
     import threading
 
@@ -276,12 +306,41 @@ def test_hash_dataclass_with_nested_plain_service(hasher: JsonArgsHasher):
     a2 = Agent("researcher", [Tool(threading.Lock())])
     a3 = Agent("writer", [Tool(threading.Lock())])
 
+    with pytest.raises(UnserializableArgumentError):
+        JsonArgsHasher().hash_args(func, sig, (a1, "hi"), {})
+
+    hasher = JsonArgsHasher(opaque_policy=QualnameOpaque())
     h1 = hasher.hash_args(func, sig, (a1, "hi"), {})
     h2 = hasher.hash_args(func, sig, (a2, "hi"), {})
     h3 = hasher.hash_args(func, sig, (a3, "hi"), {})
 
     assert h1 == h2
     assert h1 != h3
+
+
+def test_custom_opaque_policy_receives_value_in_context():
+    """A custom policy is consulted with the opaque value wrapped in an OpaqueContext."""
+
+    class Marker:
+        pass
+
+    seen: list = []
+
+    class RecordingPolicy(OpaquePolicy):
+        def hash(self, ctx: OpaqueContext):
+            seen.append(ctx.value)
+            return "recorded"
+
+    hasher = JsonArgsHasher(opaque_policy=RecordingPolicy())
+
+    def func(a: object):
+        pass
+
+    sig = inspect.signature(func)
+    marker = Marker()
+    hasher.hash_args(func, sig, (marker,), {})
+
+    assert seen == [marker]
 
 
 def test_hash_set_is_by_content_and_order_independent(hasher: JsonArgsHasher):

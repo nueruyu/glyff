@@ -1,8 +1,12 @@
 """Turn call arguments into stable JSON for hashing and serialization.
 
 Both paths encode dataclasses and JSON-native values by value. They differ only on
-objects with no value representation: hashing identifies them by class name, while
-serialization raises (its output must round-trip back to the real value).
+objects with no value representation ("opaque" values): serialization always raises
+(its output must round-trip back to the real value), while hashing defers to a
+pluggable :class:`OpaquePolicy`. The default hashing policy also raises, so distinct
+instances can never silently collide on their class name; callers who want the older
+"identify by class" behaviour opt in with :class:`QualnameOpaque` (or their own
+policy).
 """
 
 import dataclasses
@@ -10,6 +14,7 @@ import functools
 import hashlib
 import inspect
 import json
+from abc import ABC, abstractmethod
 from typing import Any, Callable
 
 from ..exceptions import UnserializableArgumentError
@@ -18,6 +23,75 @@ from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
 def _qualified_name(obj: Any) -> str:
     return f"{obj.__module__}.{obj.__qualname__}"
+
+
+@dataclasses.dataclass(frozen=True)
+class OpaqueContext:
+    """The context handed to an :class:`OpaquePolicy` for a single opaque value.
+
+    A value is "opaque" when the hasher has no value representation for it: it is not
+    a dataclass, set, bytes, type, or qualified callable. Only ``value`` is populated
+    today; this object exists so the policy signature can gain fields later without
+    breaking existing implementations.
+    """
+
+    value: Any
+
+
+class OpaquePolicy(ABC):
+    """Decides how an opaque value contributes to an argument hash.
+
+    glyff owns the hashing *contract* (encode by value, otherwise defer here) but not
+    the taxonomy of what counts as opaque or how it is marked -- that is the caller's
+    responsibility. Inject a custom policy to recognise your own markers (a decorator,
+    base class, attribute, or set of types) and decide how each matched value folds
+    into the hash.
+    """
+
+    @abstractmethod
+    def hash(self, ctx: OpaqueContext) -> Any:
+        """Return a JSON-encodable representation of ``ctx.value``, or raise.
+
+        Raising rejects the value (the hash fails loud); returning a value folds that
+        representation into the hash.
+        """
+        ...
+
+
+class RaiseOnOpaque(OpaquePolicy):
+    """Default policy: refuse to hash opaque values.
+
+    Hashing an opaque value by its class name would let distinct instances collide,
+    silently handing one call's memoised result to another. This policy fails loud
+    instead, so such a collision can never happen by accident.
+    """
+
+    def hash(self, ctx: OpaqueContext) -> Any:
+        value = ctx.value
+        raise UnserializableArgumentError(
+            f"Cannot hash opaque value of type '{type(value).__name__}': it has no "
+            "value representation. Hashing it by class name would let distinct "
+            "instances collide. Give it a serializable representation (e.g. a "
+            "dataclass or model), or pass an opaque policy to the hasher."
+        )
+
+
+class QualnameOpaque(OpaquePolicy):
+    """Opt-in policy: identify an opaque value by its class' qualified name.
+
+    Collapses every instance of a class to a single hash, so calls that differ only in
+    such a value share one memoisation entry. This is safe *only* when the value is
+    stateless with respect to the result (e.g. a service holding injected
+    dependencies). Opt in explicitly per hasher; it is not the default precisely
+    because it hashes distinct instances identically.
+    """
+
+    def hash(self, ctx: OpaqueContext) -> Any:
+        return _qualified_name(type(ctx.value))
+
+
+# Shared, stateless singleton used as the default wherever a policy is optional.
+_DEFAULT_OPAQUE_POLICY: OpaquePolicy = RaiseOnOpaque()
 
 
 def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
@@ -29,7 +103,9 @@ def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
     ]
 
 
-def _sorted_for_hash(values: Any) -> list:
+def _sorted_for_hash(
+    values: Any, policy: OpaquePolicy = _DEFAULT_OPAQUE_POLICY
+) -> list:
     # set/frozenset only define a partial order (subset), so sorted() would silently
     # keep incomparable elements in their (process-randomized) input order. Use the
     # canonical-JSON key whenever an element is a set/frozenset; otherwise sort
@@ -39,29 +115,30 @@ def _sorted_for_hash(values: Any) -> list:
             return sorted(values)
         except TypeError:
             pass
-    return sorted(values, key=lambda v: stable_json_dumps(v, default=to_hashable))
+    key = functools.partial(to_hashable, policy=policy)
+    return sorted(values, key=lambda v: stable_json_dumps(v, default=key))
 
 
-def to_hashable(obj: Any) -> Any:
-    """json.dumps default hook for hashing. Encodes by value, else by class name."""
+def to_hashable(obj: Any, policy: OpaquePolicy = _DEFAULT_OPAQUE_POLICY) -> Any:
+    """json.dumps default hook for hashing. Encodes by value, else defers to policy."""
     if isinstance(obj, type):
         return _qualified_name(obj)
     if isinstance(obj, functools.partial):
         # partials are callable but have no __qualname__; hash by their components.
         return {
-            "__partial__": to_hashable(obj.func),
+            "__partial__": to_hashable(obj.func, policy),
             "args": obj.args,
             "keywords": obj.keywords,
         }
     if dataclasses.is_dataclass(obj):
         return {f.name: getattr(obj, f.name) for f in _hashed_fields(obj)}
     if isinstance(obj, (set, frozenset)):
-        return _sorted_for_hash(obj)
+        return _sorted_for_hash(obj, policy)
     if isinstance(obj, (bytes, bytearray)):
         return obj.hex()
     if callable(obj) and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
-    return _qualified_name(type(obj))
+    return policy.hash(OpaqueContext(value=obj))
 
 
 def to_serializable(obj: Any) -> Any:

@@ -6,6 +6,8 @@ from .._interfaces import ArgsHasher, Serializer
 from ..exceptions import SerializationError, UnserializableArgumentError
 from .constants import DEFAULT_ENCODING
 from ._utils import (
+    OpaquePolicy,
+    RaiseOnOpaque,
     build_hashable_args,
     hash_from_dict,
     stable_json_dumps,
@@ -53,9 +55,14 @@ class JsonSerializer(Serializer):
 class JsonArgsHasher(ArgsHasher):
     """An ArgsHasher using standard JSON serialization."""
 
+    def __init__(self, opaque_policy: OpaquePolicy | None = None) -> None:
+        # How to hash values with no value representation. Defaults to raising, so
+        # distinct instances never silently collide on their class name.
+        self._opaque_policy = opaque_policy or RaiseOnOpaque()
+
     def _to_jsonable(self, obj: Any) -> Any:
         """json.dumps default hook. Override to support extra types."""
-        return to_hashable(obj)
+        return to_hashable(obj, self._opaque_policy)
 
     def hash_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
