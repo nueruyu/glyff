@@ -343,6 +343,116 @@ def test_custom_opaque_policy_receives_value_in_context():
     assert seen == [marker]
 
 
+def test_opaque_value_does_not_collide_with_native_representation():
+    """An opaque value must not hash-equal a native value sharing the policy's output.
+
+    QualnameOpaque renders MyPlainClass as its qualified name; a literal string equal
+    to that qualname must still hash differently, since the framework tags opaque output.
+    """
+    hasher = JsonArgsHasher(opaque_policy=QualnameOpaque())
+
+    def func(a: object):
+        pass
+
+    sig = inspect.signature(func)
+    qualname = f"{MyPlainClass.__module__}.{MyPlainClass.__qualname__}"
+    opaque = hasher.hash_args(func, sig, (MyPlainClass("id1"),), {})
+    literal = hasher.hash_args(func, sig, (qualname,), {})
+
+    assert opaque != literal
+
+
+def test_custom_opaque_policy_result_differentiates_hash():
+    """The policy's return value flows into the hash: distinct results differ."""
+
+    class Tok:
+        def __init__(self, token):
+            self.token = token
+
+    class ByToken(OpaquePolicy):
+        def hash(self, ctx: OpaqueContext):
+            return ctx.value.token
+
+    hasher = JsonArgsHasher(opaque_policy=ByToken())
+
+    def func(a: object):
+        pass
+
+    sig = inspect.signature(func)
+    a = hasher.hash_args(func, sig, (Tok("a"),), {})
+    a_again = hasher.hash_args(func, sig, (Tok("a"),), {})
+    b = hasher.hash_args(func, sig, (Tok("b"),), {})
+
+    assert a == a_again
+    assert a != b
+
+
+def test_opaque_policy_applies_to_nested_dataclass_member():
+    """The injected policy governs opaque values nested inside a dataclass."""
+
+    class Svc:
+        pass
+
+    @dataclasses.dataclass
+    class Holder:
+        svc: object
+
+    def func(a: object):
+        pass
+
+    sig = inspect.signature(func)
+
+    with pytest.raises(UnserializableArgumentError):
+        JsonArgsHasher().hash_args(func, sig, (Holder(Svc()),), {})
+
+    hasher = JsonArgsHasher(opaque_policy=QualnameOpaque())
+    h1 = hasher.hash_args(func, sig, (Holder(Svc()),), {})
+    h2 = hasher.hash_args(func, sig, (Holder(Svc()),), {})
+    assert h1 == h2
+
+
+def test_opaque_policy_applies_to_set_members():
+    """The injected policy governs opaque values inside a set (via the sort-key path)."""
+
+    class Svc:
+        pass
+
+    def func(a: set):
+        pass
+
+    sig = inspect.signature(func)
+    values = {Svc(), Svc()}
+
+    with pytest.raises(UnserializableArgumentError):
+        JsonArgsHasher().hash_args(func, sig, (values,), {})
+
+    hasher = JsonArgsHasher(opaque_policy=QualnameOpaque())
+    assert hasher.hash_args(func, sig, (values,), {}) is not None
+
+
+def test_falsy_custom_opaque_policy_is_respected():
+    """A custom policy that is falsy must not be silently replaced by the default."""
+
+    class FalsyPolicy(OpaquePolicy):
+        def __bool__(self):
+            return False
+
+        def hash(self, ctx: OpaqueContext):
+            return "from-falsy"
+
+    class Svc:
+        pass
+
+    hasher = JsonArgsHasher(opaque_policy=FalsyPolicy())
+
+    def func(a: object):
+        pass
+
+    sig = inspect.signature(func)
+    # Would raise if the falsy policy were dropped in favour of RaiseOnOpaque.
+    assert hasher.hash_args(func, sig, (Svc(),), {}) is not None
+
+
 def test_hash_set_is_by_content_and_order_independent(hasher: JsonArgsHasher):
     def func(a: set):
         pass
