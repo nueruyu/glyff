@@ -70,8 +70,8 @@ the provided answer instead of pausing again.
 
 ## Behavior
 
-- Marked function calls are recorded in a session-scoped execution repository, keyed by
-  function identity, arguments, and call position.
+- Marked function calls are recorded in a session-scoped execution repository,
+  keyed by function identity, arguments, and an ordinal among identical calls.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
 - An exception persists nothing: the interrupted call stays `STARTED` (retried
@@ -79,6 +79,16 @@ the provided answer instead of pausing again.
   exception propagates.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
+
+## Execution identity
+
+Keys are **content-addressed, not positional**: a call is identified by its
+engraved ancestor chain, its name, and its arguments — not by a session-wide
+step number. Inserting a call shifts no existing keys, deleting one corrupts
+nothing, and reordering distinct calls is fully compatible; the one hazard is
+identical repeated calls, which should carry distinguishing arguments. See
+**[Execution identity](./docs/execution-identity.md)** for the full guarantees,
+the refactoring guide, and how to choose engrave boundaries.
 
 ## Per-execution metadata
 
@@ -104,58 +114,17 @@ async def step() -> str:
 Reads default to the current execution; pass `execution_id=` to read another
 call's metadata.
 
-## Pruning completed subtrees (userland)
+## Events and pruning
 
-Once a call completes, any resume returns its recorded result directly and the
-calls underneath are never replayed. Those descendant records are dead weight,
-but *when and whether* to delete them is a retention policy glyff does not ship.
-glyff knows only **what** is unreachable — a completed call's strict
-descendants; you decide the rest.
-
-The context execution repository exposes `descendants_of` and `delete_many` (in
-`ExecutionId` terms). Drive them from an `ExecutionCompleted` handler. The event
-fires *after* the completion is durably committed, so the handler opens its own
-transaction. Event handlers are best-effort post-transaction observers: handler
-exceptions are logged and do not affect the execution result or the original
-exception. Handlers run sequentially in registration order; long-running work
-should be explicitly offloaded by the handler.
-
-```python
-from glyff import EventEmitter, EventHandler, ExecutionRepository, Session
-from glyff.events import ExecutionCompleted
-
-
-class PruneDescendants(EventHandler[ExecutionCompleted]):
-    def __init__(self, repository: ExecutionRepository):
-        self._repository = repository
-
-    async def handle(self, event: ExecutionCompleted) -> None:
-        async with event.context.get_transaction_scope():
-            descendants = await self._repository.descendants_of(event.execution_id)
-            if descendants:
-                await self._repository.delete_many(descendants)
-
-
-backend = glyff_file_store.JsonFileBackend(
-    base_dir=".sessions",
-    session_id=session_id,
-)
-session = Session(
-    id=session_id,
-    backend=backend,
-    serializer=serializer,
-    hasher=hasher,
-    event_emitter=EventEmitter([PruneDescendants(backend.repository)]),
-)
-```
-
-Replay and resume are unaffected — only unreachable records are removed. The
-handler fires at every completion, so a nested call is pruned as soon as it
-finishes, not when its top-level ancestor does.
-
-## Status
-
-Early development. APIs may change before v1.0.
+Sessions emit `ExecutionCompleted` after the completion record commits, and
+`ExecutionFailed` when an engraved call raises, before the exception
+propagates. Events are the seam for userland reactions — the
+reference use is pruning: once a call completes its descendants are never
+replayed, and an event handler can delete them via `descendants_of` /
+`delete_many`. Retention is your policy; glyff only knows what is unreachable.
+See **[Events](./docs/events.md)** for the exact delivery semantics (they are
+at-most-once, and that matters), the pruning handler, and the path to
+projecting executions into your own database.
 
 ## Packages
 
@@ -172,6 +141,23 @@ pip install glyff-file-store
 pip install glyff-sqlite
 pip install glyff-pydantic
 ```
+
+## Documentation
+
+- **[Execution identity](./docs/execution-identity.md)** — how calls are keyed,
+  refactor-compatibility guarantees, and choosing engrave boundaries.
+- **[Events](./docs/events.md)** — delivery semantics, pruning, projections.
+- **[Backends](./docs/backends.md)** — the backend contract and writing your own.
+- **[Migration & versioning](./docs/migration.md)** — what glyff migrates,
+  detects, and leaves to you.
+- **[Docs index](./docs/)** — the map, with a suggested reading path.
+
+## Status
+
+Pre-1.0 — the API is unstable and will change. The docs describe the
+release-target surface; features marked *Planned* link to the
+[issue tracker](https://github.com/nueruyu/glyff/issues) and are not released
+yet.
 
 ## License
 
