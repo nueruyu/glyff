@@ -12,6 +12,7 @@ from glyff import (
     Transaction,
     TransactionProvider,
 )
+from glyff.exceptions import StoreFormatVersionError
 from glyff.serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
@@ -20,6 +21,38 @@ from ._file_client import FileClient
 from ._transaction import _ClientTransaction
 
 _EXECUTIONS_FILE = "executions.json"
+
+# On-disk format version, recorded in a marker file beside the session's
+# executions. Bump this when the stored layout changes; opening a session
+# stamped with any other version raises StoreFormatVersionError.
+_FORMAT_FILE = "glyff_format.json"
+FORMAT_VERSION = 1
+
+
+def _initialize_format_sync(client: FileClient) -> None:
+    # A session directory with no marker is either brand new or predates
+    # versioning; its layout is FORMAT_VERSION either way, so stamp it. Any
+    # other recorded version was written by a different build, and we refuse it
+    # rather than misread the session.
+    marker = client.resolve(_FORMAT_FILE)
+    try:
+        raw = marker.read_bytes()
+    except FileNotFoundError:
+        raw = None
+
+    if raw is None:
+        marker.write_bytes(
+            json.dumps({"format_version": FORMAT_VERSION}).encode(DEFAULT_ENCODING)
+        )
+        return
+
+    stored = json.loads(raw.decode(DEFAULT_ENCODING)).get("format_version")
+    if stored != FORMAT_VERSION:
+        raise StoreFormatVersionError(
+            f"File store session at {marker.parent} has format version {stored!r}, "
+            f"but this build of glyff writes version {FORMAT_VERSION}. "
+            "Refusing to open it."
+        )
 
 
 def _decode(raw: bytes | None) -> dict[str, dict[str, Any]]:
@@ -109,5 +142,6 @@ class JsonFileBackend:
 
     def __init__(self, *, base_dir: str | Path, session_id: str):
         client = FileClient(base_dir=base_dir, session_id=session_id)
+        _initialize_format_sync(client)
         self.repository: ExecutionRepository = FileExecutionRepository(client)
         self.transaction_provider: TransactionProvider = FileTransactionProvider(client)

@@ -46,6 +46,9 @@ from that file on access and rewritten atomically on every commit.
 Execution results and metadata are stored as embedded JSON values, so
 serializers used with this backend must produce JSON text.
 
+A `glyff_format.json` marker beside it records the store format version; a
+session written by an incompatible build is refused rather than misread.
+
 This format is intended for debugging and manual inspection, not as the durable
 or high-throughput backend.
 

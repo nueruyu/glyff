@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from glyff.exceptions import StoreFormatVersionError
+
+# On-disk schema version, stamped in the database's PRAGMA user_version. Bump
+# this when the stored schema changes; opening a store stamped with any other
+# version raises StoreFormatVersionError instead of guessing at the data.
+FORMAT_VERSION = 1
+
+_DEFAULT_TABLE_NAME = "glyff_executions"
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -52,8 +63,11 @@ class _SQLiteStagingBuffer:
 class SQLiteClient:
     """SQLite-backed transactional execution table.
 
-    Each execution is identified by its path and stored in the ``executions``
-    table. Operations are staged per transaction and committed atomically.
+    Each execution is identified by its path and stored in the ``table_name``
+    table (default ``glyff_executions``). Operations are staged per transaction
+    and committed atomically. The database's ``PRAGMA user_version`` records the
+    store format version, so a store written by a different build is refused
+    rather than misread.
     """
 
     def __init__(
@@ -62,11 +76,19 @@ class SQLiteClient:
         *,
         busy_timeout_ms: int = 30_000,
         synchronous: str = "FULL",
+        table_name: str = _DEFAULT_TABLE_NAME,
     ) -> None:
         synchronous = synchronous.upper()
         if synchronous not in _VALID_SYNCHRONOUS_VALUES:
             valid = ", ".join(sorted(_VALID_SYNCHRONOUS_VALUES))
             raise ValueError(f"synchronous must be one of: {valid}")
+
+        if not _IDENTIFIER_RE.match(table_name):
+            raise ValueError(
+                "table_name must be a valid SQL identifier "
+                "(letters, digits, underscores; not starting with a digit); "
+                f"got {table_name!r}."
+            )
 
         if str(database_path) == ":memory:":
             raise ValueError(
@@ -77,6 +99,7 @@ class SQLiteClient:
         self._database_path = Path(database_path)
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
+        self._table_name = table_name
         self._write_lock = asyncio.Lock()
         self._current: contextvars.ContextVar[_SQLiteStagingBuffer | None] = (
             contextvars.ContextVar("sqlite_client_staging", default=None)
@@ -106,9 +129,10 @@ class SQLiteClient:
         try:
             connection.execute("BEGIN IMMEDIATE")
             in_transaction = True
+            self._stamp_or_check_format_version(connection)
             connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS executions (
+                f"""
+                CREATE TABLE IF NOT EXISTS "{self._table_name}" (
                     path TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
                     result TEXT,
@@ -127,6 +151,21 @@ class SQLiteClient:
             raise
         finally:
             connection.close()
+
+    def _stamp_or_check_format_version(self, connection: sqlite3.Connection) -> None:
+        # user_version is 0 on a database glyff has never stamped — a fresh file
+        # or one that predates versioning. Either way the current schema is
+        # FORMAT_VERSION, so stamp it. Any other value was written by a
+        # different build, and we refuse it rather than misread the rows.
+        stored = connection.execute("PRAGMA user_version").fetchone()[0]
+        if stored == 0:
+            connection.execute(f"PRAGMA user_version = {FORMAT_VERSION}")
+        elif stored != FORMAT_VERSION:
+            raise StoreFormatVersionError(
+                f"SQLite store at {self._database_path} has format version "
+                f"{stored}, but this build of glyff writes version "
+                f"{FORMAT_VERSION}. Refusing to open it."
+            )
 
     # -- Staging lifecycle -----------------------------------------------------
 
@@ -191,12 +230,13 @@ class SQLiteClient:
 
                 if result is None:
                     connection.execute(
-                        "DELETE FROM executions WHERE path = ?",
+                        f'DELETE FROM "{self._table_name}" WHERE path = ?',
                         (path,),
                     )
                 else:
                     connection.execute(
-                        """INSERT INTO executions (path, status, result, metadata)
+                        f"""INSERT INTO "{self._table_name}"
+                               (path, status, result, metadata)
                            VALUES (?, ?, ?, ?)
                            ON CONFLICT(path) DO UPDATE SET
                                status = excluded.status,
@@ -256,12 +296,11 @@ class SQLiteClient:
         finally:
             connection.close()
 
-    @staticmethod
     def _read_value_sync(
-        connection: sqlite3.Connection, path: str
+        self, connection: sqlite3.Connection, path: str
     ) -> SQLiteExecutionRecord | None:
         row = connection.execute(
-            "SELECT status, result, metadata FROM executions WHERE path = ?",
+            f'SELECT status, result, metadata FROM "{self._table_name}" WHERE path = ?',
             (path,),
         ).fetchone()
         if row is None:
@@ -293,11 +332,14 @@ class SQLiteClient:
         try:
             if prefix:
                 rows = connection.execute(
-                    "SELECT path FROM executions WHERE substr(path, 1, ?) = ?",
+                    f'SELECT path FROM "{self._table_name}" '
+                    "WHERE substr(path, 1, ?) = ?",
                     (len(prefix), prefix),
                 ).fetchall()
             else:
-                rows = connection.execute("SELECT path FROM executions").fetchall()
+                rows = connection.execute(
+                    f'SELECT path FROM "{self._table_name}"'
+                ).fetchall()
             return {row[0] for row in rows}
         finally:
             connection.close()

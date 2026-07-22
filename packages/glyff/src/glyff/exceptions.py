@@ -62,3 +62,18 @@ class UnserializableArgumentError(SerializationError):
     """
 
     pass
+
+
+class StoreFormatVersionError(GlyffError):
+    """
+    Raised when a persistent store's on-disk format version is one this build of
+    glyff does not understand — an unknown or newer version than it wrote.
+
+    glyff stamps a format version when it first writes a store and refuses to
+    operate on a store stamped with any other version, rather than risk
+    misreading data written by a different build. There is no migration runner
+    yet; the stamp exists so a format change is detected loudly instead of
+    corrupting silently.
+    """
+
+    pass

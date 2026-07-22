@@ -20,10 +20,11 @@ async def test_sqlite_backend_initializes_schema(tmp_path: Path):
     SQLiteBackend(db)
     client = SQLiteClient(db)
     rows = await client.read_sql(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'executions'"
+        "SELECT name FROM sqlite_master "
+        "WHERE type = 'table' AND name = 'glyff_executions'"
     )
 
-    assert rows == [("executions",)]
+    assert rows == [("glyff_executions",)]
 
 
 async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
@@ -33,7 +34,7 @@ async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
     SQLiteBackend(db)
 
     client = SQLiteClient(db)
-    rows = await client.read_sql("PRAGMA table_info(executions)")
+    rows = await client.read_sql("PRAGMA table_info(glyff_executions)")
     assert [row[1] for row in rows] == ["path", "status", "result", "metadata"]
 
 
@@ -85,7 +86,7 @@ async def test_sqlite_backend_stores_execution_columns_as_readable_json(
 
     client = SQLiteClient(db)
     rows = await client.read_sql(
-        "SELECT status, result, metadata FROM executions WHERE path = ?",
+        "SELECT status, result, metadata FROM glyff_executions WHERE path = ?",
         "task#0:hash",
     )
 
