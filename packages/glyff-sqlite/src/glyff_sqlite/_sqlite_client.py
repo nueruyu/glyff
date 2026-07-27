@@ -11,17 +11,16 @@ from typing import Any
 
 from glyff.exceptions import StoreFormatVersionError
 
-# Format version recorded per execution table in its metadata table. Bump when
-# the stored schema changes; opening a table stamped otherwise raises
-# StoreFormatVersionError.
+# Format version recorded in the store's metadata table. Bump when the stored
+# schema changes; opening a store stamped otherwise raises StoreFormatVersionError.
 FORMAT_VERSION = 1
 
-# Each execution table's format version lives in a sibling metadata table named
-# by this suffix, derived from the table name so the pair moves together and
-# never touches the database's own PRAGMA user_version.
-_META_SUFFIX = "__meta"
-
-_DEFAULT_TABLE_NAME = "glyff_executions"
+# The store owns two tables derived from a single prefix — the execution table
+# and its metadata table — so one namespace moves together and neither physical
+# name is an independent knob. Versioning never touches PRAGMA user_version.
+_DEFAULT_TABLE_PREFIX = "glyff"
+_EXECUTIONS_SUFFIX = "_executions"
+_META_SUFFIX = "_meta"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -68,12 +67,12 @@ class _SQLiteStagingBuffer:
 class SQLiteClient:
     """SQLite-backed transactional execution table.
 
-    Each execution is identified by its path and stored in the ``table_name``
-    table (default ``glyff_executions``). Operations are staged per transaction
-    and committed atomically. A sibling ``<table_name>__meta`` table records the
-    execution table's format version, so a table written by a different build is
-    refused rather than misread — without touching the database's own
-    ``PRAGMA user_version``.
+    Each execution is identified by its path and stored in the
+    ``<table_prefix>_executions`` table (default prefix ``glyff``). Operations
+    are staged per transaction and committed atomically. A sibling
+    ``<table_prefix>_meta`` table records the format version, so a store written
+    by a different build is refused rather than misread — without touching the
+    database's own ``PRAGMA user_version``.
     """
 
     def __init__(
@@ -82,26 +81,18 @@ class SQLiteClient:
         *,
         busy_timeout_ms: int = 30_000,
         synchronous: str = "FULL",
-        table_name: str = _DEFAULT_TABLE_NAME,
+        table_prefix: str = _DEFAULT_TABLE_PREFIX,
     ) -> None:
         synchronous = synchronous.upper()
         if synchronous not in _VALID_SYNCHRONOUS_VALUES:
             valid = ", ".join(sorted(_VALID_SYNCHRONOUS_VALUES))
             raise ValueError(f"synchronous must be one of: {valid}")
 
-        if not _IDENTIFIER_RE.match(table_name):
+        if not _IDENTIFIER_RE.match(table_prefix):
             raise ValueError(
-                "table_name must be a valid SQL identifier "
+                "table_prefix must be a valid SQL identifier "
                 "(letters, digits, underscores; not starting with a digit); "
-                f"got {table_name!r}."
-            )
-
-        # The metadata table is table_name + _META_SUFFIX; a table_name already
-        # ending in the suffix could collide with another store's metadata table.
-        if table_name.lower().endswith(_META_SUFFIX):
-            raise ValueError(
-                f"table_name may not end with {_META_SUFFIX!r} "
-                f"(reserved for glyff's metadata table); got {table_name!r}."
+                f"got {table_prefix!r}."
             )
 
         if str(database_path) == ":memory:":
@@ -113,8 +104,8 @@ class SQLiteClient:
         self._database_path = Path(database_path)
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
-        self._table_name = table_name
-        self._meta_table_name = table_name + _META_SUFFIX
+        self._table_name = table_prefix + _EXECUTIONS_SUFFIX
+        self._meta_table_name = table_prefix + _META_SUFFIX
         self._write_lock = asyncio.Lock()
         self._current: contextvars.ContextVar[_SQLiteStagingBuffer | None] = (
             contextvars.ContextVar("sqlite_client_staging", default=None)

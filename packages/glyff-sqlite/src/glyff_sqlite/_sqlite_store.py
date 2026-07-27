@@ -95,12 +95,13 @@ class SQLiteBackend:
     JsonSerializer or PydanticSerializer, because execution results and metadata
     are stored as JSON text columns for readability and queryability.
 
-    Executions live in ``table_name`` (default ``glyff_executions``); set it to
-    let the store cohabit an application's database without a name collision.
-    The store records the table's format version in a sibling
-    ``<table_name>__meta`` table — leaving the database's own
-    ``PRAGMA user_version`` untouched — and refuses a table written by an
-    incompatible build.
+    The store owns two tables derived from ``table_prefix`` (default ``glyff``):
+    ``<table_prefix>_executions`` for the execution records and
+    ``<table_prefix>_meta`` for their format version. Set the prefix to let the
+    store cohabit an application's database without a name collision; versioning
+    lives in ``<table_prefix>_meta``, leaving the database's own
+    ``PRAGMA user_version`` untouched, and a table written by an incompatible
+    build is refused.
     """
 
     def __init__(
@@ -109,13 +110,13 @@ class SQLiteBackend:
         *,
         busy_timeout_ms: int = 30_000,
         synchronous: str = "FULL",
-        table_name: str = "glyff_executions",
+        table_prefix: str = "glyff",
     ):
         client = SQLiteClient(
             database_path,
             busy_timeout_ms=busy_timeout_ms,
             synchronous=synchronous,
-            table_name=table_name,
+            table_prefix=table_prefix,
         )
         client._initialize_schema_sync()
         self.repository: ExecutionRepository = SQLiteExecutionRepository(client)
