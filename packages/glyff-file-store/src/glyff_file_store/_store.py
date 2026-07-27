@@ -30,10 +30,8 @@ FORMAT_VERSION = 1
 
 
 def _initialize_format_sync(client: FileClient) -> None:
-    # A session directory with no marker is either brand new or predates
-    # versioning; its layout is FORMAT_VERSION either way, so stamp it. Any
-    # other recorded version was written by a different build, and we refuse it
-    # rather than misread the session.
+    # No marker means a new or pre-versioning session, whose layout is the
+    # current version, so stamp it; any other version is refused.
     marker = client.resolve(_FORMAT_FILE)
     try:
         raw = marker.read_bytes()

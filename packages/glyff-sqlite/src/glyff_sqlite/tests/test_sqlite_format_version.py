@@ -52,9 +52,8 @@ def test_unknown_format_version_is_refused(tmp_path: Path):
 
 
 def test_table_name_casing_does_not_bypass_the_version_check(tmp_path: Path):
-    # "glyff_executions" and "GLYFF_EXECUTIONS" are the same physical SQLite
-    # table, so reopening with different casing must still see the recorded
-    # (incompatible) version rather than key a fresh row and re-stamp it.
+    # A differently-cased name is the same physical table, so it must see the
+    # recorded version rather than key a fresh row.
     db = tmp_path / "casing.sqlite3"
     SQLiteBackend(db, table_name="glyff_executions")
 
@@ -71,8 +70,6 @@ def test_table_name_casing_does_not_bypass_the_version_check(tmp_path: Path):
 
 
 def test_versioning_leaves_the_databases_user_version_untouched(tmp_path: Path):
-    # The store cohabits an application's database; user_version belongs to the
-    # application, so glyff must never read or write it for its own versioning.
     db = tmp_path / "cohabit.sqlite3"
     connection = sqlite3.connect(db)
     connection.execute("PRAGMA user_version = 7")
@@ -115,3 +112,8 @@ class TestConfigurableTableName:
     def test_invalid_table_name_is_rejected(self, tmp_path: Path):
         with pytest.raises(ValueError, match="valid SQL identifier"):
             SQLiteClient(tmp_path / "bad.sqlite3", table_name="drop table; --")
+
+    @pytest.mark.parametrize("name", ["glyff_meta", "GLYFF_META", "Glyff_Meta"])
+    def test_metadata_table_name_is_reserved(self, name: str, tmp_path: Path):
+        with pytest.raises(ValueError, match="reserved"):
+            SQLiteClient(tmp_path / "reserved.sqlite3", table_name=name)

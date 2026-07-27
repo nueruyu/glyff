@@ -11,15 +11,13 @@ from typing import Any
 
 from glyff.exceptions import StoreFormatVersionError
 
-# On-disk schema version, recorded per execution table in the glyff metadata
-# table. Bump this when the stored schema changes; opening a table stamped with
-# any other version raises StoreFormatVersionError instead of guessing at the
-# data.
+# Format version recorded per execution table in the glyff_meta table. Bump
+# when the stored schema changes; opening a table stamped otherwise raises
+# StoreFormatVersionError.
 FORMAT_VERSION = 1
 
-# glyff-owned table that records each execution table's format version. Keyed by
-# table name so the store can cohabit an application's database — versioning
-# stays in this table and never touches the database's own PRAGMA user_version.
+# glyff-owned table holding each execution table's format version, so the store
+# can cohabit an application's database without touching its PRAGMA user_version.
 _META_TABLE = "glyff_meta"
 
 _DEFAULT_TABLE_NAME = "glyff_executions"
@@ -97,6 +95,11 @@ class SQLiteClient:
                 f"got {table_name!r}."
             )
 
+        if table_name.lower() == _META_TABLE:
+            raise ValueError(
+                f"table_name {table_name!r} is reserved for glyff's metadata table."
+            )
+
         if str(database_path) == ":memory:":
             raise ValueError(
                 "SQLiteClient does not support ':memory:' because it opens "
@@ -160,22 +163,14 @@ class SQLiteClient:
             connection.close()
 
     def _stamp_or_check_format_version(self, connection: sqlite3.Connection) -> None:
-        # Record the format version in a glyff-owned table keyed by the
-        # execution table's name, never in the database's PRAGMA user_version —
-        # that belongs to the application when the store cohabits its database.
-        # An absent row means this table is new to glyff, so stamp it; any other
-        # version was written by a different build, and we refuse it rather than
-        # misread the rows.
         connection.execute(
             f'CREATE TABLE IF NOT EXISTS "{_META_TABLE}" ('
             "table_name TEXT PRIMARY KEY, "
             "format_version INTEGER NOT NULL)"
         )
-        # SQLite matches table names case-insensitively for ASCII, but a TEXT
-        # primary key compares case-sensitively. The identifier is validated
-        # ASCII-only, so lowercasing canonicalizes the key: every casing that
-        # names the same physical table maps to the same version row and cannot
-        # bypass the check.
+        # SQLite matches table names case-insensitively, so lowercasing the
+        # validated ASCII identifier keys every casing of the same physical
+        # table to one version row that a reopen cannot bypass.
         meta_key = self._table_name.lower()
         row = connection.execute(
             f'SELECT format_version FROM "{_META_TABLE}" WHERE table_name = ?',
