@@ -171,15 +171,21 @@ class SQLiteClient:
             "table_name TEXT PRIMARY KEY, "
             "format_version INTEGER NOT NULL)"
         )
+        # SQLite matches table names case-insensitively for ASCII, but a TEXT
+        # primary key compares case-sensitively. The identifier is validated
+        # ASCII-only, so lowercasing canonicalizes the key: every casing that
+        # names the same physical table maps to the same version row and cannot
+        # bypass the check.
+        meta_key = self._table_name.lower()
         row = connection.execute(
             f'SELECT format_version FROM "{_META_TABLE}" WHERE table_name = ?',
-            (self._table_name,),
+            (meta_key,),
         ).fetchone()
         if row is None:
             connection.execute(
                 f'INSERT INTO "{_META_TABLE}" (table_name, format_version) '
                 "VALUES (?, ?)",
-                (self._table_name, FORMAT_VERSION),
+                (meta_key, FORMAT_VERSION),
             )
         elif row[0] != FORMAT_VERSION:
             raise StoreFormatVersionError(

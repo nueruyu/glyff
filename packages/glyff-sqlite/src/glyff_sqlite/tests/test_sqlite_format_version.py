@@ -51,6 +51,25 @@ def test_unknown_format_version_is_refused(tmp_path: Path):
         SQLiteBackend(db)
 
 
+def test_table_name_casing_does_not_bypass_the_version_check(tmp_path: Path):
+    # "glyff_executions" and "GLYFF_EXECUTIONS" are the same physical SQLite
+    # table, so reopening with different casing must still see the recorded
+    # (incompatible) version rather than key a fresh row and re-stamp it.
+    db = tmp_path / "casing.sqlite3"
+    SQLiteBackend(db, table_name="glyff_executions")
+
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "UPDATE glyff_meta SET format_version = ? WHERE table_name = ?",
+        (FORMAT_VERSION + 1, "glyff_executions"),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(StoreFormatVersionError):
+        SQLiteBackend(db, table_name="GLYFF_EXECUTIONS")
+
+
 def test_versioning_leaves_the_databases_user_version_untouched(tmp_path: Path):
     # The store cohabits an application's database; user_version belongs to the
     # application, so glyff must never read or write it for its own versioning.
