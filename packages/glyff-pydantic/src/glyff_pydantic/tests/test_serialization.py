@@ -128,7 +128,25 @@ async def test_serialize_non_serializable_raises_custom_error(serializer: Serial
         await serializer.serialize(object(), object)
 
 
-def test_hash_unserializable_arg_uses_class_qualified_name(hasher: ArgsHasher):
+def test_hash_opaque_arg_raises_by_default(hasher: ArgsHasher):
+    from glyff.exceptions import UnserializableArgumentError
+
+    class PlainA:
+        pass
+
+    def func_with_obj(a: object):
+        pass
+
+    sig = inspect.signature(func_with_obj)
+
+    # By default an opaque value is rejected rather than hashed by class name.
+    with pytest.raises(UnserializableArgumentError):
+        hasher.hash_args(func_with_obj, sig, (PlainA(),), {})
+
+
+def test_hash_opaque_arg_by_class_with_qualname_policy():
+    from glyff.serialization import QualnameOpaque
+
     class PlainA:
         pass
 
@@ -140,12 +158,13 @@ def test_hash_unserializable_arg_uses_class_qualified_name(hasher: ArgsHasher):
 
     sig = inspect.signature(func_with_obj)
 
+    hasher = PydanticArgsHasher(opaque_policy=QualnameOpaque())
     first = hasher.hash_args(func_with_obj, sig, (PlainA(),), {})
     second = hasher.hash_args(func_with_obj, sig, (PlainA(),), {})
     different = hasher.hash_args(func_with_obj, sig, (PlainB(),), {})
 
-    # Unserializable values are identified by their class qualified name: same class
-    # hashes identically, different class differs.
+    # With the opt-in qualname policy, opaque values are identified by their class
+    # qualified name: same class hashes identically, a different class differs.
     assert first == second
     assert first != different
 
@@ -247,12 +266,7 @@ def test_hash_ignores_compare_false_dataclass_fields(hasher: ArgsHasher):
     assert h1 != h3
 
 
-def test_hash_model_with_nested_opaque_member(hasher: ArgsHasher):
-    """A model holding an opaque (non-serializable) member hashes without raising.
-
-    The model's serializable state differentiates calls while the opaque member is
-    identified by its class instead of triggering a PydanticSerializationError.
-    """
+def _agent_model_with_opaque_member():
     from pydantic import ConfigDict
 
     class Tool:
@@ -267,6 +281,31 @@ def test_hash_model_with_nested_opaque_member(hasher: ArgsHasher):
         def run(self, query: str):
             pass
 
+    return Agent, Tool
+
+
+def test_hash_model_with_opaque_member_raises_by_default(hasher: ArgsHasher):
+    """A model holding an opaque member is rejected by the default policy."""
+    from glyff.exceptions import UnserializableArgumentError
+
+    Agent, Tool = _agent_model_with_opaque_member()
+    func = Agent.run
+    sig = inspect.signature(func)
+    a1 = Agent(name="researcher", tool=Tool(1))
+
+    with pytest.raises(UnserializableArgumentError):
+        hasher.hash_args(func, sig, (a1, "hi"), {})
+
+
+def test_hash_model_with_opaque_member_by_class_with_qualname_policy():
+    """With the qualname policy, an opaque member folds to its class name.
+
+    The model's serializable state differentiates calls while the opaque member is
+    identified by its class instead of raising.
+    """
+    from glyff.serialization import QualnameOpaque
+
+    Agent, Tool = _agent_model_with_opaque_member()
     func = Agent.run
     sig = inspect.signature(func)
 
@@ -274,6 +313,7 @@ def test_hash_model_with_nested_opaque_member(hasher: ArgsHasher):
     a2 = Agent(name="researcher", tool=Tool(2))
     a3 = Agent(name="writer", tool=Tool(1))
 
+    hasher = PydanticArgsHasher(opaque_policy=QualnameOpaque())
     h1 = hasher.hash_args(func, sig, (a1, "hi"), {})
     h2 = hasher.hash_args(func, sig, (a2, "hi"), {})
     h3 = hasher.hash_args(func, sig, (a3, "hi"), {})
