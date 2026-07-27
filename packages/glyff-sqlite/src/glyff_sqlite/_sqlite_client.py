@@ -95,6 +95,16 @@ class SQLiteClient:
                 f"got {table_prefix!r}."
             )
 
+        # SQLite reserves object names starting with "sqlite_"; such a prefix
+        # would make the derived table names fail at CREATE TABLE.
+        if table_prefix.lower() == "sqlite" or table_prefix.lower().startswith(
+            "sqlite_"
+        ):
+            raise ValueError(
+                "table_prefix may not be 'sqlite' or start with 'sqlite_' "
+                f"(reserved by SQLite for internal use); got {table_prefix!r}."
+            )
+
         if str(database_path) == ":memory:":
             raise ValueError(
                 "SQLiteClient does not support ':memory:' because it opens "

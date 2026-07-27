@@ -107,3 +107,8 @@ class TestConfigurableTablePrefix:
     def test_invalid_prefix_is_rejected(self, tmp_path: Path):
         with pytest.raises(ValueError, match="valid SQL identifier"):
             SQLiteClient(tmp_path / "bad.sqlite3", table_prefix="drop table; --")
+
+    @pytest.mark.parametrize("prefix", ["sqlite", "SQLITE", "sqlite_app", "SQLite_App"])
+    def test_sqlite_reserved_prefix_is_rejected(self, prefix: str, tmp_path: Path):
+        with pytest.raises(ValueError, match="sqlite"):
+            SQLiteClient(tmp_path / "reserved.sqlite3", table_prefix=prefix)
