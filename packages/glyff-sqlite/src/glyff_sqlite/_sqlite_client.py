@@ -11,14 +11,15 @@ from typing import Any
 
 from glyff.exceptions import StoreFormatVersionError
 
-# Format version recorded per execution table in the glyff_meta table. Bump
-# when the stored schema changes; opening a table stamped otherwise raises
+# Format version recorded per execution table in its metadata table. Bump when
+# the stored schema changes; opening a table stamped otherwise raises
 # StoreFormatVersionError.
 FORMAT_VERSION = 1
 
-# glyff-owned table holding each execution table's format version, so the store
-# can cohabit an application's database without touching its PRAGMA user_version.
-_META_TABLE = "glyff_meta"
+# Each execution table's format version lives in a sibling metadata table named
+# by this suffix, derived from the table name so the pair moves together and
+# never touches the database's own PRAGMA user_version.
+_META_SUFFIX = "__meta"
 
 _DEFAULT_TABLE_NAME = "glyff_executions"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -69,9 +70,9 @@ class SQLiteClient:
 
     Each execution is identified by its path and stored in the ``table_name``
     table (default ``glyff_executions``). Operations are staged per transaction
-    and committed atomically. A ``glyff_meta`` table records the format version
-    of each execution table, so a table written by a different build is refused
-    rather than misread — without touching the database's own
+    and committed atomically. A sibling ``<table_name>__meta`` table records the
+    execution table's format version, so a table written by a different build is
+    refused rather than misread — without touching the database's own
     ``PRAGMA user_version``.
     """
 
@@ -95,9 +96,12 @@ class SQLiteClient:
                 f"got {table_name!r}."
             )
 
-        if table_name.lower() == _META_TABLE:
+        # The metadata table is table_name + _META_SUFFIX; a table_name already
+        # ending in the suffix could collide with another store's metadata table.
+        if table_name.lower().endswith(_META_SUFFIX):
             raise ValueError(
-                f"table_name {table_name!r} is reserved for glyff's metadata table."
+                f"table_name may not end with {_META_SUFFIX!r} "
+                f"(reserved for glyff's metadata table); got {table_name!r}."
             )
 
         if str(database_path) == ":memory:":
@@ -110,6 +114,7 @@ class SQLiteClient:
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
         self._table_name = table_name
+        self._meta_table_name = table_name + _META_SUFFIX
         self._write_lock = asyncio.Lock()
         self._current: contextvars.ContextVar[_SQLiteStagingBuffer | None] = (
             contextvars.ContextVar("sqlite_client_staging", default=None)
@@ -163,24 +168,20 @@ class SQLiteClient:
             connection.close()
 
     def _stamp_or_check_format_version(self, connection: sqlite3.Connection) -> None:
+        # The metadata table holds a single version row for its execution table.
+        # SQLite resolves both names case-insensitively, so a differently-cased
+        # reopen reaches the same table and row and cannot bypass the check.
         connection.execute(
-            f'CREATE TABLE IF NOT EXISTS "{_META_TABLE}" ('
-            "table_name TEXT PRIMARY KEY, "
-            "format_version INTEGER NOT NULL)"
+            f'CREATE TABLE IF NOT EXISTS "{self._meta_table_name}" '
+            "(format_version INTEGER NOT NULL)"
         )
-        # SQLite matches table names case-insensitively, so lowercasing the
-        # validated ASCII identifier keys every casing of the same physical
-        # table to one version row that a reopen cannot bypass.
-        meta_key = self._table_name.lower()
         row = connection.execute(
-            f'SELECT format_version FROM "{_META_TABLE}" WHERE table_name = ?',
-            (meta_key,),
+            f'SELECT format_version FROM "{self._meta_table_name}"'
         ).fetchone()
         if row is None:
             connection.execute(
-                f'INSERT INTO "{_META_TABLE}" (table_name, format_version) '
-                "VALUES (?, ?)",
-                (meta_key, FORMAT_VERSION),
+                f'INSERT INTO "{self._meta_table_name}" (format_version) VALUES (?)',
+                (FORMAT_VERSION,),
             )
         elif row[0] != FORMAT_VERSION:
             raise StoreFormatVersionError(
