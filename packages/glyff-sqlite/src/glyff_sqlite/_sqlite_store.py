@@ -94,6 +94,12 @@ class SQLiteBackend:
     It requires a serializer that produces UTF-8 JSON text bytes, such as
     JsonSerializer or PydanticSerializer, because execution results and metadata
     are stored as JSON text columns for readability and queryability.
+
+    ``table_prefix`` (default ``glyff``) names the two tables the store owns:
+    ``<prefix>_executions`` for the records and ``<prefix>_meta`` for their
+    format version. Set it to cohabit an application's database; a store written
+    by an incompatible build is refused, and ``PRAGMA user_version`` is left to
+    the application.
     """
 
     def __init__(
@@ -102,11 +108,13 @@ class SQLiteBackend:
         *,
         busy_timeout_ms: int = 30_000,
         synchronous: str = "FULL",
+        table_prefix: str = "glyff",
     ):
         client = SQLiteClient(
             database_path,
             busy_timeout_ms=busy_timeout_ms,
             synchronous=synchronous,
+            table_prefix=table_prefix,
         )
         client._initialize_schema_sync()
         self.repository: ExecutionRepository = SQLiteExecutionRepository(client)

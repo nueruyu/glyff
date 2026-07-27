@@ -4,9 +4,15 @@ SQLite-backed durable `ExecutionRepository` implementation for
 [glyff](https://pypi.org/project/glyff/).
 
 This is the **production** backend: one row per execution in a SQLite
-`executions` table, WAL mode, indexed lookups, and native transaction
+`glyff_executions` table, WAL mode, indexed lookups, and native transaction
 atomicity. Execution `result` and `metadata` columns are stored as readable JSON
 text, so serializers used with this backend must produce JSON text.
+
+`table_prefix` (default `glyff`) names the two tables the store owns:
+`<prefix>_executions` and `<prefix>_meta`, which records the format version so a
+store written by an incompatible build is refused. Pass `table_prefix=` to
+cohabit an application's own database; `PRAGMA user_version` is left to the
+application.
 
 ## Install
 

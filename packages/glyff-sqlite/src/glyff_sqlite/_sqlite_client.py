@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import re
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from glyff.exceptions import StoreFormatVersionError
+
+# Bump when the stored schema changes.
+FORMAT_VERSION = 1
+
+# The store's two tables are derived from one prefix, so the version lives in a
+# table glyff owns rather than the database-wide PRAGMA user_version.
+_DEFAULT_TABLE_PREFIX = "glyff"
+_EXECUTIONS_SUFFIX = "_executions"
+_META_SUFFIX = "_meta"
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -52,8 +65,11 @@ class _SQLiteStagingBuffer:
 class SQLiteClient:
     """SQLite-backed transactional execution table.
 
-    Each execution is identified by its path and stored in the ``executions``
-    table. Operations are staged per transaction and committed atomically.
+    Each execution is identified by its path and stored in the
+    ``<table_prefix>_executions`` table (default prefix ``glyff``). Operations
+    are staged per transaction and committed atomically. A sibling
+    ``<table_prefix>_meta`` table records the format version, so a store written
+    by a different build is refused rather than misread.
     """
 
     def __init__(
@@ -62,11 +78,28 @@ class SQLiteClient:
         *,
         busy_timeout_ms: int = 30_000,
         synchronous: str = "FULL",
+        table_prefix: str = _DEFAULT_TABLE_PREFIX,
     ) -> None:
         synchronous = synchronous.upper()
         if synchronous not in _VALID_SYNCHRONOUS_VALUES:
             valid = ", ".join(sorted(_VALID_SYNCHRONOUS_VALUES))
             raise ValueError(f"synchronous must be one of: {valid}")
+
+        if not _IDENTIFIER_RE.match(table_prefix):
+            raise ValueError(
+                "table_prefix must be a valid SQL identifier "
+                "(letters, digits, underscores; not starting with a digit); "
+                f"got {table_prefix!r}."
+            )
+
+        # SQLite reserves object names starting with "sqlite_".
+        if table_prefix.lower() == "sqlite" or table_prefix.lower().startswith(
+            "sqlite_"
+        ):
+            raise ValueError(
+                "table_prefix may not be 'sqlite' or start with 'sqlite_' "
+                f"(reserved by SQLite for internal use); got {table_prefix!r}."
+            )
 
         if str(database_path) == ":memory:":
             raise ValueError(
@@ -77,6 +110,8 @@ class SQLiteClient:
         self._database_path = Path(database_path)
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
+        self._table_name = table_prefix + _EXECUTIONS_SUFFIX
+        self._meta_table_name = table_prefix + _META_SUFFIX
         self._write_lock = asyncio.Lock()
         self._current: contextvars.ContextVar[_SQLiteStagingBuffer | None] = (
             contextvars.ContextVar("sqlite_client_staging", default=None)
@@ -106,9 +141,10 @@ class SQLiteClient:
         try:
             connection.execute("BEGIN IMMEDIATE")
             in_transaction = True
+            self._stamp_or_check_format_version(connection)
             connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS executions (
+                f"""
+                CREATE TABLE IF NOT EXISTS "{self._table_name}" (
                     path TEXT PRIMARY KEY,
                     status TEXT NOT NULL,
                     result TEXT,
@@ -127,6 +163,28 @@ class SQLiteClient:
             raise
         finally:
             connection.close()
+
+    def _stamp_or_check_format_version(self, connection: sqlite3.Connection) -> None:
+        # No row means a store glyff has never stamped, which it adopts as current.
+        connection.execute(
+            f'CREATE TABLE IF NOT EXISTS "{self._meta_table_name}" '
+            "(format_version INTEGER NOT NULL)"
+        )
+        row = connection.execute(
+            f'SELECT format_version FROM "{self._meta_table_name}"'
+        ).fetchone()
+        if row is None:
+            connection.execute(
+                f'INSERT INTO "{self._meta_table_name}" (format_version) VALUES (?)',
+                (FORMAT_VERSION,),
+            )
+        elif row[0] != FORMAT_VERSION:
+            raise StoreFormatVersionError(
+                f"SQLite store table {self._table_name!r} at "
+                f"{self._database_path} has format version {row[0]}, but this "
+                f"build of glyff writes version {FORMAT_VERSION}. "
+                "Refusing to open it."
+            )
 
     # -- Staging lifecycle -----------------------------------------------------
 
@@ -191,12 +249,13 @@ class SQLiteClient:
 
                 if result is None:
                     connection.execute(
-                        "DELETE FROM executions WHERE path = ?",
+                        f'DELETE FROM "{self._table_name}" WHERE path = ?',
                         (path,),
                     )
                 else:
                     connection.execute(
-                        """INSERT INTO executions (path, status, result, metadata)
+                        f"""INSERT INTO "{self._table_name}"
+                               (path, status, result, metadata)
                            VALUES (?, ?, ?, ?)
                            ON CONFLICT(path) DO UPDATE SET
                                status = excluded.status,
@@ -256,12 +315,11 @@ class SQLiteClient:
         finally:
             connection.close()
 
-    @staticmethod
     def _read_value_sync(
-        connection: sqlite3.Connection, path: str
+        self, connection: sqlite3.Connection, path: str
     ) -> SQLiteExecutionRecord | None:
         row = connection.execute(
-            "SELECT status, result, metadata FROM executions WHERE path = ?",
+            f'SELECT status, result, metadata FROM "{self._table_name}" WHERE path = ?',
             (path,),
         ).fetchone()
         if row is None:
@@ -293,11 +351,14 @@ class SQLiteClient:
         try:
             if prefix:
                 rows = connection.execute(
-                    "SELECT path FROM executions WHERE substr(path, 1, ?) = ?",
+                    f'SELECT path FROM "{self._table_name}" '
+                    "WHERE substr(path, 1, ?) = ?",
                     (len(prefix), prefix),
                 ).fetchall()
             else:
-                rows = connection.execute("SELECT path FROM executions").fetchall()
+                rows = connection.execute(
+                    f'SELECT path FROM "{self._table_name}"'
+                ).fetchall()
             return {row[0] for row in rows}
         finally:
             connection.close()
