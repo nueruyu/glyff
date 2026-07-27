@@ -97,8 +97,9 @@ class SQLiteBackend:
 
     Executions live in ``table_name`` (default ``glyff_executions``); set it to
     let the store cohabit an application's database without a name collision.
-    The store stamps its format version in ``PRAGMA user_version`` and refuses a
-    database written by an incompatible build.
+    The store records each table's format version in a ``glyff_meta`` table —
+    leaving the database's own ``PRAGMA user_version`` untouched — and refuses a
+    table written by an incompatible build.
     """
 
     def __init__(

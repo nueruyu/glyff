@@ -9,34 +9,63 @@ from glyff_sqlite import SQLiteBackend
 from glyff_sqlite._sqlite_client import FORMAT_VERSION, SQLiteClient
 
 
-async def test_fresh_database_is_stamped_with_the_format_version(tmp_path: Path):
+async def test_fresh_table_records_the_format_version(tmp_path: Path):
     db = tmp_path / "stamped.sqlite3"
     SQLiteBackend(db)
 
     client = SQLiteClient(db)
-    rows = await client.read_sql("PRAGMA user_version")
+    rows = await client.read_sql(
+        "SELECT format_version FROM glyff_meta WHERE table_name = ?",
+        "glyff_executions",
+    )
 
     assert rows == [(FORMAT_VERSION,)]
 
 
-async def test_reopening_a_stamped_database_is_accepted(tmp_path: Path):
+async def test_reopening_a_stamped_table_is_accepted(tmp_path: Path):
     db = tmp_path / "reopen.sqlite3"
     SQLiteBackend(db)
     SQLiteBackend(db)
 
     client = SQLiteClient(db)
-    rows = await client.read_sql("PRAGMA user_version")
+    rows = await client.read_sql(
+        "SELECT format_version FROM glyff_meta WHERE table_name = ?",
+        "glyff_executions",
+    )
     assert rows == [(FORMAT_VERSION,)]
 
 
 def test_unknown_format_version_is_refused(tmp_path: Path):
     db = tmp_path / "future.sqlite3"
+    SQLiteBackend(db)
+
     connection = sqlite3.connect(db)
-    connection.execute(f"PRAGMA user_version = {FORMAT_VERSION + 1}")
+    connection.execute(
+        "UPDATE glyff_meta SET format_version = ? WHERE table_name = ?",
+        (FORMAT_VERSION + 1, "glyff_executions"),
+    )
+    connection.commit()
     connection.close()
 
     with pytest.raises(StoreFormatVersionError):
         SQLiteBackend(db)
+
+
+def test_versioning_leaves_the_databases_user_version_untouched(tmp_path: Path):
+    # The store cohabits an application's database; user_version belongs to the
+    # application, so glyff must never read or write it for its own versioning.
+    db = tmp_path / "cohabit.sqlite3"
+    connection = sqlite3.connect(db)
+    connection.execute("PRAGMA user_version = 7")
+    connection.commit()
+    connection.close()
+
+    SQLiteBackend(db)
+
+    connection = sqlite3.connect(db)
+    user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+    connection.close()
+    assert user_version == 7
 
 
 class TestConfigurableTableName:

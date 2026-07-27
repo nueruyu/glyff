@@ -11,10 +11,16 @@ from typing import Any
 
 from glyff.exceptions import StoreFormatVersionError
 
-# On-disk schema version, stamped in the database's PRAGMA user_version. Bump
-# this when the stored schema changes; opening a store stamped with any other
-# version raises StoreFormatVersionError instead of guessing at the data.
+# On-disk schema version, recorded per execution table in the glyff metadata
+# table. Bump this when the stored schema changes; opening a table stamped with
+# any other version raises StoreFormatVersionError instead of guessing at the
+# data.
 FORMAT_VERSION = 1
+
+# glyff-owned table that records each execution table's format version. Keyed by
+# table name so the store can cohabit an application's database — versioning
+# stays in this table and never touches the database's own PRAGMA user_version.
+_META_TABLE = "glyff_meta"
 
 _DEFAULT_TABLE_NAME = "glyff_executions"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -65,9 +71,10 @@ class SQLiteClient:
 
     Each execution is identified by its path and stored in the ``table_name``
     table (default ``glyff_executions``). Operations are staged per transaction
-    and committed atomically. The database's ``PRAGMA user_version`` records the
-    store format version, so a store written by a different build is refused
-    rather than misread.
+    and committed atomically. A ``glyff_meta`` table records the format version
+    of each execution table, so a table written by a different build is refused
+    rather than misread — without touching the database's own
+    ``PRAGMA user_version``.
     """
 
     def __init__(
@@ -153,18 +160,33 @@ class SQLiteClient:
             connection.close()
 
     def _stamp_or_check_format_version(self, connection: sqlite3.Connection) -> None:
-        # user_version is 0 on a database glyff has never stamped — a fresh file
-        # or one that predates versioning. Either way the current schema is
-        # FORMAT_VERSION, so stamp it. Any other value was written by a
-        # different build, and we refuse it rather than misread the rows.
-        stored = connection.execute("PRAGMA user_version").fetchone()[0]
-        if stored == 0:
-            connection.execute(f"PRAGMA user_version = {FORMAT_VERSION}")
-        elif stored != FORMAT_VERSION:
+        # Record the format version in a glyff-owned table keyed by the
+        # execution table's name, never in the database's PRAGMA user_version —
+        # that belongs to the application when the store cohabits its database.
+        # An absent row means this table is new to glyff, so stamp it; any other
+        # version was written by a different build, and we refuse it rather than
+        # misread the rows.
+        connection.execute(
+            f'CREATE TABLE IF NOT EXISTS "{_META_TABLE}" ('
+            "table_name TEXT PRIMARY KEY, "
+            "format_version INTEGER NOT NULL)"
+        )
+        row = connection.execute(
+            f'SELECT format_version FROM "{_META_TABLE}" WHERE table_name = ?',
+            (self._table_name,),
+        ).fetchone()
+        if row is None:
+            connection.execute(
+                f'INSERT INTO "{_META_TABLE}" (table_name, format_version) '
+                "VALUES (?, ?)",
+                (self._table_name, FORMAT_VERSION),
+            )
+        elif row[0] != FORMAT_VERSION:
             raise StoreFormatVersionError(
-                f"SQLite store at {self._database_path} has format version "
-                f"{stored}, but this build of glyff writes version "
-                f"{FORMAT_VERSION}. Refusing to open it."
+                f"SQLite store table {self._table_name!r} at "
+                f"{self._database_path} has format version {row[0]}, but this "
+                f"build of glyff writes version {FORMAT_VERSION}. "
+                "Refusing to open it."
             )
 
     # -- Staging lifecycle -----------------------------------------------------

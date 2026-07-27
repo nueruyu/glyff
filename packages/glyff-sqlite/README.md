@@ -8,9 +8,11 @@ This is the **production** backend: one row per execution in a SQLite
 atomicity. Execution `result` and `metadata` columns are stored as readable JSON
 text, so serializers used with this backend must produce JSON text.
 
-The store stamps its format version in `PRAGMA user_version` and refuses to open
-a database written by an incompatible build. Pass `table_name=` to rename the
-table — useful when the store cohabits an application's own database.
+The store records each execution table's format version in a `glyff_meta` table
+and refuses to open one written by an incompatible build. Pass `table_name=` to
+rename the execution table — useful when the store cohabits an application's own
+database; versioning stays in `glyff_meta` and never touches the database's own
+`PRAGMA user_version`.
 
 ## Install
 
