@@ -18,16 +18,22 @@ userland primitives to act on — it does not rewrite your in-flight sessions.
 
 ### glyff's store schema
 
-Store formats carry a version stamp — `PRAGMA user_version` (or a meta table) in
-the SQLite backend, a `format_version` field in the JSON file store. An unknown
-or newer version is refused loudly. Sequential migrations between glyff versions
-are glyff's responsibility, and are possible precisely because the stamp exists.
+Store formats carry a version stamp. The SQLite backend records it in a
+`<table_prefix>_meta` table (alongside `<table_prefix>_executions`, default
+prefix `glyff`); the JSON file store writes a `glyff_format.json` marker beside
+the session's records. Both are at `FORMAT_VERSION = 1`.
 
-> **Planned** — [#41](https://github.com/nueruyu/glyff/issues/41). Released
-> stores are unversioned (`_sqlite_client.py` does a bare `CREATE TABLE IF NOT
-> EXISTS`), and data that cannot be identified cannot be migrated later — which
-> is why stamping is the one pre-1.0 item that cannot be retrofitted. The stamp
-> lands first; a migration runner comes later.
+A store written by an incompatible build is refused loudly with
+`StoreFormatVersionError` rather than misread. A fresh or pre-versioning store is
+stamped on first open. The in-memory backend is ephemeral and carries no stamp.
+
+Stamping is deliberately the first thing that landed: data that cannot be
+identified cannot be migrated later, which makes it the one pre-1.0 item that
+cannot be retrofitted. Sequential migrations between glyff versions are glyff's
+responsibility, and are possible precisely because the stamp now exists.
+
+> **Planned** — a migration runner. The stamp is in place and refuses unknown
+> versions; nothing yet converts a store from one format version to the next.
 
 ### User payload
 
@@ -51,8 +57,29 @@ glyff does **not** auto-migrate a paused session onto new code. Instead:
   lets you write your own migration script — the same
   mechanism-not-policy escape hatch as [pruning](./events.md#pruning-completed-subtrees).
 
+Those scripts are **forward, offline batches**, not hooks on the resume path.
+Boundary arguments are persisted as canonical JSON alongside the execution
+record, so a migration reads the old record, maps `old_args -> new_args`,
+recomputes the key, and rewrites it — the same direction and shape as payload
+migration, and as every schema migration tool. Two consequences worth stating:
+
+- **The application version selects migrations; it is not part of the key.**
+  `Session(app_version=...)` stamps the session and decides *which* migrations
+  apply — a resume whose stamp trails the code applies the `vN -> vN+1` steps in
+  sequence, with unchanged boundaries as the identity. Execution keys stay
+  `(parent, name, args_hash, sequence)` and never carry the app version.
+- **Failures surface at deploy time**, over every affected record, rather than on
+  whichever paused session happens to resume in production. Nothing is added to
+  the resume path.
+
+Which key component moved decides the work: renames, `version=` bumps,
+re-parenting and repeated-call renumbering never need the old arguments; only an
+argument signature or value change does — which is why they are recorded.
+
 > **Planned** — [#41](https://github.com/nueruyu/glyff/issues/41) (generation
-> stamp and typed mismatch error),
+> stamp and typed mismatch error — the store format stamp above has landed, this
+> is the remaining half), [#47](https://github.com/nueruyu/glyff/issues/47)
+> (canonical-JSON argument persistence and the migration shape described here),
 > [#42](https://github.com/nueruyu/glyff/issues/42) (repository enumeration).
 > Until they land, resuming a session on changed code diverges silently — pin
 > paused sessions to the code that started them.

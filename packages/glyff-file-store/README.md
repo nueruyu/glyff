@@ -64,16 +64,9 @@ is restored from `session.bak` when the live directory is missing, or the stale
 backup is removed when the live directory is already in place. Any orphan
 `.commit-*` temp directories are also removed.
 
-## Planned
-
-- **Store format versioning** — the JSON file carries a `format_version` field;
-  an unknown or newer format is refused loudly
-  ([#41](https://github.com/nueruyu/glyff/issues/41)).
-
 ## Status
 
-Pre-1.0 — the API is unstable and will change. Items under *Planned* track the
-linked issues and are not released yet.
+Pre-1.0 — the API is unstable and will change.
 
 ## License
 

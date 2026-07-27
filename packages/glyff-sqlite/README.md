@@ -59,13 +59,9 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 
 ## Planned
 
-- **Store format versioning** — the database carries a format-version stamp
-  (`PRAGMA user_version` or a meta table); an unknown or newer format is refused
-  loudly, and store migrations between glyff versions build on the stamp
-  ([#41](https://github.com/nueruyu/glyff/issues/41)).
-- **Configurable table name** — a `table_name=` constructor parameter, with the
-  default likely changing to `glyff_executions` before v1.0 to avoid collisions
-  when the store cohabits an application database
+- **Store migrations** — the format-version stamp is in place and an
+  incompatible store is refused, but nothing yet converts a store from one
+  format version to the next
   ([#41](https://github.com/nueruyu/glyff/issues/41)).
 - **External transaction enlistment and enumeration** — constructing the backend
   on an externally supplied connection so completion commits join the

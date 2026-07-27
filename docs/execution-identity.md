@@ -109,18 +109,28 @@ decomposes into its function and bound arguments.
 For values that are deliberately opaque — a service object passed as `self`, a
 client handle — opacity is *your* call, expressed through an injectable policy:
 glyff owns the hashing contract, not the taxonomy of what counts as opaque in
-your application. Standard composable policies (match by marker attribute, by
-type list, by predicate; chain them, with *raise* as the fallback) make the
-common cases one-liners.
+your application. `JsonArgsHasher(opaque_policy=...)` takes an `OpaquePolicy`,
+and `glyff.serialization` ships two:
 
-> **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37) (policies),
-> following the core rework in
-> [#38](https://github.com/nueruyu/glyff/issues/38) (error-by-default and the
-> policy interface). Released versions instead fall back to hashing an
-> unrepresentable value by its **class name** (`serialization/_utils.py`), so two
-> distinct instances collapse to the same hash and a later call can silently
-> receive an earlier call's recorded result. Until the rework lands, keep opaque
-> objects out of engraved signatures.
+| Policy | Behavior |
+| --- | --- |
+| `RaiseOnOpaque` (default) | Rejects the value with `UnserializableArgumentError`, so distinct instances never silently collide. |
+| `QualnameOpaque` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one hash. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
+
+A policy receives an `OpaqueContext` rather than the bare value, so the signature
+can grow without breaking implementations. Policy return values are namespaced
+before hashing, so a policy that returns `"pkg.Cls"` cannot hash-equal a plain
+string argument of the same text.
+
+Erroring by default is the important half: an unrepresentable value that is
+quietly hashed by class name makes two distinct instances share a key, and a
+later call then receives an earlier call's recorded result.
+
+> **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37). Standard
+> composable policies (match by marker attribute, by type list, by predicate;
+> chain them, with *raise* as the fallback) will make the common cases
+> one-liners. Today, anything beyond `QualnameOpaque` means implementing
+> `OpaquePolicy` yourself — which is a small class, but not a one-liner.
 
 ## Choosing engrave boundaries
 
@@ -139,3 +149,9 @@ The discipline that makes it work:
   be pure or idempotent. The exceptions are non-idempotent side effects and pause
   points — engrave those individually and finely, so they are recorded (or
   resumed) at exactly the right grain.
+- **Keep boundary arguments small and free of raw secrets** — pass an id or a
+  reference, not a blob or a credential. Beyond the hashing cost, argument values
+  are what a [migration](./migration.md#in-flight-sessions-across-code-changes)
+  reads back, and are being persisted for exactly that reason
+  ([#47](https://github.com/nueruyu/glyff/issues/47)); the same opacity policy
+  that governs hashing will govern what is stored.

@@ -78,7 +78,7 @@ treat updating them as part of the change, not a follow-up. The mapping:
 | Name derivation, argument hashing, or sequencing | `docs/execution-identity.md` (it states guarantees with source references) |
 | Event emission points or delivery semantics | `docs/events.md`, the events section of `README.md` |
 | The backend contract or a store's on-disk behavior | `docs/backends.md`, that backend's README |
-| Store formats, stamps, or version-mismatch behavior | `docs/migration.md`, the backend READMEs' *Planned* sections |
+| Store formats, stamps, or version-mismatch behavior | `docs/migration.md`, the backend READMEs |
 
 When in doubt, grep the docs for the symbol or filename you touched. A change that
 makes a doc's example or file reference wrong is incomplete until the doc is fixed.
