@@ -95,13 +95,11 @@ class SQLiteBackend:
     JsonSerializer or PydanticSerializer, because execution results and metadata
     are stored as JSON text columns for readability and queryability.
 
-    The store owns two tables derived from ``table_prefix`` (default ``glyff``):
-    ``<table_prefix>_executions`` for the execution records and
-    ``<table_prefix>_meta`` for their format version. Set the prefix to let the
-    store cohabit an application's database without a name collision; versioning
-    lives in ``<table_prefix>_meta``, leaving the database's own
-    ``PRAGMA user_version`` untouched, and a table written by an incompatible
-    build is refused.
+    ``table_prefix`` (default ``glyff``) names the two tables the store owns:
+    ``<prefix>_executions`` for the records and ``<prefix>_meta`` for their
+    format version. Set it to cohabit an application's database; a store written
+    by an incompatible build is refused, and ``PRAGMA user_version`` is left to
+    the application.
     """
 
     def __init__(

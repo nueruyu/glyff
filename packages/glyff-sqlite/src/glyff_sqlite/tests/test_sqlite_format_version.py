@@ -45,8 +45,6 @@ def test_unknown_format_version_is_refused(tmp_path: Path):
 
 
 def test_prefix_casing_does_not_bypass_the_version_check(tmp_path: Path):
-    # A differently-cased prefix names the same physical tables, so it must see
-    # the recorded version rather than start a fresh one.
     db = tmp_path / "casing.sqlite3"
     SQLiteBackend(db, table_prefix="glyff")
 

@@ -11,13 +11,11 @@ from typing import Any
 
 from glyff.exceptions import StoreFormatVersionError
 
-# Format version recorded in the store's metadata table. Bump when the stored
-# schema changes; opening a store stamped otherwise raises StoreFormatVersionError.
+# Bump when the stored schema changes.
 FORMAT_VERSION = 1
 
-# The store owns two tables derived from a single prefix — the execution table
-# and its metadata table — so one namespace moves together and neither physical
-# name is an independent knob. Versioning never touches PRAGMA user_version.
+# The store's two tables are derived from one prefix, so the version lives in a
+# table glyff owns rather than the database-wide PRAGMA user_version.
 _DEFAULT_TABLE_PREFIX = "glyff"
 _EXECUTIONS_SUFFIX = "_executions"
 _META_SUFFIX = "_meta"
@@ -71,8 +69,7 @@ class SQLiteClient:
     ``<table_prefix>_executions`` table (default prefix ``glyff``). Operations
     are staged per transaction and committed atomically. A sibling
     ``<table_prefix>_meta`` table records the format version, so a store written
-    by a different build is refused rather than misread — without touching the
-    database's own ``PRAGMA user_version``.
+    by a different build is refused rather than misread.
     """
 
     def __init__(
@@ -95,8 +92,7 @@ class SQLiteClient:
                 f"got {table_prefix!r}."
             )
 
-        # SQLite reserves object names starting with "sqlite_"; such a prefix
-        # would make the derived table names fail at CREATE TABLE.
+        # SQLite reserves object names starting with "sqlite_".
         if table_prefix.lower() == "sqlite" or table_prefix.lower().startswith(
             "sqlite_"
         ):
@@ -169,9 +165,7 @@ class SQLiteClient:
             connection.close()
 
     def _stamp_or_check_format_version(self, connection: sqlite3.Connection) -> None:
-        # The metadata table holds a single version row for its execution table.
-        # SQLite resolves both names case-insensitively, so a differently-cased
-        # reopen reaches the same table and row and cannot bypass the check.
+        # No row means a store glyff has never stamped, which it adopts as current.
         connection.execute(
             f'CREATE TABLE IF NOT EXISTS "{self._meta_table_name}" '
             "(format_version INTEGER NOT NULL)"

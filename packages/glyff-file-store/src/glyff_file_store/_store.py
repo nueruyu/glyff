@@ -22,16 +22,14 @@ from ._transaction import _ClientTransaction
 
 _EXECUTIONS_FILE = "executions.json"
 
-# On-disk format version, recorded in a marker file beside the session's
-# executions. Bump this when the stored layout changes; opening a session
-# stamped with any other version raises StoreFormatVersionError.
 _FORMAT_FILE = "glyff_format.json"
+
+# Bump when the stored layout changes.
 FORMAT_VERSION = 1
 
 
 def _initialize_format_sync(client: FileClient) -> None:
-    # No marker means a new or pre-versioning session, whose layout is the
-    # current version, so stamp it; any other version is refused.
+    # No marker means a session glyff has never stamped, which it adopts as current.
     marker = client.resolve(_FORMAT_FILE)
     try:
         raw = marker.read_bytes()
