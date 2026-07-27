@@ -19,8 +19,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# The glyff.testing conformance contracts are pytest test classes, so the
-# public testing surface needs pytest available.
+# glyff.testing's conformance contracts are pytest test classes.
 testing = ["pytest>=8.0"]
 
 [build-system]
