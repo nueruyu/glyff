@@ -64,6 +64,8 @@ async def save_execution(backend: BackendHandle, execution: Execution) -> None:
 
 
 class ExecutionBackendContract:
+    pytestmark = pytest.mark.asyncio
+
     @pytest.fixture
     def backend_factory(self) -> BackendFactory:
         raise NotImplementedError
@@ -413,6 +415,8 @@ class ExecutionBackendContract:
 
 
 class TextBackendContract:
+    pytestmark = pytest.mark.asyncio
+
     @pytest.fixture
     def backend_factory(self) -> BackendFactory:
         raise NotImplementedError
@@ -447,6 +451,8 @@ class TextBackendContract:
 
 
 class BinarySafeBackendContract:
+    pytestmark = pytest.mark.asyncio
+
     @pytest.fixture
     def backend_factory(self) -> BackendFactory:
         raise NotImplementedError
@@ -483,6 +489,8 @@ class BinarySafeBackendContract:
 
 
 class DurableBackendContract:
+    pytestmark = pytest.mark.asyncio
+
     @pytest.fixture
     def backend_factory(self) -> BackendFactory:
         raise NotImplementedError

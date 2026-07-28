@@ -6,6 +6,8 @@ workspace packages' tests do. A backend checks it honours the glyff contract by
 subclassing the relevant contract bases and supplying a ``backend_factory``
 fixture::
 
+    import pytest
+
     from glyff.testing import DurableBackendContract, ExecutionBackendContract
 
     class TestMyBackend(ExecutionBackendContract, DurableBackendContract):

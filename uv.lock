@@ -131,6 +131,7 @@ source = { editable = "packages/glyff" }
 [package.optional-dependencies]
 testing = [
     { name = "pytest" },
+    { name = "pytest-asyncio" },
 ]
 
 [package.dev-dependencies]
@@ -141,7 +142,10 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pytest", marker = "extra == 'testing'", specifier = ">=8.0" }]
+requires-dist = [
+    { name = "pytest", marker = "extra == 'testing'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'testing'", specifier = ">=0.23" },
+]
 provides-extras = ["testing"]
 
 [package.metadata.requires-dev]
