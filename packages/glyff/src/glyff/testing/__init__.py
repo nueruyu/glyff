@@ -21,27 +21,17 @@ The contracts are pytest test classes, so importing this module needs pytest
 """
 
 from ._backend_contract import (
-    BackendFactory,
-    BackendHandle,
     BinarySafeBackendContract,
     DurableBackendContract,
     ExecutionBackendContract,
     TextBackendContract,
-    eid,
-    save_execution,
-    value,
 )
 from ._pruning import PruningEventHandler
 
 __all__ = [
-    "BackendFactory",
-    "BackendHandle",
     "BinarySafeBackendContract",
     "DurableBackendContract",
     "ExecutionBackendContract",
     "TextBackendContract",
     "PruningEventHandler",
-    "eid",
-    "save_execution",
-    "value",
 ]
