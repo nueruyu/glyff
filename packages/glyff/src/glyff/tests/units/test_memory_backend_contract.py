@@ -1,7 +1,7 @@
 import pytest
 
 from glyff.store import MemoryBackend
-from glyff.tests.contracts.execution_backend_contract import (
+from glyff.testing import (
     BinarySafeBackendContract,
     ExecutionBackendContract,
 )

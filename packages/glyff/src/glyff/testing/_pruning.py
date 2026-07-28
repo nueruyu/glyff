@@ -1,4 +1,4 @@
-"""Reference pruning handler for the test suites.
+"""Reference pruning handler.
 
 glyff ships no pruning handler — *when/whether* to delete unreachable records
 is a userland policy. This is what userland would write: on completion, delete
