@@ -19,8 +19,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# glyff.testing's conformance contracts are async pytest test classes; they
-# carry an explicit asyncio marker so they run under either asyncio_mode.
+# glyff.testing's conformance contracts are async pytest test classes.
 testing = ["pytest>=8.0", "pytest-asyncio>=0.23"]
 
 [build-system]
