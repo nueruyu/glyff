@@ -80,27 +80,18 @@ the provided answer instead of pausing again.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 
-## Execution identity
-
-Keys are **content-addressed, not positional**: a call is identified by its
-engraved ancestor chain, its name, and its arguments — not by a session-wide
-step number. Inserting a call shifts no existing keys, deleting one corrupts
-nothing, and reordering distinct calls is fully compatible; the one hazard is
-identical repeated calls, which should carry distinguishing arguments. See
-**[Execution identity](./docs/execution-identity.md)** for the full guarantees,
-the refactoring guide, and how to choose engrave boundaries.
+Keys are content-addressed, not positional, so inserting, deleting, and
+reordering distinct calls leave existing keys intact. See
+**[Execution identity](./docs/execution-identity.md)** for the guarantees, the
+hazards, and how to choose engrave boundaries.
 
 ## Per-execution metadata
 
 Attach application data to the running call. Metadata is owned by the
-`Execution` aggregate: `ctx.metadata.set(...)` stages metadata into the
-currently active transaction, serialized with the session's serializer. During
-normal engraved execution, metadata set in the function body commits atomically
-with the execution's `COMPLETED` status and result.
-
-If completing the current execution fails, metadata staged through
-`ctx.metadata.set(...)` in that function body is rolled back with the completion
-write.
+`Execution` aggregate: `ctx.metadata.set(...)` stages it into the active
+transaction, serialized with the session's serializer, so metadata set in an
+engraved function body commits — or rolls back — together with that execution's
+`COMPLETED` status and result.
 
 ```python
 @glyff.engrave
@@ -116,15 +107,11 @@ call's metadata.
 
 ## Events and pruning
 
-Sessions emit `ExecutionCompleted` after the completion record commits, and
-`ExecutionFailed` when an engraved call raises, before the exception
-propagates. Events are the seam for userland reactions — the
-reference use is pruning: once a call completes its descendants are never
-replayed, and an event handler can delete them via `descendants_of` /
-`delete_many`. Retention is your policy; glyff only knows what is unreachable.
-See **[Events](./docs/events.md)** for the exact delivery semantics (they are
-at-most-once, and that matters), the pruning handler, and the path to
-projecting executions into your own database.
+Sessions emit `ExecutionCompleted` and `ExecutionFailed` to handlers registered
+on the session. The reference use is pruning: a completed call's descendants are
+never replayed, and a handler can delete them. See **[Events](./docs/events.md)**
+for delivery semantics, the pruning handler, and projecting executions into your
+own database.
 
 ## Packages
 
@@ -144,20 +131,17 @@ pip install glyff-pydantic
 
 ## Documentation
 
-- **[Execution identity](./docs/execution-identity.md)** — how calls are keyed,
-  refactor-compatibility guarantees, and choosing engrave boundaries.
+- **[Execution identity](./docs/execution-identity.md)** — how calls are keyed.
 - **[Events](./docs/events.md)** — delivery semantics, pruning, projections.
 - **[Backends](./docs/backends.md)** — the backend contract and writing your own.
-- **[Migration & versioning](./docs/migration.md)** — what glyff migrates,
-  detects, and leaves to you.
-- **[Docs index](./docs/)** — the map, with a suggested reading path.
+- **[Migration & versioning](./docs/migration.md)** — store stamps and in-flight
+  sessions.
+- **[Docs index](./docs/README.md)** — the map, with a suggested reading path.
 
 ## Status
 
-Pre-1.0 — the API is unstable and will change. The docs describe the
-release-target surface; features marked *Planned* link to the
-[issue tracker](https://github.com/nueruyu/glyff/issues) and are not released
-yet.
+Pre-1.0 — the API is unstable and will change. The
+[docs](./docs/README.md) mark what is planned and not yet released.
 
 ## License
 

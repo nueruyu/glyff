@@ -62,10 +62,9 @@ name from the function's `__qualname__`.
 
 ## Status
 
-Pre-1.0 — the API is unstable and will change. Docs describe the release-target
-surface; features marked *planned* link to their tracking issues. See the
-[documentation](https://github.com/nueruyu/glyff/tree/main/docs) for the full
-guarantees.
+Pre-1.0 — the API is unstable and will change. See the
+[documentation](https://github.com/nueruyu/glyff/tree/main/docs) for the
+guarantees and what is planned.
 
 ## License
 

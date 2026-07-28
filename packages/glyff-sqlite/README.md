@@ -59,19 +59,14 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 
 ## Planned
 
-- **Store migrations** — the format-version stamp is in place and an
-  incompatible store is refused, but nothing yet converts a store from one
-  format version to the next
-  ([#41](https://github.com/nueruyu/glyff/issues/41)).
-- **External transaction enlistment and enumeration** — constructing the backend
-  on an externally supplied connection so completion commits join the
-  application's transaction, plus a public execution-enumeration primitive
+- **Store migrations** — nothing yet converts a store from one format version to
+  the next ([#41](https://github.com/nueruyu/glyff/issues/41)).
+- **External transaction enlistment and enumeration**
   ([#42](https://github.com/nueruyu/glyff/issues/42)).
 
 ## Status
 
-Pre-1.0 — the API is unstable and will change. Items under *Planned* track the
-linked issues and are not released yet.
+Pre-1.0 — the API is unstable and will change.
 
 ## License
 

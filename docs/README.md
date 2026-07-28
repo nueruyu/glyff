@@ -17,8 +17,8 @@ is the map of everything else. A reasonable first path:
 
 ## Operate
 
-- **[Migration & versioning](./migration.md)** — what glyff migrates for you, what
-  it detects loudly, and what stays in your hands.
+- **[Migration & versioning](./migration.md)** — what glyff migrates, what it
+  refuses, and what stays in your hands.
 
 ## Contribute
 
@@ -27,7 +27,7 @@ is the map of everything else. A reasonable first path:
 - **[AGENTS.md](../AGENTS.md)** — the same guidance, addressed to AI coding
   agents.
 
-> Pre-1.0: these docs describe the **release-target** surface. Anything marked
-> *Planned* links to its tracking issue and does not exist in a released version
-> yet; the surrounding guarantees and contracts are settled unless the note says
-> otherwise.
+> **Pre-1.0.** These pages describe the release-target API. A section marked
+> *Planned* is not in a released version and links its tracking issue; everything
+> else describes what the code does today. This note covers the whole docs tree —
+> the individual pages do not repeat it.

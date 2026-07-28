@@ -26,11 +26,10 @@ Each package's tests are split into `units/` (per-module) and `scenarios/`
 tests next to the layer you change, and run new backends against the contract
 suite rather than hand-writing store semantics tests.
 
-> **Planned** — [#36](https://github.com/nueruyu/glyff/issues/36): the test trees
-> currently live *inside* the source packages (`packages/*/src/*/tests/`, with the
-> shared contracts under `glyff.tests.contracts`) and are moving to plain
-> `packages/*/tests/` directories, with the contracts promoted to the public
-> `glyff.testing` module. Until then, the in-src layout is the one you'll see.
+> **Planned** — [#36](https://github.com/nueruyu/glyff/issues/36) moves the test
+> trees from inside the source packages (`packages/*/src/*/tests/`) to plain
+> `packages/*/tests/` directories and promotes the shared contracts to
+> `glyff.testing`. Until then, the in-src layout is what you will see.
 
 ## Where to make a change
 
@@ -61,9 +60,9 @@ suite rather than hand-writing store semantics tests.
 - **Mechanism, not policy.** Core knows *what* (unreachable records, version
   divergence); *when and whether* to act on it — retention, migration — stays in
   userland via events and repository primitives. Don't ship policy in core.
-- **Respect the seams.** Persistence goes through the `Backend` contract
-  (repository + transaction provider); event handlers observe after commit and
-  must not carry control flow.
+- **Keep persistence and observation separate.** Persistence goes through the
+  `Backend` contract (repository + transaction provider); event handlers run
+  after commit, observe only, and must not carry control flow.
 - **Underscore = internal.** Import public names from a package's `__init__.py`.
 - Match the surrounding code's style and density.
 
@@ -85,12 +84,10 @@ makes a doc's example or file reference wrong is incomplete until the doc is fix
 
 ## Pre-1.0
 
-The API is unstable, and the docs describe the **release-target** surface — some
-of it intentionally ahead of the code, marked *Planned* with a tracking issue.
-Before working on execution identity, store formats, or the backend contract,
-check the [open issues](https://github.com/nueruyu/glyff/issues) — the
-[#40](https://github.com/nueruyu/glyff/issues/40)–[#43](https://github.com/nueruyu/glyff/issues/43)
-cluster is in flight and coordinated.
+The API is unstable; see the [docs index](./docs/README.md) for how the docs mark
+what is planned versus released. Execution identity, store formats, and the
+backend contract are in flight and coordinated, so check the
+[open issues](https://github.com/nueruyu/glyff/issues) before working on them.
 
 ## Pull requests
 
