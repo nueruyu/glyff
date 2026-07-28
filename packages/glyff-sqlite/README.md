@@ -41,24 +41,14 @@ backend = SQLiteBackend("executions.sqlite3")
 
 The underlying `SQLiteClient` is internal and not part of the public API.
 
-## Per-execution metadata
+## Storage model
 
-Persist application data alongside an execution from within an engraved call:
-
-```python
-ctx = glyff.get_context()
-await ctx.metadata.set("my_key", {"any": "json-serializable value"})
-value = await ctx.metadata.get("my_key", dict)
-```
-
-Metadata is a keyed map owned by the current `Execution` aggregate.
-`ctx.metadata.set(...)` stages metadata into the currently active transaction.
-During normal engraved execution, metadata set in the function body commits
-atomically with the execution's `COMPLETED` status and result. If completing
-the current execution fails, metadata staged through `ctx.metadata.set(...)` in
-that function body is rolled back with the completion write.
-
-Metadata is removed if that execution's record is deleted.
+- One row per execution; `result` and `metadata` are JSON text columns, readable
+  in place with any SQLite client.
+- Per-execution metadata (see the
+  [glyff README](https://pypi.org/project/glyff/)) commits atomically with the
+  execution's `COMPLETED` status and result, and is removed with the execution's
+  row when the record is deleted.
 
 ## Transaction model
 
@@ -67,9 +57,16 @@ Metadata is removed if that execution's record is deleted.
 - `BEGIN IMMEDIATE` prevents writer contention; WAL mode keeps reads fast.
 - A per-database asyncio write lock serialises concurrent write transactions.
 
+## Planned
+
+- **Store migrations** — nothing yet converts a store from one format version to
+  the next ([#41](https://github.com/nueruyu/glyff/issues/41)).
+- **External transaction enlistment and enumeration**
+  ([#42](https://github.com/nueruyu/glyff/issues/42)).
+
 ## Status
 
-Early development. APIs may change before v1.0.
+Pre-1.0 — the API is unstable and will change.
 
 ## License
 

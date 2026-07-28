@@ -3,11 +3,10 @@
 File-backed `ExecutionRepository` implementation for
 [glyff](https://pypi.org/project/glyff/).
 
-This package provides a human-readable debug backend:
-
-- `JsonFileBackend` provides a file-backed execution repository and transaction
-  provider. It stores executions in a single pretty-printed JSON map and
-  rewrites that file atomically on each commit.
+This is the human-readable **debug** backend: `JsonFileBackend` bundles a
+file-backed execution repository and transaction provider, storing executions
+in a single pretty-printed JSON map that is rewritten atomically on each
+commit.
 
 For the durable production backend, see
 [`glyff-sqlite`](https://pypi.org/project/glyff-sqlite/).
@@ -67,7 +66,7 @@ backup is removed when the live directory is already in place. Any orphan
 
 ## Status
 
-Early development. APIs may change before v1.0.
+Pre-1.0 — the API is unstable and will change.
 
 ## License
 

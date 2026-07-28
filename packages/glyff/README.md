@@ -15,8 +15,8 @@ pip install glyff
 
 ## Behavior
 
-- Marked function calls are recorded in a session-scoped execution repository, keyed by
-  function identity, arguments, and call position.
+- Marked function calls are recorded in a session-scoped execution repository,
+  keyed by function identity, arguments, and an ordinal among identical calls.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
 - An exception persists nothing: the interrupted call stays `STARTED` (retried
@@ -42,16 +42,29 @@ pip install glyff
 | `Serializer`          | Protocol for value serialization.                               |
 | `ArgsHasher`          | Protocol for argument hashing.                                  |
 
+`engrave` also takes an explicit identity —
+`@engrave(name="chat.reply", version=2)` — so recorded histories survive
+renames. *Planned:*
+[#40](https://github.com/nueruyu/glyff/issues/40); released versions derive the
+name from the function's `__qualname__`.
+
 ## Extending
 
-- For persistent storage, see [`glyff-file-store`](https://pypi.org/project/glyff-file-store/).
+- For persistent storage, see
+  [`glyff-sqlite`](https://pypi.org/project/glyff-sqlite/) (production) and
+  [`glyff-file-store`](https://pypi.org/project/glyff-file-store/) (debug).
 - For Pydantic-typed serialization, see [`glyff-pydantic`](https://pypi.org/project/glyff-pydantic/).
-- Custom backends should provide separate `ExecutionRepository` and
-  `TransactionProvider` objects, often through a small backend bundle.
+- Custom backends provide separate `ExecutionRepository` and
+  `TransactionProvider` objects, usually through a small backend bundle, and are
+  verified against the shared contract suite in `glyff.testing` (*planned:*
+  [#36](https://github.com/nueruyu/glyff/issues/36)). See
+  [the backends doc](https://github.com/nueruyu/glyff/blob/main/docs/backends.md).
 
 ## Status
 
-Early development. APIs may change before v1.0.
+Pre-1.0 — the API is unstable and will change. See the
+[documentation](https://github.com/nueruyu/glyff/tree/main/docs) for the
+guarantees and what is planned.
 
 ## License
 

@@ -24,9 +24,14 @@ This package depends on `glyff>=0.1.0` and `pydantic>=2.0`.
 Both work with arbitrary types supported by Pydantic v2: models, dataclasses,
 unions, generics, and standard library types.
 
+Argument hashes are part of an execution's identity, so they must stay stable
+across code changes — see
+[execution identity](https://github.com/nueruyu/glyff/blob/main/docs/execution-identity.md)
+for what the hasher may and may not see.
+
 ## Status
 
-Early development. APIs may change before v1.0.
+Pre-1.0 — the API is unstable and will change.
 
 ## License
 

@@ -70,8 +70,8 @@ the provided answer instead of pausing again.
 
 ## Behavior
 
-- Marked function calls are recorded in a session-scoped execution repository, keyed by
-  function identity, arguments, and call position.
+- Marked function calls are recorded in a session-scoped execution repository,
+  keyed by function identity, arguments, and an ordinal among identical calls.
 - Re-invoking the same completed call within the same session returns the
   recorded result instead of re-executing.
 - An exception persists nothing: the interrupted call stays `STARTED` (retried
@@ -80,17 +80,18 @@ the provided answer instead of pausing again.
 - To pause a session intentionally, raise an application-owned exception and
   catch it outside the `Session` block.
 
+Keys are content-addressed, not positional, so inserting, deleting, and
+reordering distinct calls leave existing keys intact. See
+**[Execution identity](./docs/execution-identity.md)** for the guarantees, the
+hazards, and how to choose engrave boundaries.
+
 ## Per-execution metadata
 
 Attach application data to the running call. Metadata is owned by the
-`Execution` aggregate: `ctx.metadata.set(...)` stages metadata into the
-currently active transaction, serialized with the session's serializer. During
-normal engraved execution, metadata set in the function body commits atomically
-with the execution's `COMPLETED` status and result.
-
-If completing the current execution fails, metadata staged through
-`ctx.metadata.set(...)` in that function body is rolled back with the completion
-write.
+`Execution` aggregate: `ctx.metadata.set(...)` stages it into the active
+transaction, serialized with the session's serializer, so metadata set in an
+engraved function body commits — or rolls back — together with that execution's
+`COMPLETED` status and result.
 
 ```python
 @glyff.engrave
@@ -104,58 +105,13 @@ async def step() -> str:
 Reads default to the current execution; pass `execution_id=` to read another
 call's metadata.
 
-## Pruning completed subtrees (userland)
+## Events and pruning
 
-Once a call completes, any resume returns its recorded result directly and the
-calls underneath are never replayed. Those descendant records are dead weight,
-but *when and whether* to delete them is a retention policy glyff does not ship.
-glyff knows only **what** is unreachable — a completed call's strict
-descendants; you decide the rest.
-
-The context execution repository exposes `descendants_of` and `delete_many` (in
-`ExecutionId` terms). Drive them from an `ExecutionCompleted` handler. The event
-fires *after* the completion is durably committed, so the handler opens its own
-transaction. Event handlers are best-effort post-transaction observers: handler
-exceptions are logged and do not affect the execution result or the original
-exception. Handlers run sequentially in registration order; long-running work
-should be explicitly offloaded by the handler.
-
-```python
-from glyff import EventEmitter, EventHandler, ExecutionRepository, Session
-from glyff.events import ExecutionCompleted
-
-
-class PruneDescendants(EventHandler[ExecutionCompleted]):
-    def __init__(self, repository: ExecutionRepository):
-        self._repository = repository
-
-    async def handle(self, event: ExecutionCompleted) -> None:
-        async with event.context.get_transaction_scope():
-            descendants = await self._repository.descendants_of(event.execution_id)
-            if descendants:
-                await self._repository.delete_many(descendants)
-
-
-backend = glyff_file_store.JsonFileBackend(
-    base_dir=".sessions",
-    session_id=session_id,
-)
-session = Session(
-    id=session_id,
-    backend=backend,
-    serializer=serializer,
-    hasher=hasher,
-    event_emitter=EventEmitter([PruneDescendants(backend.repository)]),
-)
-```
-
-Replay and resume are unaffected — only unreachable records are removed. The
-handler fires at every completion, so a nested call is pruned as soon as it
-finishes, not when its top-level ancestor does.
-
-## Status
-
-Early development. APIs may change before v1.0.
+Sessions emit `ExecutionCompleted` and `ExecutionFailed` to handlers registered
+on the session. The reference use is pruning: a completed call's descendants are
+never replayed, and a handler can delete them. See **[Events](./docs/events.md)**
+for delivery semantics, the pruning handler, and projecting executions into your
+own database.
 
 ## Packages
 
@@ -172,6 +128,20 @@ pip install glyff-file-store
 pip install glyff-sqlite
 pip install glyff-pydantic
 ```
+
+## Documentation
+
+- **[Execution identity](./docs/execution-identity.md)** — how calls are keyed.
+- **[Events](./docs/events.md)** — delivery semantics, pruning, projections.
+- **[Backends](./docs/backends.md)** — the backend contract and writing your own.
+- **[Migration & versioning](./docs/migration.md)** — store stamps and in-flight
+  sessions.
+- **[Docs index](./docs/README.md)** — the map, with a suggested reading path.
+
+## Status
+
+Pre-1.0 — the API is unstable and will change. The
+[docs](./docs/README.md) mark what is planned and not yet released.
 
 ## License
 
