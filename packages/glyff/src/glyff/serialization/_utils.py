@@ -1,20 +1,13 @@
 """Canonicalize call arguments for identity, and serialize values for storage.
 
-Two separate paths that must not be confused. **Canonicalization** normalizes a
-call's arguments into the JSON data model so the result depends only on the
-argument values — it is one-way, deliberately lossy (it drops what identity does
-not depend on) and defers values with no value representation to a pluggable
-:class:`OpaquePolicy`. **Serialization** encodes results and metadata faithfully
-and raises on anything it cannot represent.
-
-Canonicalization is deliberately split from encoding: :func:`to_canonical`
-produces a canonical structure and :func:`encode_canonical` turns it into the
-bytes that get hashed *and* stored, so those two can never drift apart.
+Two paths that must not be confused. **Canonicalization** normalizes arguments
+into the JSON data model: one-way, deliberately lossy, and deferring values with
+no value representation to a pluggable :class:`OpaquePolicy`. **Serialization**
+encodes results and metadata faithfully and raises on what it cannot represent.
 """
 
 import dataclasses
 import functools
-import hashlib
 import inspect
 import json
 import math
@@ -25,9 +18,8 @@ from .._models import CanonicalValue
 from ..exceptions import UnserializableArgumentError
 from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
-# Namespaces an OpaquePolicy's return value so it cannot be confused with a native
-# encoding (a policy that returned the string "pkg.Cls" must not hash-equal a plain
-# "pkg.Cls" argument).
+# Namespaces a policy's output so an opaque value can never collide with a native
+# representation that happens to match it.
 _OPAQUE_TAG = "__glyff_opaque__"
 
 
@@ -57,7 +49,7 @@ class OpaquePolicy(ABC):
     """
 
     @abstractmethod
-    def hash(self, ctx: OpaqueContext) -> Any:
+    def represent(self, ctx: OpaqueContext) -> Any:
         """Return a JSON-encodable representation of ``ctx.value``, or raise to reject it."""
         ...
 
@@ -65,7 +57,7 @@ class OpaquePolicy(ABC):
 class RaiseOnOpaque(OpaquePolicy):
     """Default policy: reject opaque values so distinct instances never silently collide."""
 
-    def hash(self, ctx: OpaqueContext) -> Any:
+    def represent(self, ctx: OpaqueContext) -> Any:
         value = ctx.value
         raise UnserializableArgumentError(
             f"Cannot canonicalize opaque value of type '{type(value).__name__}': it "
@@ -83,7 +75,7 @@ class QualnameOpaque(OpaquePolicy):
     dependencies), since distinct instances then canonicalize identically.
     """
 
-    def hash(self, ctx: OpaqueContext) -> Any:
+    def represent(self, ctx: OpaqueContext) -> Any:
         return _qualified_name(type(ctx.value))
 
 
@@ -93,8 +85,8 @@ _DEFAULT_OPAQUE_POLICY: OpaquePolicy = RaiseOnOpaque()
 _Recurse: TypeAlias = Callable[[Any], "CanonicalValue"]
 
 
-def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
-    # Exclude fields the dataclass itself excludes from __hash__ (field(compare=False)).
+def _compared_fields(obj: Any) -> list[dataclasses.Field]:
+    # A field the dataclass excludes from equality never distinguished two calls.
     return [
         f
         for f in dataclasses.fields(obj)
@@ -103,13 +95,11 @@ def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
 
 
 def _canonical_key(key: Any) -> str:
-    # Coerce keys the way json renders them, but do it *here* rather than leaving it
-    # to the encoder: json orders by the original key, so {2: .., 10: ..} encoded as
-    # {"2": .., "10": ..} and re-encoding what you read back reordered it. Recorded
-    # arguments have to survive that round trip byte-for-byte, or a migration cannot
-    # recompute the key it rewrites.
+    # Stringify keys here rather than at encoding time, so the form stays stable
+    # across a JSON round trip. Subclasses render as their builtin does, as json's
+    # own encoder would.
     if isinstance(key, str):
-        return key
+        return str(key)
     if isinstance(key, bool):
         return "true" if key else "false"
     if key is None:
@@ -119,13 +109,27 @@ def _canonical_key(key: Any) -> str:
             return "NaN"
         if math.isinf(key):
             return "Infinity" if key > 0 else "-Infinity"
-        return repr(key)
+        return float.__repr__(key)
     if isinstance(key, int):
-        return repr(key)
+        return int.__repr__(key)
     raise UnserializableArgumentError(
         f"Dictionary keys must be str, int, float, bool or None, "
         f"not '{type(key).__name__}'."
     )
+
+
+def _canonical_mapping(obj: dict, recurse: _Recurse) -> dict[str, CanonicalValue]:
+    canonical: dict[str, CanonicalValue] = {}
+    for key, value in obj.items():
+        name = _canonical_key(key)
+        if name in canonical:
+            raise UnserializableArgumentError(
+                f"Two keys of this mapping canonicalize to {name!r}. Distinct "
+                "arguments must stay distinct, or the calls would collapse onto "
+                "one execution key."
+            )
+        canonical[name] = recurse(value)
+    return canonical
 
 
 def _sorted_canonical(values: Any, recurse: _Recurse) -> list:
@@ -150,9 +154,8 @@ def to_canonical(
     subclass canonicalizer stays in control of the whole walk (see
     :class:`~glyff.serialization.JsonArgsCanonicalizer`).
 
-    The mapping is deliberately one-way: bytes become hex, sets become sorted lists,
-    and a dataclass contributes only the fields it compares by. What is dropped is
-    what identity never depended on.
+    The mapping is deliberately one-way: what it drops is what identity never
+    depended on.
     """
     if recurse is None:
         recurse = functools.partial(to_canonical, policy=policy)
@@ -167,14 +170,12 @@ def to_canonical(
         return {
             "__partial__": recurse(obj.func),
             "args": [recurse(a) for a in obj.args],
-            "keywords": {
-                _canonical_key(k): recurse(v) for k, v in obj.keywords.items()
-            },
+            "keywords": _canonical_mapping(obj.keywords, recurse),
         }
     if dataclasses.is_dataclass(obj):
-        return {f.name: recurse(getattr(obj, f.name)) for f in _hashed_fields(obj)}
+        return {f.name: recurse(getattr(obj, f.name)) for f in _compared_fields(obj)}
     if isinstance(obj, dict):
-        return {_canonical_key(k): recurse(v) for k, v in obj.items()}
+        return _canonical_mapping(obj, recurse)
     if isinstance(obj, (list, tuple)):
         return [recurse(v) for v in obj]
     if isinstance(obj, (set, frozenset)):
@@ -183,9 +184,7 @@ def to_canonical(
         return obj.hex()
     if callable(obj) and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
-    # Tag the policy's output so an opaque value can never collide with a native
-    # representation that happens to match it.
-    return {_OPAQUE_TAG: recurse(policy.hash(OpaqueContext(value=obj)))}
+    return {_OPAQUE_TAG: recurse(policy.represent(OpaqueContext(value=obj)))}
 
 
 def _reject(obj: Any) -> Any:
@@ -196,18 +195,8 @@ def _reject(obj: Any) -> Any:
 
 
 def encode_canonical(value: CanonicalValue) -> bytes:
-    """Encode a canonical structure into the bytes that are hashed and stored.
-
-    The single encoder for argument identity: the recorded ``args`` are exactly
-    these bytes and ``args_hash`` is exactly their digest, so a migration that
-    rewrites arguments recomputes the key by calling this and :func:`args_digest`.
-    """
+    """The single encoder for argument identity. See :attr:`~glyff.Execution.args`."""
     return stable_json_dumps(value, default=_reject).encode(DEFAULT_ENCODING)
-
-
-def args_digest(data: bytes) -> str:
-    """The execution key's ``args_hash``: a digest over canonical argument bytes."""
-    return hashlib.sha256(data).hexdigest()
 
 
 def to_serializable(obj: Any) -> Any:
@@ -227,11 +216,7 @@ def stable_json_dumps(
     indent: int | str | None = None,
     ensure_ascii: bool = False,
 ) -> str:
-    """Creates a stable JSON string from arbitrary data.
-
-    Non-ASCII characters are emitted as themselves: glyff writes readable JSON
-    everywhere, and recorded arguments are read by whoever writes a migration.
-    """
+    """Creates a stable JSON string from arbitrary data."""
     try:
         return json.dumps(
             data,

@@ -3,7 +3,8 @@ import inspect
 import json
 
 from glyff import ArgsCanonicalizer, ExecutionId, engrave
-from glyff.serialization._utils import args_digest, encode_canonical
+from glyff._models import args_digest
+from glyff.serialization._utils import encode_canonical
 from glyff.tests.types import BackendFactory, make_session
 
 
@@ -32,8 +33,6 @@ async def test_recorded_args_are_the_digest_preimage(
 
     execution = await backend.repository.get(_expected_id(canonicalizer, "world"))
     assert execution is not None
-    # The invariant a migration relies on: an execution's key is recomputable from
-    # the bytes it stores, without re-running the canonicalizer over live objects.
     assert execution.id.args_hash == hashlib.sha256(execution.args.data).hexdigest()
     # Defaults participate, so the recorded form shows what the call was keyed by.
     assert json.loads(execution.args.data) == {"name": "world", "times": 1}

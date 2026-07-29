@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TypeAlias
@@ -9,6 +10,11 @@ from typing import TypeAlias
 CanonicalValue: TypeAlias = (
     "str | int | float | bool | None | list[CanonicalValue] | dict[str, CanonicalValue]"
 )
+
+
+def args_digest(data: bytes) -> str:
+    """An execution key's ``args_hash``: the digest over its canonical arguments."""
+    return hashlib.sha256(data).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -67,12 +73,22 @@ class Execution:
     args: SerializedValue
     """The canonical arguments this call was keyed by.
 
-    Byte-exactly the digest preimage: ``id.args_hash == args_digest(args.data)``.
-    Stores must round-trip these bytes untouched — re-encoding would break the
-    invariant a migration relies on to recompute keys.
+    Invariant, enforced on construction and relied on by migration:
+
+        id.args_hash == args_digest(args.data)
+
+    Stores must therefore round-trip these bytes untouched; re-encoding them would
+    break the key.
     """
     result: SerializedValue | None = None
     metadata: dict[str, Metadata] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.id.args_hash != args_digest(self.args.data):
+            raise ValueError(
+                f"Execution {self.id} does not match its recorded arguments: "
+                "args_hash must be the digest of args."
+            )
 
     @classmethod
     def start(cls, execution_id: ExecutionId, args: SerializedValue) -> "Execution":

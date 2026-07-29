@@ -58,37 +58,43 @@ def canonicalizer() -> JsonArgsCanonicalizer:
     return JsonArgsCanonicalizer()
 
 
-def test_hash_args_positional_vs_keyword_are_equal(
+def test_canonicalize_args_positional_vs_keyword_are_equal(
     canonicalizer: JsonArgsCanonicalizer,
 ):
     sig = inspect.signature(sample_func)
-    h1 = canonicalizer.canonicalize_args(sample_func, sig, (1,), {"b": "test"})
-    h2 = canonicalizer.canonicalize_args(sample_func, sig, (), {"a": 1, "b": "test"})
-    assert h1 == h2
+    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {"b": "test"})
+    second = canonicalizer.canonicalize_args(
+        sample_func, sig, (), {"a": 1, "b": "test"}
+    )
+    assert first == second
 
 
-def test_hash_args_defaults_are_included(canonicalizer: JsonArgsCanonicalizer):
+def test_canonicalize_args_defaults_are_included(canonicalizer: JsonArgsCanonicalizer):
     sig = inspect.signature(sample_func)
-    h1 = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
-    h2 = canonicalizer.canonicalize_args(sample_func, sig, (), {"a": 1, "b": "default"})
-    assert h1 == h2
+    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
+    second = canonicalizer.canonicalize_args(
+        sample_func, sig, (), {"a": 1, "b": "default"}
+    )
+    assert first == second
 
 
-def test_hash_args_different_values_differ(canonicalizer: JsonArgsCanonicalizer):
+def test_canonicalize_args_different_values_differ(
+    canonicalizer: JsonArgsCanonicalizer,
+):
     sig = inspect.signature(sample_func)
-    h1 = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
-    h2 = canonicalizer.canonicalize_args(sample_func, sig, (2,), {})
-    assert h1 != h2
+    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
+    second = canonicalizer.canonicalize_args(sample_func, sig, (2,), {})
+    assert first != second
 
 
-def test_hash_args_includes_var_positional_and_keyword(
+def test_canonicalize_args_includes_var_positional_and_keyword(
     canonicalizer: JsonArgsCanonicalizer,
 ):
     def func(a, *args, **kwargs):
         pass
 
     sig = inspect.signature(func)
-    # *args and **kwargs must affect the hash, otherwise distinct calls collide.
+    # *args and **kwargs must affect identity, otherwise distinct calls collide.
     assert canonicalizer.canonicalize_args(
         func, sig, (1, 2), {}
     ) != canonicalizer.canonicalize_args(func, sig, (1, 3), {})
@@ -100,11 +106,11 @@ def test_hash_args_includes_var_positional_and_keyword(
     ) == canonicalizer.canonicalize_args(func, sig, (1, 2), {"x": 3})
 
 
-def test_hash_args_is_deterministic(canonicalizer: JsonArgsCanonicalizer):
+def test_canonicalize_args_is_deterministic(canonicalizer: JsonArgsCanonicalizer):
     sig = inspect.signature(sample_func)
-    h1 = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
-    h2 = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
-    assert h1 == h2
+    first = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
+    second = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
+    assert first == second
 
 
 async def test_serialize_deserialize_primitives(serializer: JsonSerializer):
@@ -126,19 +132,19 @@ async def test_serialize_non_serializable_raises_custom_error(
         await serializer.serialize(object(), object)
 
 
-def test_hash_opaque_arg_raises_by_default(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_opaque_arg_raises_by_default(canonicalizer: JsonArgsCanonicalizer):
     def func_with_obj(a: object):
         pass
 
     sig = inspect.signature(func_with_obj)
 
     # By default an opaque value (no value representation) is rejected rather than
-    # hashed by class name, so distinct instances can never silently collide.
+    # identified by class name, so distinct instances can never silently collide.
     with pytest.raises(UnserializableArgumentError):
         canonicalizer.canonicalize_args(func_with_obj, sig, (MyPlainClass("id1"),), {})
 
 
-def test_hash_opaque_arg_by_class_with_qualname_policy():
+def test_canonical_opaque_arg_by_class_with_qualname_policy():
     canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
 
     def func_with_obj(a: object):
@@ -155,12 +161,14 @@ def test_hash_opaque_arg_by_class_with_qualname_policy():
     different = canonicalizer.canonicalize_args(func_with_obj, sig, (object(),), {})
 
     # With the opt-in qualname policy, opaque values are identified by their class:
-    # instances of the same class collapse to one hash while a different class differs.
+    # instances of the same class collapse to one form while a different class differs.
     assert first == second
     assert first != different
 
 
-def test_hash_nested_dataclass_and_type_values(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_nested_dataclass_and_type_values(
+    canonicalizer: JsonArgsCanonicalizer,
+):
     @dataclasses.dataclass(frozen=True)
     class Container:
         data: MyDataClass
@@ -186,7 +194,9 @@ def test_hash_nested_dataclass_and_type_values(canonicalizer: JsonArgsCanonicali
     assert first == second
 
 
-def test_hash_callable_values_by_qualified_name(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_callable_values_by_qualified_name(
+    canonicalizer: JsonArgsCanonicalizer,
+):
     def func(callback):
         pass
 
@@ -199,7 +209,7 @@ def test_hash_callable_values_by_qualified_name(canonicalizer: JsonArgsCanonical
     assert first != different
 
 
-def test_hash_partial_by_components(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_partial_by_components(canonicalizer: JsonArgsCanonicalizer):
     import functools
 
     def func(callback):
@@ -211,7 +221,9 @@ def test_hash_partial_by_components(canonicalizer: JsonArgsCanonicalizer):
         return a + b
 
     # partials hash by their func/args/keywords, not all collapsing to "functools.partial".
-    h1 = canonicalizer.canonicalize_args(func, sig, (functools.partial(base, 1),), {})
+    first = canonicalizer.canonicalize_args(
+        func, sig, (functools.partial(base, 1),), {}
+    )
     h1_again = canonicalizer.canonicalize_args(
         func, sig, (functools.partial(base, 1),), {}
     )
@@ -225,10 +237,10 @@ def test_hash_partial_by_components(canonicalizer: JsonArgsCanonicalizer):
         func, sig, (functools.partial(helper_func),), {}
     )
 
-    assert h1 == h1_again
-    assert h1 != diff_arg
-    assert h1 != diff_kw
-    assert h1 != diff_func
+    assert first == h1_again
+    assert first != diff_arg
+    assert first != diff_kw
+    assert first != diff_func
 
 
 def test_method_hash_differs_for_different_dataclass_instances(
@@ -239,10 +251,10 @@ def test_method_hash_differs_for_different_dataclass_instances(
     func = MyDataClass.method
     sig = inspect.signature(func)
 
-    h1 = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
-    h2 = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
+    first = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
+    second = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
 
-    assert h1 != h2
+    assert first != second
 
 
 def test_method_hash_is_same_for_identical_dataclass_instances(
@@ -253,23 +265,23 @@ def test_method_hash_is_same_for_identical_dataclass_instances(
     func = MyDataClass.method
     sig = inspect.signature(func)
 
-    h1 = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
-    h2 = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
+    first = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
+    second = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
 
-    assert h1 == h2
+    assert first == second
 
 
 def test_class_method_hash_is_stable(canonicalizer: JsonArgsCanonicalizer):
     func = AnotherClass.class_method.__func__
     sig = inspect.signature(func)
 
-    h1 = canonicalizer.canonicalize_args(func, sig, (AnotherClass, 10), {})
-    h2 = canonicalizer.canonicalize_args(func, sig, (AnotherClass, 10), {})
+    first = canonicalizer.canonicalize_args(func, sig, (AnotherClass, 10), {})
+    second = canonicalizer.canonicalize_args(func, sig, (AnotherClass, 10), {})
 
-    assert h1 == h2
+    assert first == second
 
 
-def test_hash_plain_self_raises_by_default(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_plain_self_raises_by_default(canonicalizer: JsonArgsCanonicalizer):
     func = MyPlainClass.method
     sig = inspect.signature(func)
 
@@ -279,22 +291,22 @@ def test_hash_plain_self_raises_by_default(canonicalizer: JsonArgsCanonicalizer)
         canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 10), {})
 
 
-def test_hash_plain_self_by_class_with_qualname_policy():
+def test_canonical_plain_self_by_class_with_qualname_policy():
     canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
     func = MyPlainClass.method
     sig = inspect.signature(func)
 
     # Opt in to qualname hashing to treat the receiver as a stateless service: calls on
     # different instances of the same class collapse while arguments still differentiate.
-    h1 = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 10), {})
-    h2 = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id2"), 10), {})
-    h3 = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 20), {})
+    first = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 10), {})
+    second = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id2"), 10), {})
+    other = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 20), {})
 
-    assert h1 == h2
-    assert h1 != h3
+    assert first == second
+    assert first != other
 
 
-def test_hash_dataclass_with_nested_plain_service():
+def test_canonical_dataclass_with_nested_plain_service():
     """A dataclass (state matters) holding plain, non-deepcopyable services.
 
     Under the default policy a nested opaque member is rejected; with the qualname
@@ -326,12 +338,12 @@ def test_hash_dataclass_with_nested_plain_service():
         JsonArgsCanonicalizer().canonicalize_args(func, sig, (a1, "hi"), {})
 
     canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
-    h1 = canonicalizer.canonicalize_args(func, sig, (a1, "hi"), {})
-    h2 = canonicalizer.canonicalize_args(func, sig, (a2, "hi"), {})
-    h3 = canonicalizer.canonicalize_args(func, sig, (a3, "hi"), {})
+    first = canonicalizer.canonicalize_args(func, sig, (a1, "hi"), {})
+    second = canonicalizer.canonicalize_args(func, sig, (a2, "hi"), {})
+    other = canonicalizer.canonicalize_args(func, sig, (a3, "hi"), {})
 
-    assert h1 == h2
-    assert h1 != h3
+    assert first == second
+    assert first != other
 
 
 def test_custom_opaque_policy_receives_value_in_context():
@@ -343,7 +355,7 @@ def test_custom_opaque_policy_receives_value_in_context():
     seen: list = []
 
     class RecordingPolicy(OpaquePolicy):
-        def hash(self, ctx: OpaqueContext):
+        def represent(self, ctx: OpaqueContext):
             seen.append(ctx.value)
             return "recorded"
 
@@ -360,7 +372,7 @@ def test_custom_opaque_policy_receives_value_in_context():
 
 
 def test_opaque_value_does_not_collide_with_native_representation():
-    """An opaque value must not hash-equal a native value sharing the policy's output.
+    """An opaque value must not equal a native value sharing the policy's output.
 
     QualnameOpaque renders MyPlainClass as its qualified name; a literal string equal
     to that qualname must still hash differently, since the framework tags opaque output.
@@ -386,7 +398,7 @@ def test_custom_opaque_policy_result_differentiates_hash():
             self.token = token
 
     class ByToken(OpaquePolicy):
-        def hash(self, ctx: OpaqueContext):
+        def represent(self, ctx: OpaqueContext):
             return ctx.value.token
 
     canonicalizer = JsonArgsCanonicalizer(opaque_policy=ByToken())
@@ -422,9 +434,9 @@ def test_opaque_policy_applies_to_nested_dataclass_member():
         JsonArgsCanonicalizer().canonicalize_args(func, sig, (Holder(Svc()),), {})
 
     canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
-    h1 = canonicalizer.canonicalize_args(func, sig, (Holder(Svc()),), {})
-    h2 = canonicalizer.canonicalize_args(func, sig, (Holder(Svc()),), {})
-    assert h1 == h2
+    first = canonicalizer.canonicalize_args(func, sig, (Holder(Svc()),), {})
+    second = canonicalizer.canonicalize_args(func, sig, (Holder(Svc()),), {})
+    assert first == second
 
 
 def test_opaque_policy_applies_to_set_members():
@@ -453,7 +465,7 @@ def test_falsy_custom_opaque_policy_is_respected():
         def __bool__(self):
             return False
 
-        def hash(self, ctx: OpaqueContext):
+        def represent(self, ctx: OpaqueContext):
             return "from-falsy"
 
     class Svc:
@@ -469,7 +481,7 @@ def test_falsy_custom_opaque_policy_is_respected():
     assert canonicalizer.canonicalize_args(func, sig, (Svc(),), {}) is not None
 
 
-def test_hash_set_is_by_content_and_order_independent(
+def test_canonical_set_is_by_content_and_order_independent(
     canonicalizer: JsonArgsCanonicalizer,
 ):
     def func(a: set):
@@ -487,7 +499,9 @@ def test_hash_set_is_by_content_and_order_independent(
     assert h_ab != h_cd
 
 
-def test_hash_frozenset_matches_equivalent_set(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_frozenset_matches_equivalent_set(
+    canonicalizer: JsonArgsCanonicalizer,
+):
     def func(a: object):
         pass
 
@@ -499,17 +513,17 @@ def test_hash_frozenset_matches_equivalent_set(canonicalizer: JsonArgsCanonicali
     assert h_set == h_frozen
 
 
-def test_hash_bytes_is_by_content(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_bytes_is_by_content(canonicalizer: JsonArgsCanonicalizer):
     def func(a: bytes):
         pass
 
     sig = inspect.signature(func)
-    h1 = canonicalizer.canonicalize_args(func, sig, (b"abc",), {})
-    h2 = canonicalizer.canonicalize_args(func, sig, (b"abc",), {})
-    h3 = canonicalizer.canonicalize_args(func, sig, (b"xyz",), {})
+    first = canonicalizer.canonicalize_args(func, sig, (b"abc",), {})
+    second = canonicalizer.canonicalize_args(func, sig, (b"abc",), {})
+    other = canonicalizer.canonicalize_args(func, sig, (b"xyz",), {})
 
-    assert h1 == h2
-    assert h1 != h3
+    assert first == second
+    assert first != other
 
 
 @dataclasses.dataclass
@@ -523,7 +537,7 @@ class AgentWithDep:
         pass
 
 
-def test_hash_ignores_compare_false_dataclass_fields(
+def test_canonical_ignores_compare_false_dataclass_fields(
     canonicalizer: JsonArgsCanonicalizer,
 ):
     func = AgentWithDep.run
@@ -531,18 +545,18 @@ def test_hash_ignores_compare_false_dataclass_fields(
 
     # `counter` is field(compare=False), so it is excluded from the hash; only `name`
     # and the call arguments differentiate.
-    h1 = canonicalizer.canonicalize_args(
+    first = canonicalizer.canonicalize_args(
         func, sig, (AgentWithDep("a", counter=1), "q"), {}
     )
-    h2 = canonicalizer.canonicalize_args(
+    second = canonicalizer.canonicalize_args(
         func, sig, (AgentWithDep("a", counter=99), "q"), {}
     )
-    h3 = canonicalizer.canonicalize_args(
+    other = canonicalizer.canonicalize_args(
         func, sig, (AgentWithDep("b", counter=1), "q"), {}
     )
 
-    assert h1 == h2
-    assert h1 != h3
+    assert first == second
+    assert first != other
 
 
 async def test_serialize_includes_compare_false_dataclass_fields(

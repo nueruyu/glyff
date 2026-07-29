@@ -87,11 +87,10 @@ model; glyff encodes that once, and those bytes are both digested into
 id.args_hash == sha256(<the bytes stored as its arguments>)
 ```
 
-That invariant is what lets a
+`Execution` enforces this on construction, and stores keep the bytes verbatim —
+anything that re-encoded them would break the key. It is what lets a
 [migration](./migration.md#in-flight-sessions-across-code-changes) rewrite an
-argument and recompute the key from the record alone, without re-running the
-canonicalizer over live Python objects. Stores keep the bytes verbatim; anything
-that re-encoded them would break the key.
+argument and recompute the key from the record alone.
 
 Canonicalizing is **not** serializing. It is one-way and deliberately lossy,
 keeping only what identity depends on:
@@ -104,7 +103,7 @@ keeping only what identity depends on:
 | dataclass | only the fields it compares by — a `field(compare=False)` never distinguished two calls |
 | type, named function | qualified name |
 | `functools.partial` | its function and bound arguments |
-| mapping key | coerced to a string, so reading the record back and re-encoding it reproduces the same bytes |
+| mapping key | coerced to a string; two keys that would collide are rejected rather than collapsed |
 
 A value with no value representation raises rather than being approximated.
 
@@ -117,7 +116,7 @@ what counts as opaque in your application.
 | Policy | Behavior |
 | --- | --- |
 | `RaiseOnOpaque` (default) | Rejects the value with `UnserializableArgumentError`, so distinct instances never silently collide. |
-| `QualnameOpaque` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one hash. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
+| `QualnameOpaque` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
 
 A policy receives an `OpaqueContext` rather than the bare value, so the signature
 can grow without breaking implementations. Policy return values are namespaced,

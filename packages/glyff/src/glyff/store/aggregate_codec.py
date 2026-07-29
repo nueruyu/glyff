@@ -78,9 +78,8 @@ def _json_bytes(value: object) -> bytes:
 
 
 def _pack_args(args: SerializedValue) -> str:
-    # Canonical arguments are stored as an opaque string, not as an embedded JSON
-    # value: `id.args_hash` is the digest of exactly these bytes, and decoding then
-    # re-encoding would be free to produce different ones.
+    # An opaque string, not an embedded JSON value: preserve the exact digest
+    # preimage (see Execution.args).
     try:
         return args.data.decode(DEFAULT_ENCODING)
     except UnicodeDecodeError as exc:

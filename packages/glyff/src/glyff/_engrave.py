@@ -4,9 +4,9 @@ from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
 from ._executor import execute
-from ._models import ExecutionId, SerializedValue
+from ._models import ExecutionId, SerializedValue, args_digest
 from .exceptions import MissingTypeHintError, TypeHintResolutionError
-from .serialization._utils import args_digest, encode_canonical
+from .serialization._utils import encode_canonical
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -41,11 +41,7 @@ async def _resolve_call_identity(
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> tuple[ExecutionId, SerializedValue]:
-    """Builds the deterministic ExecutionId and canonical arguments for one call.
-
-    Both come from the same bytes: the key's ``args_hash`` is their digest and the
-    execution records them verbatim, so a migration can recompute one from the other.
-    """
+    """Return the execution id for one call and the canonical arguments it is keyed by."""
     parent_id = ctx.current_execution_id
     canonical = ctx.canonicalizer.canonicalize_args(func, sig, args, kwargs)
     data = encode_canonical(canonical)

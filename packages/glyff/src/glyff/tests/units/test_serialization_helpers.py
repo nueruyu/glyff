@@ -7,9 +7,9 @@ import pytest
 from glyff import CanonicalValue
 from glyff.exceptions import UnserializableArgumentError
 from glyff.serialization import QualnameOpaque
+from glyff._models import args_digest
 from glyff.serialization._utils import (
     _sorted_canonical,
-    args_digest,
     encode_canonical,
     stable_json_dumps,
     to_canonical,
@@ -30,8 +30,6 @@ def test_sorted_canonical_is_stable_for_partial_order_elements():
 
 
 def test_stable_json_dumps_defaults_to_compact_readable_json():
-    # Non-ASCII is emitted as itself: recorded arguments are read by whoever writes
-    # a migration, and every store already wrote JSON this way.
     assert stable_json_dumps({"message": "こんにちは"}) == '{"message":"こんにちは"}'
 
 
@@ -72,8 +70,6 @@ def test_canonical_keeps_only_compared_dataclass_fields():
         kept: int
         ignored: int = dataclasses.field(default=0, compare=False)
 
-    # A field the dataclass excludes from equality never distinguished two calls,
-    # so it is not part of the canonical form either.
     assert canonical(D(kept=1, ignored=99)) == {"kept": 1}
 
 
@@ -97,11 +93,27 @@ def test_canonical_decomposes_partials():
 
 
 def test_canonical_coerces_non_string_mapping_keys():
-    # Keys are coerced here rather than by the encoder, so reading the encoded form
-    # back and re-encoding it reproduces the same bytes (json orders by the original
-    # key, which would put "2" before "10" only until the first round trip).
+    # Coerced here, not by the encoder, so a JSON round trip reproduces the bytes.
     assert canonical({2: "a", 10: "b"}) == {"2": "a", "10": "b"}
     assert encode_canonical(canonical({2: "a", 10: "b"})) == b'{"10":"b","2":"a"}'
+
+
+def test_canonical_rejects_keys_that_collide_once_stringified():
+    # 1 and "1" would collapse into one entry, silently keying two different calls
+    # the same way.
+    with pytest.raises(UnserializableArgumentError, match="canonicalize to"):
+        canonical({1: "integer", "1": "string"})
+
+    with pytest.raises(UnserializableArgumentError, match="canonicalize to"):
+        canonical({True: "boolean", "true": "string"})
+
+
+def test_canonical_renders_int_subclass_keys_as_their_builtin():
+    class Port(int):
+        def __repr__(self) -> str:
+            return f"Port({int(self)})"
+
+    assert canonical({Port(8080): "x"}) == {"8080": "x"}
 
 
 def test_canonical_rejects_unrepresentable_mapping_keys():
@@ -122,8 +134,6 @@ def test_canonical_tags_policy_output_so_it_cannot_collide():
         pass
 
     tagged = canonical(Service(), policy=QualnameOpaque())
-    # The policy's output is namespaced, so an opaque value can never match a plain
-    # string argument that happens to be the same qualified name.
     assert tagged != canonical(f"{__name__}.test_canonical_tags_policy_output.Service")
     assert list(tagged) == ["__glyff_opaque__"]  # type: ignore[arg-type]
 
@@ -147,7 +157,5 @@ def test_encode_canonical_rejects_values_outside_the_json_data_model():
 
 
 def test_args_digest_is_sha256_of_the_encoded_bytes():
-    # The invariant every recorded execution carries: the key's args_hash is the
-    # digest of exactly the bytes stored as its arguments.
     data = encode_canonical({"a": 1})
     assert args_digest(data) == hashlib.sha256(data).hexdigest()

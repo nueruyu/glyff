@@ -45,8 +45,8 @@ async def test_reset_for_call_restarts_child_sequence():
 
 async def test_reset_does_not_affect_other_parents():
     s = Sequencer()
-    p1 = ExecutionId(None, "p1", 0, "h1")
-    p2 = ExecutionId(None, "p2", 0, "h2")
+    p1 = ExecutionId(None, "p1", 0, "first")
+    p2 = ExecutionId(None, "p2", 0, "second")
     await s.next(p1, "child", _H)
     await s.next(p2, "child", _H)
 

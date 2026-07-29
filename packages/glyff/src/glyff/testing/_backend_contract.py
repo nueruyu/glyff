@@ -21,6 +21,7 @@ from glyff import (
     TransactionProvider,
     TransactionScope,
 )
+from glyff._models import args_digest
 from glyff.exceptions import SerializationError
 
 
@@ -37,22 +38,19 @@ def eid(
     *,
     parent: ExecutionId | None = None,
     sequence: int = 0,
-    args_hash: str = "h",
+    args: object = None,
 ) -> ExecutionId:
+    """An execution id keyed by ``args``, which :func:`canonical_args` records."""
     return ExecutionId(
         parent_id=parent,
         name=name,
         sequence=sequence,
-        args_hash=args_hash,
+        args_hash=args_digest(canonical_args(args).data),
     )
 
 
 def canonical_args(raw: object = None) -> SerializedValue:
-    """Canonical arguments for a test execution.
-
-    A backend must round-trip these bytes untouched: an execution's ``args_hash`` is
-    their digest, so re-encoding them would break the key.
-    """
+    """The canonical arguments an id built by :func:`eid` is keyed by."""
     return value({} if raw is None else raw)
 
 
@@ -106,23 +104,22 @@ class ExecutionBackendContract:
 
     async def test_args_roundtrip_byte_for_byte(self, backend_factory: BackendFactory):
         backend = backend_factory("args-bytes")
-        execution_id = eid("task")
-        args = canonical_args({"q": "こんにちは", "n": 1})
+        raw = {"q": "こんにちは", "n": 1}
+        execution_id = eid("task", args=raw)
+        args = canonical_args(raw)
 
         await save_execution(backend, Execution.start(execution_id, args))
 
         loaded = await backend.repository.get(execution_id)
         assert loaded is not None
-        # Not merely equal as JSON: an execution's args_hash is the digest of exactly
-        # these bytes, so a store that re-encoded them would break the key. Non-ASCII
-        # is the case that catches a store encoding with different settings.
+        # Byte equality, not JSON equality: non-ASCII catches a store that re-encodes.
         assert loaded.args.data == args.data
 
     async def test_completed_execution_keeps_its_args(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("args-completed")
-        execution_id = eid("task")
+        execution_id = eid("task", args={"a": 1})
         args = canonical_args({"a": 1})
         execution = Execution.start(execution_id, args)
         execution.complete(value("result"))
@@ -321,12 +318,12 @@ class ExecutionBackendContract:
         # Identical (name, sequence, args_hash) frame under different parents
         # must remain independent records (the full-path key scheme guarantees
         # this; a flat key scheme would collide).
-        leaf1 = eid("leaf", parent=p1, args_hash="same")
-        leaf2 = eid("leaf", parent=p2, args_hash="same")
+        leaf1 = eid("leaf", parent=p1, args="same")
+        leaf2 = eid("leaf", parent=p2, args="same")
 
-        first = Execution.start(leaf1, canonical_args())
+        first = Execution.start(leaf1, canonical_args("same"))
         first.complete(value("one"))
-        second = Execution.start(leaf2, canonical_args())
+        second = Execution.start(leaf2, canonical_args("same"))
         second.complete(value("two"))
         async with TransactionScope(backend.transaction_provider):
             await backend.repository.save(first)

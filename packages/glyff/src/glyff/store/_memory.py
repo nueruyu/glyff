@@ -84,6 +84,7 @@ class MemoryExecutionRepository(ExecutionRepository):
             return None
 
         args_data = await self._client.read(self._id_to_key(execution_id, "args"))
+        assert isinstance(args_data, bytes)
         result_data = await self._client.read(self._id_to_key(execution_id, "result"))
         raw_metadata = await self._client.read(
             self._id_to_key(execution_id, "metadata")
@@ -98,7 +99,7 @@ class MemoryExecutionRepository(ExecutionRepository):
         return Execution(
             id=execution_id,
             status=status,
-            args=SerializedValue(args_data if isinstance(args_data, bytes) else b""),
+            args=SerializedValue(args_data),
             result=SerializedValue(result_data)
             if isinstance(result_data, bytes)
             else None,

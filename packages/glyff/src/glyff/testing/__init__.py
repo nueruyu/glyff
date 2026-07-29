@@ -27,6 +27,10 @@ from ._backend_contract import (
     DurableBackendContract,
     ExecutionBackendContract,
     TextBackendContract,
+    canonical_args,
+    eid,
+    save_execution,
+    value,
 )
 from ._pruning import PruningEventHandler
 
@@ -36,4 +40,8 @@ __all__ = [
     "ExecutionBackendContract",
     "TextBackendContract",
     "PruningEventHandler",
+    "canonical_args",
+    "eid",
+    "save_execution",
+    "value",
 ]

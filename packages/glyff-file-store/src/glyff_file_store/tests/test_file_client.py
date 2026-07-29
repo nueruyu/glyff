@@ -2,7 +2,8 @@ import os
 from pathlib import Path
 
 import pytest
-from glyff import Execution, ExecutionId, ExecutionStatus, SerializedValue
+from glyff import Execution, ExecutionStatus, SerializedValue
+from glyff.testing import canonical_args, eid
 
 from glyff_file_store import FileExecutionRepository, FileTransactionProvider
 from glyff_file_store._file_client import FileClient
@@ -548,11 +549,11 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     repository = FileExecutionRepository(client)
     transaction_provider = FileTransactionProvider(client)
 
-    parent = ExecutionId(parent_id=None, name="parent", sequence=0, args_hash="p")
-    child = ExecutionId(parent_id=parent, name="child", sequence=0, args_hash="c")
+    parent = eid("parent")
+    child = eid("child", parent=parent)
 
     parent_tx = await transaction_provider.begin_transaction()
-    await repository.save(Execution.start(parent, SerializedValue(b"{}")))
+    await repository.save(Execution.start(parent, canonical_args()))
 
     def parent_meta(data: bytes | None) -> bytes | None:
         return b'{"state":"parent"}'
@@ -560,7 +561,7 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     client.stage_update("metadata/parent.json", parent_meta)
 
     child_tx = await transaction_provider.begin_transaction()
-    child_execution = Execution.start(child, SerializedValue(b"{}"))
+    child_execution = Execution.start(child, canonical_args())
     child_execution.complete(SerializedValue(await serializer.serialize("child", str)))
     await repository.save(child_execution)
     await child_tx.commit()

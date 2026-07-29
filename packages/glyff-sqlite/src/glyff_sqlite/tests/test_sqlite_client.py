@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from glyff import Execution, ExecutionId, SerializedValue, TransactionScope
+from glyff import Execution, SerializedValue, TransactionScope
+from glyff.store.utils import execution_id_to_path
+from glyff.testing import canonical_args, eid
 from glyff_sqlite import SQLiteBackend
 from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
 
@@ -78,13 +80,8 @@ async def test_sqlite_backend_stores_execution_columns_as_readable_json(
 ):
     db = tmp_path / "readable.sqlite3"
     backend = SQLiteBackend(db)
-    execution_id = ExecutionId(
-        parent_id=None,
-        name="task",
-        sequence=0,
-        args_hash="hash",
-    )
-    execution = Execution.start(execution_id, SerializedValue(b"{}"))
+    execution_id = eid("task")
+    execution = Execution.start(execution_id, canonical_args())
     execution.complete(SerializedValue(b'{"answer":42}'))
     execution.set_metadata("trace", SerializedValue(b'{"step":1}'))
 
@@ -94,7 +91,7 @@ async def test_sqlite_backend_stores_execution_columns_as_readable_json(
     client = SQLiteClient(db)
     rows = await client.read_sql(
         "SELECT status, result, metadata FROM glyff_executions WHERE path = ?",
-        "task#0:hash",
+        execution_id_to_path(execution_id),
     )
 
     assert len(rows) == 1

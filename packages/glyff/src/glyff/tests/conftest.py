@@ -10,6 +10,7 @@ from glyff.serialization import (
     JsonSerializer,
 )
 from glyff.store import MemoryBackend
+from glyff.testing import eid
 from glyff.store._memory_client import MemoryClient
 from glyff.tests.stubs.store import StubBackend
 from glyff.tests.types import BackendFactory
@@ -17,19 +18,12 @@ from glyff.tests.types import BackendFactory
 
 @pytest.fixture
 def base_execution_id() -> ExecutionId:
-    return ExecutionId(
-        parent_id=None, name="test_func", sequence=0, args_hash="abcde123"
-    )
+    return eid("test_func")
 
 
 @pytest.fixture
 def nested_execution_id(base_execution_id: ExecutionId) -> ExecutionId:
-    return ExecutionId(
-        parent_id=base_execution_id,
-        name="nested_func",
-        sequence=0,
-        args_hash="fghij456",
-    )
+    return eid("nested_func", parent=base_execution_id)
 
 
 @pytest.fixture
