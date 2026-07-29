@@ -17,7 +17,7 @@ whose code generation has changed — it does not rewrite your in-flight session
 Store formats carry a version stamp. The SQLite backend records it in a
 `<table_prefix>_meta` table (alongside `<table_prefix>_executions`, default
 prefix `glyff`); the JSON file store writes a `glyff_format.json` marker beside
-the session's records. Both are at `FORMAT_VERSION = 1`.
+the session's records. Both are at `FORMAT_VERSION = 2`.
 
 A store written by an incompatible build raises `StoreFormatVersionError` rather
 than being misread. A fresh or pre-versioning store is stamped on first open. The
@@ -53,13 +53,18 @@ glyff does not auto-migrate a paused session onto new code. Instead:
   [pruning](./events.md#pruning-completed-subtrees). Nothing is added to the
   resume path.
 
+What makes such a script possible is that every execution records the
+[canonical form of its arguments](./execution-identity.md#canonical-arguments),
+byte-for-byte the preimage of its `args_hash`. A script decodes those bytes,
+maps them to the new shape, re-encodes, and recomputes the key — no dead Python
+types to keep alive, and no dependence on the canonicalizer that wrote them.
+
 > **Planned** — [#41](https://github.com/nueruyu/glyff/issues/41) (generation
-> stamp and typed mismatch error; the store format stamp above has landed),
-> [#47](https://github.com/nueruyu/glyff/issues/47) (persisting arguments, which
-> is what such a script reads back), and
-> [#42](https://github.com/nueruyu/glyff/issues/42) (repository enumeration).
-> Until they land, resuming a session on changed code diverges silently — pin
-> paused sessions to the code that started them.
+> stamp and typed mismatch error; the store format stamp above has landed) and
+> [#42](https://github.com/nueruyu/glyff/issues/42) (repository enumeration, so
+> a script can walk a session's records). Until they land, resuming a session on
+> changed code diverges silently — pin paused sessions to the code that started
+> them.
 
 ## Running without migration
 

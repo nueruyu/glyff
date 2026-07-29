@@ -3,7 +3,7 @@
 import pytest
 
 from glyff import (
-    ArgsHasher,
+    ArgsCanonicalizer,
     Execution,
     ExecutionId,
     MetadataAccessor,
@@ -15,7 +15,7 @@ from glyff._context import Context, reset_context, set_context
 from glyff._event_system import EventEmitter
 from glyff._sequencer import Sequencer
 from glyff.exceptions import NoCurrentExecutionError
-from glyff.serialization import JsonArgsHasher, JsonSerializer
+from glyff.serialization import JsonArgsCanonicalizer, JsonSerializer
 from glyff.store import MemoryBackend
 from glyff.tests.types import BackendFactory, make_session
 
@@ -26,7 +26,7 @@ def _eid(name: str, parent: ExecutionId | None = None) -> ExecutionId:
 
 async def _start(ctx: Context, eid: ExecutionId) -> None:
     async with ctx.get_transaction_scope():
-        await ctx.repository.save(Execution.start(eid))
+        await ctx.repository.save(Execution.start(eid, SerializedValue(b"{}")))
 
 
 async def test_set_get_roundtrip(test_context: Context):
@@ -34,7 +34,7 @@ async def test_set_get_roundtrip(test_context: Context):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid))
+        await test_context.repository.save(Execution.start(eid, SerializedValue(b"{}")))
         test_context.tracer.start(eid)
         try:
             await accessor.set("note", {"a": 1})
@@ -50,7 +50,7 @@ async def test_keyed_entries_are_independent(test_context: Context):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid))
+        await test_context.repository.save(Execution.start(eid, SerializedValue(b"{}")))
         test_context.tracer.start(eid)
         try:
             await accessor.set("a", "one")
@@ -91,7 +91,7 @@ async def test_complete_preserves_metadata(test_context: Context, serializer):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid))
+        await test_context.repository.save(Execution.start(eid, SerializedValue(b"{}")))
         test_context.tracer.start(eid)
         try:
             await accessor.set("note", "kept")
@@ -146,7 +146,7 @@ async def test_get_metadata_unknown_execution_returns_none(test_context: Context
 
 
 async def test_ctx_metadata_roundtrips_and_persists(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
 ):
     captured: dict[str, ExecutionId] = {}
 
@@ -159,7 +159,7 @@ async def test_ctx_metadata_roundtrips_and_persists(
         return "done"
 
     backend = backend_factory("meta-ctx")
-    async with make_session("meta-ctx", backend, hasher, serializer):
+    async with make_session("meta-ctx", backend, canonicalizer, serializer):
         result = await annotate()
 
     assert result == "done"
@@ -178,7 +178,7 @@ async def test_ctx_set_metadata_requires_active_execution():
         backend=backend,
         serializer=JsonSerializer(),
         sequencer=Sequencer(),
-        hasher=JsonArgsHasher(),
+        canonicalizer=JsonArgsCanonicalizer(),
         event_emitter=EventEmitter([]),
     )
     token = set_context(ctx)

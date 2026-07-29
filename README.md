@@ -10,7 +10,7 @@ and resuming them later from the same point.
 ```python
 import glyff
 import glyff_file_store
-from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
+from glyff_pydantic import PydanticArgsCanonicalizer, PydanticSerializer
 
 
 class UserInputRequired(Exception):
@@ -43,7 +43,7 @@ async def main(session_id: str, answer: str | None = None):
         id=session_id,
         backend=backend,
         serializer=serializer,
-        hasher=PydanticArgsHasher(),
+        canonicalizer=PydanticArgsCanonicalizer(),
     )
 
     try:

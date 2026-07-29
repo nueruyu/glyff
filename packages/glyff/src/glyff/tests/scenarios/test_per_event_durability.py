@@ -4,7 +4,7 @@ reused (not re-executed) on resume."""
 
 import pytest
 
-from glyff import ArgsHasher, engrave
+from glyff import ArgsCanonicalizer, engrave
 from glyff.tests.types import BackendFactory, make_session
 
 _calls: list[str] = []
@@ -41,7 +41,7 @@ async def ped_root() -> str:
 
 
 async def test_completed_child_is_reused_after_parent_interrupts(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
 ):
     global _interrupt_root
     backend = backend_factory("per-event-child-reuse")
@@ -49,7 +49,9 @@ async def test_completed_child_is_reused_after_parent_interrupts(
     # Run 1: the child completes, then the root is interrupted afterwards.
     _interrupt_root = True
     with pytest.raises(RootInterrupted):
-        async with make_session("per-event-child-reuse", backend, hasher, serializer):
+        async with make_session(
+            "per-event-child-reuse", backend, canonicalizer, serializer
+        ):
             await ped_root()
     assert _calls == ["root", "child"]
 
@@ -58,7 +60,9 @@ async def test_completed_child_is_reused_after_parent_interrupts(
     # was interrupted.
     _calls.clear()
     _interrupt_root = False
-    async with make_session("per-event-child-reuse", backend, hasher, serializer):
+    async with make_session(
+        "per-event-child-reuse", backend, canonicalizer, serializer
+    ):
         result = await ped_root()
 
     assert result == "child"

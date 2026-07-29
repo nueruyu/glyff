@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import pytest
-from glyff import ArgsHasher, ExecutionId
-from glyff.serialization import JsonArgsHasher, JsonSerializer
+from glyff import ArgsCanonicalizer, ExecutionId
+from glyff.serialization import JsonArgsCanonicalizer, JsonSerializer
 
 from glyff_file_store import JsonFileBackend
 
@@ -20,8 +20,8 @@ def serializer() -> JsonSerializer:
 
 
 @pytest.fixture
-def hasher() -> ArgsHasher:
-    return JsonArgsHasher()
+def canonicalizer() -> ArgsCanonicalizer:
+    return JsonArgsCanonicalizer()
 
 
 @pytest.fixture

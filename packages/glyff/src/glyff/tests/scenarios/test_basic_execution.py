@@ -1,6 +1,6 @@
 import pytest
 
-from glyff import ArgsHasher, engrave
+from glyff import ArgsCanonicalizer, engrave
 from glyff.tests.types import BackendFactory, make_session
 
 _calls: list[int] = []
@@ -32,35 +32,35 @@ async def basic_parent_func(x: int) -> int:
 
 
 async def test_simple_engrave_returns_correct_result(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
 ):
     backend = backend_factory("basic-simple")
-    async with make_session("basic-simple", backend, hasher, serializer):
+    async with make_session("basic-simple", backend, canonicalizer, serializer):
         result = await basic_simple_func(5)
     assert result == 10
     assert _calls == [5]
 
 
 async def test_completed_task_is_cached_on_second_session(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
 ):
     backend = backend_factory("basic-cache")
-    async with make_session("basic-cache", backend, hasher, serializer):
+    async with make_session("basic-cache", backend, canonicalizer, serializer):
         await basic_simple_func(7)
     assert _calls == [7]
 
     _calls.clear()
-    async with make_session("basic-cache", backend, hasher, serializer):
+    async with make_session("basic-cache", backend, canonicalizer, serializer):
         result = await basic_simple_func(7)
     assert result == 14
     assert _calls == []  # function body not re-executed
 
 
 async def test_different_args_produce_independent_results(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
 ):
     backend = backend_factory("basic-diff-args")
-    async with make_session("basic-diff-args", backend, hasher, serializer):
+    async with make_session("basic-diff-args", backend, canonicalizer, serializer):
         r1 = await basic_simple_func(3)
         r2 = await basic_simple_func(4)
     assert r1 == 6
@@ -68,17 +68,17 @@ async def test_different_args_produce_independent_results(
 
 
 async def test_nested_engrave_execution(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
 ):
     backend = backend_factory("basic-nested")
-    async with make_session("basic-nested", backend, hasher, serializer):
+    async with make_session("basic-nested", backend, canonicalizer, serializer):
         result = await basic_parent_func(5)
     assert result == 11  # (5*2) + 1
     assert _calls == [5, 10]
 
 
 async def test_failed_task_is_retried_on_next_session(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
 ):
     global _should_fail
     backend = backend_factory("basic-fail-rerun")
@@ -88,7 +88,7 @@ async def test_failed_task_is_retried_on_next_session(
     # permanently poison the call.
     _should_fail = True
     with pytest.raises(ValueError, match="Intentional failure"):
-        async with make_session(session_id, backend, hasher, serializer):
+        async with make_session(session_id, backend, canonicalizer, serializer):
             await basic_simple_func(10)
     assert _calls == [10]
 
@@ -96,7 +96,7 @@ async def test_failed_task_is_retried_on_next_session(
 
     # On a later session the previously-interrupted call is retried from scratch.
     _should_fail = False
-    async with make_session(session_id, backend, hasher, serializer):
+    async with make_session(session_id, backend, canonicalizer, serializer):
         result = await basic_simple_func(10)
 
     assert result == 20

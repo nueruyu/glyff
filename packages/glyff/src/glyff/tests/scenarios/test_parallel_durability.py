@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from glyff import ArgsHasher, engrave
+from glyff import ArgsCanonicalizer, engrave
 from glyff.tests.types import BackendFactory, make_session
 
 _ran: set[int] = set()
@@ -48,7 +48,7 @@ async def pard_root() -> int:
 
 
 async def test_parallel_children_are_each_durable_after_root_interrupt(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
 ):
     global _interrupt_root
     backend = backend_factory("parallel-durability")
@@ -56,7 +56,9 @@ async def test_parallel_children_are_each_durable_after_root_interrupt(
     # Run 1: all children complete in parallel, then the root is interrupted.
     _interrupt_root = True
     with pytest.raises(RootInterrupted):
-        async with make_session("parallel-durability", backend, hasher, serializer):
+        async with make_session(
+            "parallel-durability", backend, canonicalizer, serializer
+        ):
             await pard_root()
     assert _ran == set(range(_N))
 
@@ -64,7 +66,7 @@ async def test_parallel_children_are_each_durable_after_root_interrupt(
     # rather than re-run — none was lost to a concurrent sibling's commit.
     _ran.clear()
     _interrupt_root = False
-    async with make_session("parallel-durability", backend, hasher, serializer):
+    async with make_session("parallel-durability", backend, canonicalizer, serializer):
         total = await pard_root()
 
     assert total == sum(i * 10 for i in range(_N))

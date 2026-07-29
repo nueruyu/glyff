@@ -3,10 +3,10 @@ import inspect
 
 import pytest
 from glyff.exceptions import SerializationError
-from glyff import ArgsHasher, Serializer
+from glyff import ArgsCanonicalizer, Serializer
 from pydantic import BaseModel
 
-from glyff_pydantic import PydanticArgsHasher, PydanticSerializer
+from glyff_pydantic import PydanticArgsCanonicalizer, PydanticSerializer
 
 
 class MyModel(BaseModel):
@@ -45,35 +45,35 @@ def serializer() -> Serializer:
 
 
 @pytest.fixture
-def hasher() -> ArgsHasher:
-    return PydanticArgsHasher()
+def canonicalizer() -> ArgsCanonicalizer:
+    return PydanticArgsCanonicalizer()
 
 
-def test_hash_args_positional_vs_keyword_are_equal(hasher: ArgsHasher):
+def test_hash_args_positional_vs_keyword_are_equal(canonicalizer: ArgsCanonicalizer):
     sig = inspect.signature(sample_func)
-    h1 = hasher.hash_args(sample_func, sig, (1,), {"b": "test"})
-    h2 = hasher.hash_args(sample_func, sig, (), {"a": 1, "b": "test"})
+    h1 = canonicalizer.canonicalize_args(sample_func, sig, (1,), {"b": "test"})
+    h2 = canonicalizer.canonicalize_args(sample_func, sig, (), {"a": 1, "b": "test"})
     assert h1 == h2
 
 
-def test_hash_args_defaults_are_included(hasher: ArgsHasher):
+def test_hash_args_defaults_are_included(canonicalizer: ArgsCanonicalizer):
     sig = inspect.signature(sample_func)
-    h1 = hasher.hash_args(sample_func, sig, (1,), {})
-    h2 = hasher.hash_args(sample_func, sig, (), {"a": 1, "b": "default"})
+    h1 = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
+    h2 = canonicalizer.canonicalize_args(sample_func, sig, (), {"a": 1, "b": "default"})
     assert h1 == h2
 
 
-def test_hash_args_different_values_differ(hasher: ArgsHasher):
+def test_hash_args_different_values_differ(canonicalizer: ArgsCanonicalizer):
     sig = inspect.signature(sample_func)
-    h1 = hasher.hash_args(sample_func, sig, (1,), {})
-    h2 = hasher.hash_args(sample_func, sig, (2,), {})
+    h1 = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
+    h2 = canonicalizer.canonicalize_args(sample_func, sig, (2,), {})
     assert h1 != h2
 
 
-def test_hash_args_is_deterministic(hasher: ArgsHasher):
+def test_hash_args_is_deterministic(canonicalizer: ArgsCanonicalizer):
     sig = inspect.signature(sample_func)
-    h1 = hasher.hash_args(sample_func, sig, (42,), {"b": "hello"})
-    h2 = hasher.hash_args(sample_func, sig, (42,), {"b": "hello"})
+    h1 = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
+    h2 = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
     assert h1 == h2
 
 
@@ -102,17 +102,19 @@ async def test_serialize_produces_stable_output(serializer: Serializer):
     assert await serializer.serialize(d1, dict) == await serializer.serialize(d2, dict)
 
 
-async def test_serialize_defaults_to_compact_ascii_json():
+async def test_serialize_defaults_to_compact_readable_json():
     serialized = await PydanticSerializer().serialize({"message": "こんにちは"}, dict)
-    assert serialized == b'{"message":"\\u3053\\u3093\\u306b\\u3061\\u306f"}'
+    assert serialized.decode("utf-8") == '{"message":"こんにちは"}'
 
 
 async def test_serialize_accepts_json_formatting_options():
-    serialized = await PydanticSerializer(indent=2, ensure_ascii=False).serialize(
+    serialized = await PydanticSerializer(indent=2, ensure_ascii=True).serialize(
         {"message": "こんにちは"}, dict
     )
 
-    assert serialized.decode("utf-8") == '{\n  "message": "こんにちは"\n}'
+    assert serialized.decode("utf-8") == (
+        '{\n  "message": "\\u3053\\u3093\\u306b\\u3061\\u306f"\n}'
+    )
 
 
 async def test_serialize_accepts_string_indent():
@@ -128,7 +130,7 @@ async def test_serialize_non_serializable_raises_custom_error(serializer: Serial
         await serializer.serialize(object(), object)
 
 
-def test_hash_opaque_arg_raises_by_default(hasher: ArgsHasher):
+def test_hash_opaque_arg_raises_by_default(canonicalizer: ArgsCanonicalizer):
     from glyff.exceptions import UnserializableArgumentError
 
     class PlainA:
@@ -141,7 +143,7 @@ def test_hash_opaque_arg_raises_by_default(hasher: ArgsHasher):
 
     # By default an opaque value is rejected rather than hashed by class name.
     with pytest.raises(UnserializableArgumentError):
-        hasher.hash_args(func_with_obj, sig, (PlainA(),), {})
+        canonicalizer.canonicalize_args(func_with_obj, sig, (PlainA(),), {})
 
 
 def test_hash_opaque_arg_by_class_with_qualname_policy():
@@ -158,10 +160,10 @@ def test_hash_opaque_arg_by_class_with_qualname_policy():
 
     sig = inspect.signature(func_with_obj)
 
-    hasher = PydanticArgsHasher(opaque_policy=QualnameOpaque())
-    first = hasher.hash_args(func_with_obj, sig, (PlainA(),), {})
-    second = hasher.hash_args(func_with_obj, sig, (PlainA(),), {})
-    different = hasher.hash_args(func_with_obj, sig, (PlainB(),), {})
+    canonicalizer = PydanticArgsCanonicalizer(opaque_policy=QualnameOpaque())
+    first = canonicalizer.canonicalize_args(func_with_obj, sig, (PlainA(),), {})
+    second = canonicalizer.canonicalize_args(func_with_obj, sig, (PlainA(),), {})
+    different = canonicalizer.canonicalize_args(func_with_obj, sig, (PlainB(),), {})
 
     # With the opt-in qualname policy, opaque values are identified by their class
     # qualified name: same class hashes identically, a different class differs.
@@ -169,7 +171,9 @@ def test_hash_opaque_arg_by_class_with_qualname_policy():
     assert first != different
 
 
-def test_hash_nested_dataclass_type_and_callable_values(hasher: ArgsHasher):
+def test_hash_nested_dataclass_type_and_callable_values(
+    canonicalizer: ArgsCanonicalizer,
+):
     @dataclasses.dataclass(frozen=True)
     class Container:
         data: MyDataClass
@@ -180,7 +184,7 @@ def test_hash_nested_dataclass_type_and_callable_values(hasher: ArgsHasher):
         pass
 
     sig = inspect.signature(func)
-    first = hasher.hash_args(
+    first = canonicalizer.canonicalize_args(
         func,
         sig,
         (
@@ -192,7 +196,7 @@ def test_hash_nested_dataclass_type_and_callable_values(hasher: ArgsHasher):
         ),
         {},
     )
-    second = hasher.hash_args(
+    second = canonicalizer.canonicalize_args(
         func,
         sig,
         (
@@ -208,44 +212,48 @@ def test_hash_nested_dataclass_type_and_callable_values(hasher: ArgsHasher):
     assert first == second
 
 
-def test_hash_callable_values_by_qualified_name(hasher: ArgsHasher):
+def test_hash_callable_values_by_qualified_name(canonicalizer: ArgsCanonicalizer):
     def func(callback):
         pass
 
     sig = inspect.signature(func)
-    first = hasher.hash_args(func, sig, (helper_func,), {})
-    second = hasher.hash_args(func, sig, (helper_func,), {})
-    different = hasher.hash_args(func, sig, (another_helper_func,), {})
+    first = canonicalizer.canonicalize_args(func, sig, (helper_func,), {})
+    second = canonicalizer.canonicalize_args(func, sig, (helper_func,), {})
+    different = canonicalizer.canonicalize_args(func, sig, (another_helper_func,), {})
 
     assert first == second
     assert first != different
 
 
-def test_method_hash_differs_for_different_pydantic_instances(hasher: ArgsHasher):
+def test_method_hash_differs_for_different_pydantic_instances(
+    canonicalizer: ArgsCanonicalizer,
+):
     inst1 = MyModel(x=1, y="a")
     inst2 = MyModel(x=2, y="a")
     func = MyModel.method
     sig = inspect.signature(func)
 
-    h1 = hasher.hash_args(func, sig, (inst1, 10), {})
-    h2 = hasher.hash_args(func, sig, (inst2, 10), {})
+    h1 = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
+    h2 = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
 
     assert h1 != h2
 
 
-def test_method_hash_is_same_for_identical_pydantic_instances(hasher: ArgsHasher):
+def test_method_hash_is_same_for_identical_pydantic_instances(
+    canonicalizer: ArgsCanonicalizer,
+):
     inst1 = MyModel(x=1, y="a")
     inst2 = MyModel(x=1, y="a")
     func = MyModel.method
     sig = inspect.signature(func)
 
-    h1 = hasher.hash_args(func, sig, (inst1, 10), {})
-    h2 = hasher.hash_args(func, sig, (inst2, 10), {})
+    h1 = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
+    h2 = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
 
     assert h1 == h2
 
 
-def test_hash_ignores_compare_false_dataclass_fields(hasher: ArgsHasher):
+def test_hash_ignores_compare_false_dataclass_fields(canonicalizer: ArgsCanonicalizer):
     @dataclasses.dataclass
     class AgentWithDep:
         name: str
@@ -258,9 +266,15 @@ def test_hash_ignores_compare_false_dataclass_fields(hasher: ArgsHasher):
     sig = inspect.signature(func)
 
     # field(compare=False) is excluded from the hash via the shared dataclass logic.
-    h1 = hasher.hash_args(func, sig, (AgentWithDep("a", counter=1), "q"), {})
-    h2 = hasher.hash_args(func, sig, (AgentWithDep("a", counter=99), "q"), {})
-    h3 = hasher.hash_args(func, sig, (AgentWithDep("b", counter=1), "q"), {})
+    h1 = canonicalizer.canonicalize_args(
+        func, sig, (AgentWithDep("a", counter=1), "q"), {}
+    )
+    h2 = canonicalizer.canonicalize_args(
+        func, sig, (AgentWithDep("a", counter=99), "q"), {}
+    )
+    h3 = canonicalizer.canonicalize_args(
+        func, sig, (AgentWithDep("b", counter=1), "q"), {}
+    )
 
     assert h1 == h2
     assert h1 != h3
@@ -284,7 +298,9 @@ def _agent_model_with_opaque_member():
     return Agent, Tool
 
 
-def test_hash_model_with_opaque_member_raises_by_default(hasher: ArgsHasher):
+def test_hash_model_with_opaque_member_raises_by_default(
+    canonicalizer: ArgsCanonicalizer,
+):
     """A model holding an opaque member is rejected by the default policy."""
     from glyff.exceptions import UnserializableArgumentError
 
@@ -294,7 +310,7 @@ def test_hash_model_with_opaque_member_raises_by_default(hasher: ArgsHasher):
     a1 = Agent(name="researcher", tool=Tool(1))
 
     with pytest.raises(UnserializableArgumentError):
-        hasher.hash_args(func, sig, (a1, "hi"), {})
+        canonicalizer.canonicalize_args(func, sig, (a1, "hi"), {})
 
 
 def test_hash_model_with_opaque_member_by_class_with_qualname_policy():
@@ -313,10 +329,10 @@ def test_hash_model_with_opaque_member_by_class_with_qualname_policy():
     a2 = Agent(name="researcher", tool=Tool(2))
     a3 = Agent(name="writer", tool=Tool(1))
 
-    hasher = PydanticArgsHasher(opaque_policy=QualnameOpaque())
-    h1 = hasher.hash_args(func, sig, (a1, "hi"), {})
-    h2 = hasher.hash_args(func, sig, (a2, "hi"), {})
-    h3 = hasher.hash_args(func, sig, (a3, "hi"), {})
+    canonicalizer = PydanticArgsCanonicalizer(opaque_policy=QualnameOpaque())
+    h1 = canonicalizer.canonicalize_args(func, sig, (a1, "hi"), {})
+    h2 = canonicalizer.canonicalize_args(func, sig, (a2, "hi"), {})
+    h3 = canonicalizer.canonicalize_args(func, sig, (a3, "hi"), {})
 
     # Opaque tool identified by class (h1 == h2), serializable state differentiates.
     assert h1 == h2
@@ -328,16 +344,18 @@ def test_model_set_field_is_sorted_for_stable_hashing():
 
     pydantic_core would otherwise emit the set in (hash-randomized) iteration order.
     """
-    from glyff_pydantic import PydanticArgsHasher
+    from glyff_pydantic import PydanticArgsCanonicalizer
 
     class M(BaseModel):
         tags: set
 
-    dumped = PydanticArgsHasher()._model_to_hashable(M(tags={"gamma", "alpha", "beta"}))
-    assert dumped["tags"] == ["alpha", "beta", "gamma"]
+    dumped = PydanticArgsCanonicalizer()._model_to_canonical(
+        M(tags={"gamma", "alpha", "beta"})
+    )
+    assert dumped == {"tags": ["alpha", "beta", "gamma"]}
 
 
-def test_model_set_field_hash_is_content_based(hasher: ArgsHasher):
+def test_model_set_field_hash_is_content_based(canonicalizer: ArgsCanonicalizer):
     class M(BaseModel):
         tags: set
 
@@ -345,9 +363,9 @@ def test_model_set_field_hash_is_content_based(hasher: ArgsHasher):
         pass
 
     sig = inspect.signature(f)
-    h1 = hasher.hash_args(f, sig, (M(tags={1, 2, 3}),), {})
-    h2 = hasher.hash_args(f, sig, (M(tags={3, 2, 1}),), {})
-    h3 = hasher.hash_args(f, sig, (M(tags={4, 5, 6}),), {})
+    h1 = canonicalizer.canonicalize_args(f, sig, (M(tags={1, 2, 3}),), {})
+    h2 = canonicalizer.canonicalize_args(f, sig, (M(tags={3, 2, 1}),), {})
+    h3 = canonicalizer.canonicalize_args(f, sig, (M(tags={4, 5, 6}),), {})
 
     assert h1 == h2
     assert h1 != h3

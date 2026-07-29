@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TypeAlias
+
+# A value in the JSON data model. Canonicalizing a call's arguments produces one of
+# these, and a migration's argument conversion both receives and returns one.
+CanonicalValue: TypeAlias = (
+    "str | int | float | bool | None | list[CanonicalValue] | dict[str, CanonicalValue]"
+)
 
 
 @dataclass(frozen=True)
@@ -57,12 +64,19 @@ class Execution:
 
     id: ExecutionId
     status: ExecutionStatus
+    args: SerializedValue
+    """The canonical arguments this call was keyed by.
+
+    Byte-exactly the digest preimage: ``id.args_hash == args_digest(args.data)``.
+    Stores must round-trip these bytes untouched — re-encoding would break the
+    invariant a migration relies on to recompute keys.
+    """
     result: SerializedValue | None = None
     metadata: dict[str, Metadata] = field(default_factory=dict)
 
     @classmethod
-    def start(cls, execution_id: ExecutionId) -> "Execution":
-        return cls(id=execution_id, status=ExecutionStatus.STARTED)
+    def start(cls, execution_id: ExecutionId, args: SerializedValue) -> "Execution":
+        return cls(id=execution_id, status=ExecutionStatus.STARTED, args=args)
 
     def complete(self, result: SerializedValue) -> None:
         if self.status is ExecutionStatus.COMPLETED:

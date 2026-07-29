@@ -8,6 +8,7 @@ from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
 
 def record(value: str) -> SQLiteExecutionRecord:
     return SQLiteExecutionRecord(
+        args="{}",
         status="completed",
         result=f'"{value}"',
         metadata="{}",
@@ -35,7 +36,13 @@ async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
 
     client = SQLiteClient(db)
     rows = await client.read_sql("PRAGMA table_info(glyff_executions)")
-    assert [row[1] for row in rows] == ["path", "status", "result", "metadata"]
+    assert [row[1] for row in rows] == [
+        "path",
+        "args",
+        "status",
+        "result",
+        "metadata",
+    ]
 
 
 async def test_sqlite_client_commit_is_atomic_across_execution_paths(tmp_path: Path):
@@ -77,7 +84,7 @@ async def test_sqlite_backend_stores_execution_columns_as_readable_json(
         sequence=0,
         args_hash="hash",
     )
-    execution = Execution.start(execution_id)
+    execution = Execution.start(execution_id, SerializedValue(b"{}"))
     execution.complete(SerializedValue(b'{"answer":42}'))
     execution.set_metadata("trace", SerializedValue(b'{"step":1}'))
 

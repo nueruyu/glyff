@@ -33,6 +33,7 @@ def _to_execution(
     execution_id: ExecutionId, record: SQLiteExecutionRecord
 ) -> Execution:
     stored = {
+        "args": record.args,
         "status": record.status,
         "result": json.loads(record.result) if record.result is not None else None,
         "metadata": json.loads(record.metadata),
@@ -43,6 +44,7 @@ def _to_execution(
 def _from_execution(execution: Execution) -> SQLiteExecutionRecord:
     stored = execution_to_dict(execution)
     return SQLiteExecutionRecord(
+        args=stored["args"],
         status=stored["status"],
         result=_json_text(stored["result"]) if execution.result is not None else None,
         metadata=_json_text(stored["metadata"]),

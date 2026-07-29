@@ -1,6 +1,6 @@
 # glyff-pydantic
 
-Pydantic-based `Serializer` and `ArgsHasher` implementations for
+Pydantic-based `Serializer` and `ArgsCanonicalizer` implementations for
 [glyff](https://pypi.org/project/glyff/).
 
 Enables glyff sessions to record arguments and results that are Pydantic
@@ -19,7 +19,7 @@ This package depends on `glyff>=0.1.0` and `pydantic>=2.0`.
 | Name                 | Description                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------------ |
 | `PydanticSerializer` | Serializes values to JSON using `TypeAdapter`. Restores typed values on read.                    |
-| `PydanticArgsHasher` | Hashes function arguments by dumping them through `TypeAdapter` for stable, type-aware identity. |
+| `PydanticArgsCanonicalizer` | Canonicalizes function arguments through Pydantic's own dump, for stable, type-aware identity. |
 
 Both work with arbitrary types supported by Pydantic v2: models, dataclasses,
 unions, generics, and standard library types.
@@ -27,7 +27,7 @@ unions, generics, and standard library types.
 Argument hashes are part of an execution's identity, so they must stay stable
 across code changes — see
 [execution identity](https://github.com/nueruyu/glyff/blob/main/docs/execution-identity.md)
-for what the hasher may and may not see.
+for what the canonicalizer may and may not see.
 
 ## Status
 

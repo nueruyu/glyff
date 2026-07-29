@@ -12,7 +12,7 @@ from typing import Any
 from glyff.exceptions import StoreFormatVersionError
 
 # Bump when the stored schema changes.
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 # The store's two tables are derived from one prefix, so the version lives in a
 # table glyff owns rather than the database-wide PRAGMA user_version.
@@ -24,6 +24,7 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 @dataclass(frozen=True)
 class SQLiteExecutionRecord:
+    args: str
     status: str
     result: str | None
     metadata: str
@@ -146,6 +147,7 @@ class SQLiteClient:
                 f"""
                 CREATE TABLE IF NOT EXISTS "{self._table_name}" (
                     path TEXT PRIMARY KEY,
+                    args TEXT NOT NULL,
                     status TEXT NOT NULL,
                     result TEXT,
                     metadata TEXT NOT NULL
@@ -255,13 +257,20 @@ class SQLiteClient:
                 else:
                     connection.execute(
                         f"""INSERT INTO "{self._table_name}"
-                               (path, status, result, metadata)
-                           VALUES (?, ?, ?, ?)
+                               (path, args, status, result, metadata)
+                           VALUES (?, ?, ?, ?, ?)
                            ON CONFLICT(path) DO UPDATE SET
+                               args = excluded.args,
                                status = excluded.status,
                                result = excluded.result,
                                metadata = excluded.metadata""",
-                        (path, result.status, result.result, result.metadata),
+                        (
+                            path,
+                            result.args,
+                            result.status,
+                            result.result,
+                            result.metadata,
+                        ),
                     )
 
             connection.execute("COMMIT")
@@ -319,12 +328,15 @@ class SQLiteClient:
         self, connection: sqlite3.Connection, path: str
     ) -> SQLiteExecutionRecord | None:
         row = connection.execute(
-            f'SELECT status, result, metadata FROM "{self._table_name}" WHERE path = ?',
+            f'SELECT args, status, result, metadata FROM "{self._table_name}" '
+            "WHERE path = ?",
             (path,),
         ).fetchone()
         if row is None:
             return None
-        return SQLiteExecutionRecord(status=row[0], result=row[1], metadata=row[2])
+        return SQLiteExecutionRecord(
+            args=row[0], status=row[1], result=row[2], metadata=row[3]
+        )
 
     async def list_paths(self, prefix: str = "", *, staged: bool = True) -> set[str]:
         committed = await asyncio.to_thread(self._list_committed_paths_sync, prefix)

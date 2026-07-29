@@ -40,7 +40,7 @@ pip install glyff
 | `Transaction`         | Active transaction boundary.                                    |
 | `TransactionProvider` | Provider used by `TransactionScope`.                            |
 | `Serializer`          | Protocol for value serialization.                               |
-| `ArgsHasher`          | Protocol for argument hashing.                                  |
+| `ArgsCanonicalizer`   | Contract for normalizing call arguments into a canonical form.  |
 
 `engrave` also takes an explicit identity —
 `@engrave(name="chat.reply", version=2)` — so recorded histories survive

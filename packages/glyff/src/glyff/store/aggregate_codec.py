@@ -74,12 +74,25 @@ def _unpack_metadata(raw: object) -> dict[str, Metadata]:
 
 
 def _json_bytes(value: object) -> bytes:
-    return stable_json_dumps(value, ensure_ascii=False).encode(DEFAULT_ENCODING)
+    return stable_json_dumps(value).encode(DEFAULT_ENCODING)
+
+
+def _pack_args(args: SerializedValue) -> str:
+    # Canonical arguments are stored as an opaque string, not as an embedded JSON
+    # value: `id.args_hash` is the digest of exactly these bytes, and decoding then
+    # re-encoding would be free to produce different ones.
+    try:
+        return args.data.decode(DEFAULT_ENCODING)
+    except UnicodeDecodeError as exc:
+        raise SerializationError(
+            f"{_TEXT_BACKEND_JSON_ERROR} Invalid args: data is not valid UTF-8."
+        ) from exc
 
 
 def execution_to_dict(execution: Execution) -> dict[str, Any]:
     """Serialize an Execution aggregate to a JSON-ready dict."""
     return {
+        "args": _pack_args(execution.args),
         "status": _STATUS_NAMES[execution.status],
         "result": _pack_value(execution.result, context="result"),
         "metadata": _pack_metadata(execution.metadata),
@@ -92,6 +105,7 @@ def execution_from_dict(execution_id: ExecutionId, stored: dict[str, Any]) -> Ex
     return Execution(
         id=execution_id,
         status=status,
+        args=SerializedValue(stored["args"].encode(DEFAULT_ENCODING)),
         result=_unpack_value(stored.get("result"))
         if status is ExecutionStatus.COMPLETED
         else None,

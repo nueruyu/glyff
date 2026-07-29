@@ -6,7 +6,7 @@ from typing import Any, overload
 
 from ._event_system import EventEmitter
 from ._interfaces import (
-    ArgsHasher,
+    ArgsCanonicalizer,
     Backend,
     ExecutionRepository,
     Serializer,
@@ -83,7 +83,7 @@ class Context:
         backend: Backend,
         serializer: Serializer,
         sequencer: Sequencer,
-        hasher: ArgsHasher,
+        canonicalizer: ArgsCanonicalizer,
         event_emitter: EventEmitter,
     ) -> None:
         self._session_id = session_id
@@ -91,7 +91,7 @@ class Context:
         self._transaction_provider = backend.transaction_provider
         self._serializer = serializer
         self._sequencer = sequencer
-        self._hasher = hasher
+        self._canonicalizer = canonicalizer
         self._event_emitter = event_emitter
         self._tracer = ExecutionTracer()
 
@@ -116,8 +116,8 @@ class Context:
         return self._sequencer
 
     @property
-    def hasher(self) -> ArgsHasher:
-        return self._hasher
+    def canonicalizer(self) -> ArgsCanonicalizer:
+        return self._canonicalizer
 
     @property
     def event_emitter(self) -> EventEmitter:

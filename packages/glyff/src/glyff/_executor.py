@@ -8,6 +8,7 @@ from .events import ExecutionCompleted, ExecutionFailed
 async def execute(
     ctx: Context,
     execution_id: ExecutionId,
+    canonical_args: SerializedValue,
     func: Callable[..., Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
@@ -34,7 +35,7 @@ async def execute(
     async with ctx.get_transaction_scope():
         await sequencer.reset_for_call(execution_id)
         if await repository.get(execution_id) is None:
-            await repository.save(Execution.start(execution_id))
+            await repository.save(Execution.start(execution_id, canonical_args))
 
     tracer.start(execution_id)
 

@@ -1,4 +1,4 @@
-from glyff import ArgsHasher, Session, engrave
+from glyff import ArgsCanonicalizer, Session, engrave
 from glyff.serialization import JsonSerializer
 
 from glyff_file_store import JsonFileBackend
@@ -13,7 +13,7 @@ async def json_func(n: int) -> int:
 
 
 async def test_completed_record_replays_across_instances(
-    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, canonicalizer: ArgsCanonicalizer
 ):
     """A completed entry persisted by one store instance must be replayed by
     a fresh instance reading the same on-disk file."""
@@ -25,7 +25,7 @@ async def test_completed_record_replays_across_instances(
         id=session_id,
         backend=backend,
         serializer=serializer,
-        hasher=hasher,
+        canonicalizer=canonicalizer,
     ):
         first = await json_func(7)
     assert first == 14
@@ -37,7 +37,7 @@ async def test_completed_record_replays_across_instances(
         id=session_id,
         backend=reopened,
         serializer=serializer,
-        hasher=hasher,
+        canonicalizer=canonicalizer,
     ):
         second = await json_func(7)
     assert second == 14
@@ -54,7 +54,7 @@ async def multi_payload(seed: int) -> list[int]:
 
 
 async def test_multiple_completed_records_replay_across_instances(
-    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, canonicalizer: ArgsCanonicalizer
 ):
     """Multiple completed entries with non-trivial payloads must each be
     replayable from a fresh store reading the same on-disk file."""
@@ -66,7 +66,7 @@ async def test_multiple_completed_records_replay_across_instances(
         id=session_id,
         backend=backend,
         serializer=serializer,
-        hasher=hasher,
+        canonicalizer=canonicalizer,
     ):
         a = await multi_payload(0)
         b = await multi_payload(1000)
@@ -79,7 +79,7 @@ async def test_multiple_completed_records_replay_across_instances(
         id=session_id,
         backend=reopened,
         serializer=serializer,
-        hasher=hasher,
+        canonicalizer=canonicalizer,
     ):
         a2 = await multi_payload(0)
         b2 = await multi_payload(1000)

@@ -61,6 +61,7 @@ async def test_successful_execution(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
+        canonical_args=SerializedValue(b"{}"),
         func=sample_func,
         args=(),
         kwargs={},
@@ -83,7 +84,7 @@ async def test_successful_execution(
 async def test_completion_prunes_descendants_when_enabled(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
-    hasher,
+    canonicalizer,
     serializer: Serializer,
 ):
     emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
@@ -92,7 +93,7 @@ async def test_completion_prunes_descendants_when_enabled(
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        canonicalizer=canonicalizer,
         event_emitter=emitter,
     )
     token = set_context(ctx)
@@ -103,7 +104,7 @@ async def test_completion_prunes_descendants_when_enabled(
 
         async def sample_func():
             async with ctx.get_transaction_scope():
-                execution = Execution.start(child)
+                execution = Execution.start(child, SerializedValue(b"{}"))
                 execution.complete(
                     SerializedValue(await serializer.serialize("child", str))
                 )
@@ -113,6 +114,7 @@ async def test_completion_prunes_descendants_when_enabled(
         result = await execute(
             ctx=ctx,
             execution_id=base_execution_id,
+            canonical_args=SerializedValue(b"{}"),
             func=sample_func,
             args=(),
             kwargs={},
@@ -132,7 +134,7 @@ async def test_completion_prunes_descendants_when_enabled(
 async def test_nested_completion_prunes(
     mock_backend: StubBackend,
     nested_execution_id: ExecutionId,
-    hasher,
+    canonicalizer,
     serializer: Serializer,
 ):
     emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
@@ -141,7 +143,7 @@ async def test_nested_completion_prunes(
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        canonicalizer=canonicalizer,
         event_emitter=emitter,
     )
     token = set_context(ctx)
@@ -153,6 +155,7 @@ async def test_nested_completion_prunes(
         await execute(
             ctx=ctx,
             execution_id=nested_execution_id,
+            canonical_args=SerializedValue(b"{}"),
             func=sample_func,
             args=(),
             kwargs={},
@@ -177,6 +180,7 @@ async def test_completion_does_not_prune_when_disabled(
     await execute(
         ctx=test_context,
         execution_id=base_execution_id,
+        canonical_args=SerializedValue(b"{}"),
         func=sample_func,
         args=(),
         kwargs={},
@@ -210,6 +214,7 @@ async def test_completed_task_is_skipped(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
+        canonical_args=SerializedValue(b"{}"),
         func=sample_func,
         args=(),
         kwargs={},
@@ -239,6 +244,7 @@ async def test_started_record_is_retryable(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
+        canonical_args=SerializedValue(b"{}"),
         func=sample_func,
         args=(),
         kwargs={},
@@ -260,6 +266,7 @@ async def test_general_exception_persists_nothing(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
+            canonical_args=SerializedValue(b"{}"),
             func=sample_func,
             args=(),
             kwargs={},
@@ -293,6 +300,7 @@ async def test_application_pause_is_retryable(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
+            canonical_args=SerializedValue(b"{}"),
             func=paused,
             args=(),
             kwargs={},
@@ -309,6 +317,7 @@ async def test_application_pause_is_retryable(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
+        canonical_args=SerializedValue(b"{}"),
         func=resumed,
         args=(),
         kwargs={},
@@ -334,6 +343,7 @@ async def test_original_traceback_is_preserved_on_function_exception(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
+            canonical_args=SerializedValue(b"{}"),
             func=sample_func,
             args=(),
             kwargs={},
@@ -360,6 +370,7 @@ async def test_start_is_committed_before_function_body_runs(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
+        canonical_args=SerializedValue(b"{}"),
         func=sample_func,
         args=(),
         kwargs={},
@@ -384,7 +395,7 @@ async def test_function_exception_rolls_back_body_scope_writes(
 
     async def sample_func():
         assert test_context.current_execution_id == base_execution_id
-        execution = Execution.start(scratch_id)
+        execution = Execution.start(scratch_id, SerializedValue(b"{}"))
         execution.complete(SerializedValue(await serializer.serialize("saved", str)))
         await test_context.repository.save(execution)
         raise ValueError("oops")
@@ -393,6 +404,7 @@ async def test_function_exception_rolls_back_body_scope_writes(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
+            canonical_args=SerializedValue(b"{}"),
             func=sample_func,
             args=(),
             kwargs={},
@@ -408,7 +420,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     nested_execution_id: ExecutionId,
-    hasher,
+    canonicalizer,
     serializer: Serializer,
 ):
     seen_exceptions: list[Exception] = []
@@ -426,13 +438,13 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        canonicalizer=canonicalizer,
         event_emitter=EventEmitter([CleanupOnFailure()]),
     )
     token = set_context(ctx)
     try:
         async with ctx.get_transaction_scope():
-            execution = Execution.start(nested_execution_id)
+            execution = Execution.start(nested_execution_id, SerializedValue(b"{}"))
             execution.complete(
                 SerializedValue(await serializer.serialize("child", str))
             )
@@ -445,6 +457,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
             await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
+                canonical_args=SerializedValue(b"{}"),
                 func=sample_func,
                 args=(),
                 kwargs={},
@@ -468,7 +481,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
 async def test_execution_failed_emits_after_body_transaction_closes(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
-    hasher,
+    canonicalizer,
     serializer: Serializer,
 ):
     scratch_id = ExecutionId(
@@ -496,14 +509,14 @@ async def test_execution_failed_emits_after_body_transaction_closes(
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        canonicalizer=canonicalizer,
         event_emitter=EventEmitter([ObserveFailure()]),
     )
     token = set_context(ctx)
     try:
 
         async def sample_func():
-            execution = Execution.start(scratch_id)
+            execution = Execution.start(scratch_id, SerializedValue(b"{}"))
             execution.complete(
                 SerializedValue(await serializer.serialize("scratch", str))
             )
@@ -514,6 +527,7 @@ async def test_execution_failed_emits_after_body_transaction_closes(
             await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
+                canonical_args=SerializedValue(b"{}"),
                 func=sample_func,
                 args=(),
                 kwargs={},
@@ -532,7 +546,7 @@ async def test_execution_failed_emits_after_body_transaction_closes(
 async def test_failed_handler_failure_does_not_replace_original_exception(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    hasher,
+    canonicalizer,
     caplog,
 ):
     class FailingFailedHandler(EventHandler[ExecutionFailed]):
@@ -545,7 +559,7 @@ async def test_failed_handler_failure_does_not_replace_original_exception(
         backend=backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        canonicalizer=canonicalizer,
         event_emitter=EventEmitter([FailingFailedHandler()]),
     )
     token = set_context(ctx)
@@ -559,6 +573,7 @@ async def test_failed_handler_failure_does_not_replace_original_exception(
                 await execute(
                     ctx=ctx,
                     execution_id=base_execution_id,
+                    canonical_args=SerializedValue(b"{}"),
                     func=sample_func,
                     args=(),
                     kwargs={},
@@ -577,7 +592,7 @@ async def test_failed_handler_failure_does_not_replace_original_exception(
 async def test_execution_save_failure_rolls_back_complete_transaction(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    hasher,
+    canonicalizer,
 ):
     class FailingCompleteRepository(StubExecutionRepository):
         async def save(self, execution: Execution) -> None:
@@ -601,7 +616,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
         backend=backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        canonicalizer=canonicalizer,
         event_emitter=EventEmitter([RecordFailures()]),
     )
     token = set_context(ctx)
@@ -615,6 +630,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
             await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
+                canonical_args=SerializedValue(b"{}"),
                 func=sample_func,
                 args=(),
                 kwargs={},
@@ -634,7 +650,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
 async def test_completed_handler_failure_does_not_affect_result_or_completion(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    hasher,
+    canonicalizer,
     caplog,
 ):
     class FailingCompletedHandler(EventHandler[ExecutionCompleted]):
@@ -647,7 +663,7 @@ async def test_completed_handler_failure_does_not_affect_result_or_completion(
         backend=backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        canonicalizer=canonicalizer,
         event_emitter=EventEmitter([FailingCompletedHandler()]),
     )
     token = set_context(ctx)
@@ -660,6 +676,7 @@ async def test_completed_handler_failure_does_not_affect_result_or_completion(
             result = await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
+                canonical_args=SerializedValue(b"{}"),
                 func=sample_func,
                 args=(),
                 kwargs={},
@@ -694,10 +711,13 @@ async def test_nested_child_commits_without_losing_parent_staging(
         return "child"
 
     async def parent_func():
-        await test_context.repository.save(Execution.start(marker_id))
+        await test_context.repository.save(
+            Execution.start(marker_id, SerializedValue(b"{}"))
+        )
         child = await execute(
             ctx=test_context,
             execution_id=nested_execution_id,
+            canonical_args=SerializedValue(b"{}"),
             func=child_func,
             args=(),
             kwargs={},
@@ -714,6 +734,7 @@ async def test_nested_child_commits_without_losing_parent_staging(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
+        canonical_args=SerializedValue(b"{}"),
         func=parent_func,
         args=(),
         kwargs={},
@@ -741,6 +762,7 @@ async def test_base_exception_after_start_keeps_started_record(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
+            canonical_args=SerializedValue(b"{}"),
             func=sample_func,
             args=(),
             kwargs={},

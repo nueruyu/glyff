@@ -20,7 +20,7 @@ async def test_descendants_of_returns_strict_transitive_descendants(serializer):
     grand = ExecutionId(parent_id=a, name="grand", sequence=0, args_hash="g")
 
     for eid in (root, a, b, grand):
-        await _save(backend, Execution.start(eid))
+        await _save(backend, Execution.start(eid, SerializedValue(b"{}")))
 
     assert set(await backend.repository.descendants_of(root)) == {a, b, grand}
     assert set(await backend.repository.descendants_of(a)) == {grand}
@@ -30,7 +30,7 @@ async def test_descendants_of_returns_strict_transitive_descendants(serializer):
 async def test_delete_many_removes_execution_parts(serializer):
     backend = MemoryBackend()
     eid = ExecutionId(parent_id=None, name="root", sequence=0, args_hash="r")
-    execution = Execution.start(eid)
+    execution = Execution.start(eid, SerializedValue(b"{}"))
     execution.complete(SerializedValue(await serializer.serialize("ok", str)))
     execution.set_metadata("k", SerializedValue(await serializer.serialize("v", str)))
     await _save(backend, execution)
@@ -61,7 +61,7 @@ async def test_delete_one_descendant_preserves_siblings(serializer):
     leaf2 = ExecutionId(parent_id=p2, name="leaf", sequence=0, args_hash="l2")
 
     for eid in (root, p1, p2, leaf1, leaf2):
-        execution = Execution.start(eid)
+        execution = Execution.start(eid, SerializedValue(b"{}"))
         execution.complete(SerializedValue(await serializer.serialize("ok", str)))
         await _save(backend, execution)
 

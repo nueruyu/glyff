@@ -2,11 +2,11 @@ import uuid
 
 import pytest
 
-from glyff import ArgsHasher, EventEmitter, ExecutionId, Serializer
+from glyff import ArgsCanonicalizer, EventEmitter, ExecutionId, Serializer
 from glyff._context import Context
 from glyff._sequencer import Sequencer
 from glyff.serialization import (
-    JsonArgsHasher,
+    JsonArgsCanonicalizer,
     JsonSerializer,
 )
 from glyff.store import MemoryBackend
@@ -38,8 +38,8 @@ def serializer() -> Serializer:
 
 
 @pytest.fixture
-def hasher() -> ArgsHasher:
-    return JsonArgsHasher()
+def canonicalizer() -> ArgsCanonicalizer:
+    return JsonArgsCanonicalizer()
 
 
 @pytest.fixture
@@ -58,13 +58,13 @@ def mock_backend() -> StubBackend:
 
 @pytest.fixture
 def test_context(
-    mock_backend: StubBackend, hasher: ArgsHasher, serializer: Serializer
+    mock_backend: StubBackend, canonicalizer: ArgsCanonicalizer, serializer: Serializer
 ) -> Context:
     return Context(
         session_id=str(uuid.uuid4()),
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        canonicalizer=canonicalizer,
         event_emitter=EventEmitter([]),
     )

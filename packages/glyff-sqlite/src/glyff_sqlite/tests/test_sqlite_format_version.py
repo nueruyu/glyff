@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from glyff import Execution, ExecutionId, TransactionScope
+from glyff import Execution, ExecutionId, SerializedValue, TransactionScope
 from glyff.exceptions import StoreFormatVersionError
 
 from glyff_sqlite import SQLiteBackend
@@ -87,7 +87,7 @@ class TestConfigurableTablePrefix:
         execution_id = ExecutionId(
             parent_id=None, name="task", sequence=0, args_hash="hash"
         )
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, SerializedValue(b"{}"))
         async with TransactionScope(backend.transaction_provider):
             await backend.repository.save(execution)
 

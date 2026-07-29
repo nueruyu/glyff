@@ -2,16 +2,16 @@ import inspect
 import json
 from typing import Any, Callable
 
-from .._interfaces import ArgsHasher, Serializer
+from .._interfaces import ArgsCanonicalizer, Serializer
+from .._models import CanonicalValue
 from ..exceptions import SerializationError, UnserializableArgumentError
 from .constants import DEFAULT_ENCODING
 from ._utils import (
     OpaquePolicy,
     RaiseOnOpaque,
-    build_hashable_args,
-    hash_from_dict,
+    bind_args,
     stable_json_dumps,
-    to_hashable,
+    to_canonical,
     to_serializable,
 )
 
@@ -20,7 +20,7 @@ class JsonSerializer(Serializer):
     """A serializer using only the standard `json` module."""
 
     def __init__(
-        self, indent: int | str | None = None, ensure_ascii: bool = True
+        self, indent: int | str | None = None, ensure_ascii: bool = False
     ) -> None:
         self._indent = indent
         self._ensure_ascii = ensure_ascii
@@ -52,24 +52,33 @@ class JsonSerializer(Serializer):
         return json.loads(data.decode(DEFAULT_ENCODING))
 
 
-class JsonArgsHasher(ArgsHasher):
-    """An ArgsHasher using standard JSON serialization."""
+class JsonArgsCanonicalizer(ArgsCanonicalizer):
+    """An ArgsCanonicalizer that normalizes into the JSON data model."""
 
     def __init__(self, opaque_policy: OpaquePolicy | None = None) -> None:
-        # How to hash values with no value representation. Defaults to raising, so
-        # distinct instances never silently collide on their class name. Compare to
-        # None explicitly: a custom policy may be a falsy object.
+        # How to represent values with no value representation. Defaults to raising,
+        # so distinct instances never silently collide on their class name. Compare
+        # to None explicitly: a custom policy may be a falsy object.
         self._opaque_policy = (
             RaiseOnOpaque() if opaque_policy is None else opaque_policy
         )
 
-    def _to_jsonable(self, obj: Any) -> Any:
-        """json.dumps default hook. Override to support extra types."""
-        return to_hashable(obj, self._opaque_policy)
+    def _canonicalize(self, obj: Any) -> CanonicalValue:
+        """Canonicalizes one value. Override to support extra types.
 
-    def hash_args(
+        Passing this as the walk's recursion keeps an override in effect at every
+        depth, not just for top-level arguments.
+        """
+        return to_canonical(obj, self._opaque_policy, self._canonicalize)
+
+    def canonicalize_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
-    ) -> str:
-        func_name = getattr(func, "__qualname__", func.__name__)
-        args_dict = build_hashable_args(sig, args, kwargs)
-        return hash_from_dict(args_dict, func_name, default=self._to_jsonable)
+    ) -> CanonicalValue:
+        try:
+            return self._canonicalize(bind_args(sig, args, kwargs))
+        except UnserializableArgumentError as e:
+            func_name = getattr(func, "__qualname__", func.__name__)
+            raise UnserializableArgumentError(
+                f"Arguments to '{func_name}' could not be canonicalized. "
+                f"Ensure all arguments have a value representation. Original error: {e}"
+            ) from e

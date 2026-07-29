@@ -47,6 +47,15 @@ def eid(
     )
 
 
+def canonical_args(raw: object = None) -> SerializedValue:
+    """Canonical arguments for a test execution.
+
+    A backend must round-trip these bytes untouched: an execution's ``args_hash`` is
+    their digest, so re-encoding them would break the key.
+    """
+    return value({} if raw is None else raw)
+
+
 def value(raw: object = "value") -> SerializedValue:
     return SerializedValue(
         json.dumps(
@@ -87,7 +96,7 @@ class ExecutionBackendContract:
         backend = backend_factory("started")
         execution_id = eid("task")
 
-        await save_execution(backend, Execution.start(execution_id))
+        await save_execution(backend, Execution.start(execution_id, canonical_args()))
 
         loaded = await backend.repository.get(execution_id)
         assert loaded is not None
@@ -95,12 +104,41 @@ class ExecutionBackendContract:
         assert loaded.result is None
         assert loaded.metadata == {}
 
+    async def test_args_roundtrip_byte_for_byte(self, backend_factory: BackendFactory):
+        backend = backend_factory("args-bytes")
+        execution_id = eid("task")
+        args = canonical_args({"q": "こんにちは", "n": 1})
+
+        await save_execution(backend, Execution.start(execution_id, args))
+
+        loaded = await backend.repository.get(execution_id)
+        assert loaded is not None
+        # Not merely equal as JSON: an execution's args_hash is the digest of exactly
+        # these bytes, so a store that re-encoded them would break the key. Non-ASCII
+        # is the case that catches a store encoding with different settings.
+        assert loaded.args.data == args.data
+
+    async def test_completed_execution_keeps_its_args(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("args-completed")
+        execution_id = eid("task")
+        args = canonical_args({"a": 1})
+        execution = Execution.start(execution_id, args)
+        execution.complete(value("result"))
+
+        await save_execution(backend, execution)
+
+        loaded = await backend.repository.get(execution_id)
+        assert loaded is not None
+        assert loaded.args.data == args.data
+
     async def test_save_completed_result_then_get(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("completed")
         execution_id = eid("task")
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.complete(value("result-bytes"))
 
         await save_execution(backend, execution)
@@ -115,7 +153,7 @@ class ExecutionBackendContract:
     ):
         backend = backend_factory("completed-null")
         execution_id = eid("task")
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.complete(value(None))
 
         await save_execution(backend, execution)
@@ -130,7 +168,7 @@ class ExecutionBackendContract:
     ):
         backend = backend_factory("metadata")
         execution_id = eid("task")
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.set_metadata("trace", value("trace-bytes"))
         execution.set_metadata("other", value("other-bytes"))
 
@@ -146,7 +184,7 @@ class ExecutionBackendContract:
     ):
         backend = backend_factory("complete-keeps-metadata")
         execution_id = eid("task")
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.set_metadata("trace", value("trace"))
         execution.complete(value("result"))
 
@@ -164,11 +202,11 @@ class ExecutionBackendContract:
         backend = backend_factory("overwrite")
         execution_id = eid("task")
 
-        first = Execution.start(execution_id)
+        first = Execution.start(execution_id, canonical_args())
         first.set_metadata("old", value("old"))
         await save_execution(backend, first)
 
-        second = Execution.start(execution_id)
+        second = Execution.start(execution_id, canonical_args())
         second.set_metadata("new", value("new"))
         second.complete(value("done"))
         await save_execution(backend, second)
@@ -185,7 +223,9 @@ class ExecutionBackendContract:
     ):
         backend = backend_factory("save-no-tx")
         with pytest.raises(RuntimeError):
-            await backend.repository.save(Execution.start(eid("task")))
+            await backend.repository.save(
+                Execution.start(eid("task"), canonical_args())
+            )
 
     async def test_delete_many_requires_active_transaction(
         self, backend_factory: BackendFactory
@@ -199,7 +239,7 @@ class ExecutionBackendContract:
         execution_id = eid("task")
 
         tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(execution_id))
+        await backend.repository.save(Execution.start(execution_id, canonical_args()))
         await tx.rollback()
 
         assert await backend.repository.get(execution_id) is None
@@ -209,7 +249,7 @@ class ExecutionBackendContract:
         execution_id = eid("task")
 
         tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(execution_id))
+        await backend.repository.save(Execution.start(execution_id, canonical_args()))
         await tx.commit()
 
         assert await backend.repository.get(execution_id) is not None
@@ -219,7 +259,7 @@ class ExecutionBackendContract:
     ):
         backend = backend_factory("delete")
         execution_id = eid("task")
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.set_metadata("trace", value("trace"))
 
         await save_execution(backend, execution)
@@ -242,7 +282,7 @@ class ExecutionBackendContract:
         backend = backend_factory("delete-rollback")
         execution_id = eid("task")
 
-        await save_execution(backend, Execution.start(execution_id))
+        await save_execution(backend, Execution.start(execution_id, canonical_args()))
 
         tx = await backend.transaction_provider.begin_transaction()
         await backend.repository.delete_many([execution_id])
@@ -263,7 +303,9 @@ class ExecutionBackendContract:
 
         async with TransactionScope(backend.transaction_provider):
             for execution_id in [root, child, grandchild, sibling]:
-                await backend.repository.save(Execution.start(execution_id))
+                await backend.repository.save(
+                    Execution.start(execution_id, canonical_args())
+                )
 
         descendants = await backend.repository.descendants_of(root)
         assert set(descendants) == {child, grandchild}
@@ -282,9 +324,9 @@ class ExecutionBackendContract:
         leaf1 = eid("leaf", parent=p1, args_hash="same")
         leaf2 = eid("leaf", parent=p2, args_hash="same")
 
-        first = Execution.start(leaf1)
+        first = Execution.start(leaf1, canonical_args())
         first.complete(value("one"))
-        second = Execution.start(leaf2)
+        second = Execution.start(leaf2, canonical_args())
         second.complete(value("two"))
         async with TransactionScope(backend.transaction_provider):
             await backend.repository.save(first)
@@ -303,10 +345,10 @@ class ExecutionBackendContract:
         child = eid("child", parent=root)
 
         parent_tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(root))
+        await backend.repository.save(Execution.start(root, canonical_args()))
 
         child_tx = await backend.transaction_provider.begin_transaction()
-        child_execution = Execution.start(child)
+        child_execution = Execution.start(child, canonical_args())
         child_execution.complete(value("child"))
         await backend.repository.save(child_execution)
         await child_tx.commit()
@@ -326,10 +368,10 @@ class ExecutionBackendContract:
         child = eid("child", parent=root)
 
         parent_tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(root))
+        await backend.repository.save(Execution.start(root, canonical_args()))
 
         child_tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(child))
+        await backend.repository.save(Execution.start(child, canonical_args()))
         await child_tx.rollback()
 
         staged_root = await backend.repository.get(root)
@@ -367,13 +409,13 @@ class ExecutionBackendContract:
         grandchild = eid("grandchild", parent=child)
 
         root_tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(root))
+        await backend.repository.save(Execution.start(root, canonical_args()))
 
         child_tx = await backend.transaction_provider.begin_transaction()
-        child_execution = Execution.start(child)
+        child_execution = Execution.start(child, canonical_args())
 
         grandchild_tx = await backend.transaction_provider.begin_transaction()
-        grandchild_execution = Execution.start(grandchild)
+        grandchild_execution = Execution.start(grandchild, canonical_args())
         grandchild_execution.complete(value("grandchild"))
         await backend.repository.save(grandchild_execution)
         await grandchild_tx.commit()
@@ -402,7 +444,7 @@ class ExecutionBackendContract:
         payload = {"answer": 42, "items": [1, 2, 3]}
         metadata = {"trace": {"step": 1}, "ok": True}
 
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.complete(value(payload))
         execution.set_metadata("json", value(metadata))
 
@@ -423,7 +465,7 @@ class TextBackendContract:
 
     async def test_rejects_non_json_result_bytes(self, backend_factory: BackendFactory):
         backend = backend_factory("invalid-result")
-        execution = Execution.start(eid("task"))
+        execution = Execution.start(eid("task"), canonical_args())
         execution.complete(SerializedValue(b"\xff"))
 
         with pytest.raises(SerializationError) as excinfo:
@@ -438,7 +480,7 @@ class TextBackendContract:
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("invalid-metadata")
-        execution = Execution.start(eid("task"))
+        execution = Execution.start(eid("task"), canonical_args())
         execution.set_metadata("trace", SerializedValue(b"not-json"))
 
         with pytest.raises(SerializationError) as excinfo:
@@ -462,7 +504,7 @@ class BinarySafeBackendContract:
     ):
         backend = backend_factory("binary-result")
         execution_id = eid("task")
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.complete(SerializedValue(b"\xff"))
 
         await save_execution(backend, execution)
@@ -476,7 +518,7 @@ class BinarySafeBackendContract:
     ):
         backend = backend_factory("binary-metadata")
         execution_id = eid("task")
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.set_metadata("trace", SerializedValue(b"not-json"))
 
         await save_execution(backend, execution)
@@ -502,7 +544,7 @@ class DurableBackendContract:
         execution_id = eid("task")
         backend = backend_factory(session_id)
 
-        await save_execution(backend, Execution.start(execution_id))
+        await save_execution(backend, Execution.start(execution_id, canonical_args()))
 
         reopened = backend_factory(session_id)
         loaded = await reopened.repository.get(execution_id)
@@ -516,7 +558,7 @@ class DurableBackendContract:
         execution_id = eid("task")
         backend = backend_factory(session_id)
 
-        await save_execution(backend, Execution.start(execution_id))
+        await save_execution(backend, Execution.start(execution_id, canonical_args()))
 
         async with TransactionScope(backend.transaction_provider):
             await backend.repository.delete_many([execution_id])
@@ -531,7 +573,7 @@ class DurableBackendContract:
         execution_id = eid("task")
         backend = backend_factory(session_id)
 
-        await save_execution(backend, Execution.start(execution_id))
+        await save_execution(backend, Execution.start(execution_id, canonical_args()))
 
         tx = await backend.transaction_provider.begin_transaction()
         await backend.repository.delete_many([execution_id])
@@ -546,7 +588,7 @@ class DurableBackendContract:
         session_id = "durable-metadata"
         execution_id = eid("task")
         backend = backend_factory(session_id)
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.set_metadata("trace", value("trace"))
 
         await save_execution(backend, execution)
@@ -565,7 +607,7 @@ class DurableBackendContract:
         metadata = {"trace": {"step": 1}, "ok": True}
         backend = backend_factory(session_id)
 
-        execution = Execution.start(execution_id)
+        execution = Execution.start(execution_id, canonical_args())
         execution.complete(value(payload))
         execution.set_metadata("json", value(metadata))
 
