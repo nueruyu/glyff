@@ -17,7 +17,7 @@ whose code generation has changed — it does not rewrite your in-flight session
 Store formats carry a version stamp. The SQLite backend records it in a
 `<table_prefix>_meta` table (alongside `<table_prefix>_executions`, default
 prefix `glyff`); the JSON file store writes a `glyff_format.json` marker beside
-the session's records. Both are at `FORMAT_VERSION = 2`.
+the session's records. Both are at `FORMAT_VERSION = 1`.
 
 A store written by an incompatible build raises `StoreFormatVersionError` rather
 than being misread. A fresh or pre-versioning store is stamped on first open. The

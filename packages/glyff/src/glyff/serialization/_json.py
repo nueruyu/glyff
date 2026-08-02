@@ -25,7 +25,7 @@ class JsonSerializer(Serializer):
         self._indent = indent
         self._ensure_ascii = ensure_ascii
 
-    def _to_jsonable(self, obj: Any) -> Any:
+    def to_jsonable(self, obj: Any) -> Any:
         """json.dumps default hook. Override to support extra types."""
         return to_serializable(obj)
 
@@ -33,7 +33,7 @@ class JsonSerializer(Serializer):
         """Encodes a JSON-ready value to stable JSON bytes."""
         text = stable_json_dumps(
             value,
-            default=self._to_jsonable,
+            default=self.to_jsonable,
             indent=self._indent,
             ensure_ascii=self._ensure_ascii,
         )
@@ -63,19 +63,19 @@ class JsonArgsCanonicalizer(ArgsCanonicalizer):
             RaiseOnOpaque() if opaque_policy is None else opaque_policy
         )
 
-    def _canonicalize(self, obj: Any) -> CanonicalValue:
+    def canonicalize_value(self, obj: Any) -> CanonicalValue:
         """Canonicalizes one value. Override to support extra types.
 
         Passing this as the walk's recursion keeps an override in effect at every
         depth, not just for top-level arguments.
         """
-        return to_canonical(obj, self._opaque_policy, self._canonicalize)
+        return to_canonical(obj, self._opaque_policy, self.canonicalize_value)
 
     def canonicalize_args(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> CanonicalValue:
         try:
-            return self._canonicalize(bind_args(sig, args, kwargs))
+            return self.canonicalize_value(bind_args(sig, args, kwargs))
         except UnserializableArgumentError as e:
             func_name = getattr(func, "__qualname__", func.__name__)
             raise UnserializableArgumentError(

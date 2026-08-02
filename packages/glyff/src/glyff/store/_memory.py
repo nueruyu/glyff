@@ -5,7 +5,13 @@ import contextvars
 from collections.abc import Iterable
 
 from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
-from .._models import Execution, ExecutionId, Metadata, SerializedValue
+from .._models import (
+    EncodedArguments,
+    Execution,
+    ExecutionId,
+    Metadata,
+    SerializedValue,
+)
 from ._memory_client import MemoryClient
 from .utils import execution_id_to_path, path_to_execution_id
 
@@ -99,7 +105,7 @@ class MemoryExecutionRepository(ExecutionRepository):
         return Execution(
             id=execution_id,
             status=status,
-            args=SerializedValue(args_data),
+            args=EncodedArguments(args_data),
             result=SerializedValue(result_data)
             if isinstance(result_data, bytes)
             else None,

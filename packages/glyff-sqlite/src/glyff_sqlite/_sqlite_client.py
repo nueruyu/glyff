@@ -12,7 +12,7 @@ from typing import Any
 from glyff.exceptions import StoreFormatVersionError
 
 # Bump when the stored schema changes.
-FORMAT_VERSION = 2
+FORMAT_VERSION = 1
 
 # The store's two tables are derived from one prefix, so the version lives in a
 # table glyff owns rather than the database-wide PRAGMA user_version.

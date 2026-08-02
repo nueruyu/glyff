@@ -1,7 +1,7 @@
 from typing import cast
 
 from glyff import Execution, ExecutionStatus, SerializedValue
-from glyff.testing import canonical_args, eid
+from glyff.testing import encoded_args, eid
 from glyff._context import TransactionScope
 from glyff.store import MemoryBackend, MemoryExecutionRepository
 from glyff.store._memory import _make_key
@@ -21,7 +21,7 @@ async def test_descendants_of_returns_strict_transitive_descendants(serializer):
     grand = eid("grand", parent=a)
 
     for execution_id in (root, a, b, grand):
-        await _save(backend, Execution.start(execution_id, canonical_args()))
+        await _save(backend, Execution.start(execution_id, encoded_args()))
 
     assert set(await backend.repository.descendants_of(root)) == {a, b, grand}
     assert set(await backend.repository.descendants_of(a)) == {grand}
@@ -31,7 +31,7 @@ async def test_descendants_of_returns_strict_transitive_descendants(serializer):
 async def test_delete_many_removes_execution_parts(serializer):
     backend = MemoryBackend()
     execution_id = eid("root")
-    execution = Execution.start(execution_id, canonical_args())
+    execution = Execution.start(execution_id, encoded_args())
     execution.complete(SerializedValue(await serializer.serialize("ok", str)))
     execution.set_metadata("k", SerializedValue(await serializer.serialize("v", str)))
     await _save(backend, execution)
@@ -62,7 +62,7 @@ async def test_delete_one_descendant_preserves_siblings(serializer):
     leaf2 = eid("leaf", parent=p2)
 
     for execution_id in (root, p1, p2, leaf1, leaf2):
-        execution = Execution.start(execution_id, canonical_args())
+        execution = Execution.start(execution_id, encoded_args())
         execution.complete(SerializedValue(await serializer.serialize("ok", str)))
         await _save(backend, execution)
 

@@ -2,8 +2,7 @@ import hashlib
 import inspect
 import json
 
-from glyff import ArgsCanonicalizer, ExecutionId, engrave
-from glyff._models import args_digest
+from glyff import ArgsCanonicalizer, EncodedArguments, ExecutionId, engrave
 from glyff.serialization._utils import encode_canonical
 from glyff.tests.types import BackendFactory, make_session
 
@@ -15,12 +14,11 @@ async def greet(name: str, times: int = 1) -> str:
 
 def _expected_id(canonicalizer: ArgsCanonicalizer, *args, **kwargs) -> ExecutionId:
     sig = inspect.signature(greet)
-    data = encode_canonical(canonicalizer.canonicalize_args(greet, sig, args, kwargs))
+    encoded = EncodedArguments(
+        encode_canonical(canonicalizer.canonicalize_args(greet, sig, args, kwargs))
+    )
     return ExecutionId(
-        parent_id=None,
-        name=greet.__qualname__,
-        sequence=0,
-        args_hash=args_digest(data),
+        parent_id=None, name=greet.__qualname__, sequence=0, args_hash=encoded.digest
     )
 
 

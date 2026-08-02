@@ -13,7 +13,7 @@ from glyff import (
 )
 from glyff._context import Context, reset_context, set_context
 from glyff._event_system import EventEmitter
-from glyff.testing import canonical_args, eid
+from glyff.testing import encoded_args, eid
 from glyff._sequencer import Sequencer
 from glyff.exceptions import NoCurrentExecutionError
 from glyff.serialization import JsonArgsCanonicalizer, JsonSerializer
@@ -27,7 +27,7 @@ def _eid(name: str, parent: ExecutionId | None = None) -> ExecutionId:
 
 async def _start(ctx: Context, eid: ExecutionId) -> None:
     async with ctx.get_transaction_scope():
-        await ctx.repository.save(Execution.start(eid, canonical_args()))
+        await ctx.repository.save(Execution.start(eid, encoded_args()))
 
 
 async def test_set_get_roundtrip(test_context: Context):
@@ -35,7 +35,7 @@ async def test_set_get_roundtrip(test_context: Context):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid, canonical_args()))
+        await test_context.repository.save(Execution.start(eid, encoded_args()))
         test_context.tracer.start(eid)
         try:
             await accessor.set("note", {"a": 1})
@@ -51,7 +51,7 @@ async def test_keyed_entries_are_independent(test_context: Context):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid, canonical_args()))
+        await test_context.repository.save(Execution.start(eid, encoded_args()))
         test_context.tracer.start(eid)
         try:
             await accessor.set("a", "one")
@@ -92,7 +92,7 @@ async def test_complete_preserves_metadata(test_context: Context, serializer):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid, canonical_args()))
+        await test_context.repository.save(Execution.start(eid, encoded_args()))
         test_context.tracer.start(eid)
         try:
             await accessor.set("note", "kept")

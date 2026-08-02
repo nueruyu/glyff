@@ -1,14 +1,20 @@
 from typing import Any, Callable
 
 from ._context import Context
-from ._models import Execution, ExecutionId, ExecutionStatus, SerializedValue
+from ._models import (
+    EncodedArguments,
+    Execution,
+    ExecutionId,
+    ExecutionStatus,
+    SerializedValue,
+)
 from .events import ExecutionCompleted, ExecutionFailed
 
 
 async def execute(
     ctx: Context,
     execution_id: ExecutionId,
-    canonical_args: SerializedValue,
+    encoded_args: EncodedArguments,
     func: Callable[..., Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
@@ -35,7 +41,7 @@ async def execute(
     async with ctx.get_transaction_scope():
         await sequencer.reset_for_call(execution_id)
         if await repository.get(execution_id) is None:
-            await repository.save(Execution.start(execution_id, canonical_args))
+            await repository.save(Execution.start(execution_id, encoded_args))
 
     tracer.start(execution_id)
 

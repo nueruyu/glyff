@@ -21,7 +21,7 @@ from glyff.store import MemoryExecutionRepository
 from glyff.store._memory import _make_key
 from glyff.store._memory_client import MemoryClient
 from glyff.store.utils import execution_id_to_path
-from glyff.testing import PruningEventHandler, canonical_args, eid
+from glyff.testing import PruningEventHandler, encoded_args, eid
 from glyff.tests.stubs.store import StubBackend, StubExecutionRepository
 
 
@@ -61,7 +61,7 @@ async def test_successful_execution(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
-        canonical_args=canonical_args(),
+        encoded_args=encoded_args(),
         func=sample_func,
         args=(),
         kwargs={},
@@ -102,7 +102,7 @@ async def test_completion_prunes_descendants_when_enabled(
 
         async def sample_func():
             async with ctx.get_transaction_scope():
-                execution = Execution.start(child, canonical_args())
+                execution = Execution.start(child, encoded_args())
                 execution.complete(
                     SerializedValue(await serializer.serialize("child", str))
                 )
@@ -112,7 +112,7 @@ async def test_completion_prunes_descendants_when_enabled(
         result = await execute(
             ctx=ctx,
             execution_id=base_execution_id,
-            canonical_args=canonical_args(),
+            encoded_args=encoded_args(),
             func=sample_func,
             args=(),
             kwargs={},
@@ -153,7 +153,7 @@ async def test_nested_completion_prunes(
         await execute(
             ctx=ctx,
             execution_id=nested_execution_id,
-            canonical_args=canonical_args(),
+            encoded_args=encoded_args(),
             func=sample_func,
             args=(),
             kwargs={},
@@ -178,7 +178,7 @@ async def test_completion_does_not_prune_when_disabled(
     await execute(
         ctx=test_context,
         execution_id=base_execution_id,
-        canonical_args=canonical_args(),
+        encoded_args=encoded_args(),
         func=sample_func,
         args=(),
         kwargs={},
@@ -204,7 +204,7 @@ async def test_completed_task_is_skipped(
     test_context.sequencer.reset_for_call = AsyncMock()
 
     path = execution_id_to_path(base_execution_id)
-    mock_backend._client.data[_make_key(path, "args")] = canonical_args().data
+    mock_backend._client.data[_make_key(path, "args")] = encoded_args().data
     mock_backend._client.data[_make_key(path, "status")] = ExecutionStatus.COMPLETED
     mock_backend._client.data[_make_key(path, "result")] = await serializer.serialize(
         "cached_result", str
@@ -213,7 +213,7 @@ async def test_completed_task_is_skipped(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
-        canonical_args=canonical_args(),
+        encoded_args=encoded_args(),
         func=sample_func,
         args=(),
         kwargs={},
@@ -238,13 +238,13 @@ async def test_started_record_is_retryable(
     # A leftover STARTED record (an interrupted prior attempt) does not block
     # re-execution.
     path = execution_id_to_path(base_execution_id)
-    mock_backend._client.data[_make_key(path, "args")] = canonical_args().data
+    mock_backend._client.data[_make_key(path, "args")] = encoded_args().data
     mock_backend._client.data[_make_key(path, "status")] = ExecutionStatus.STARTED
 
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
-        canonical_args=canonical_args(),
+        encoded_args=encoded_args(),
         func=sample_func,
         args=(),
         kwargs={},
@@ -266,7 +266,7 @@ async def test_general_exception_persists_nothing(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
-            canonical_args=canonical_args(),
+            encoded_args=encoded_args(),
             func=sample_func,
             args=(),
             kwargs={},
@@ -300,7 +300,7 @@ async def test_application_pause_is_retryable(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
-            canonical_args=canonical_args(),
+            encoded_args=encoded_args(),
             func=paused,
             args=(),
             kwargs={},
@@ -317,7 +317,7 @@ async def test_application_pause_is_retryable(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
-        canonical_args=canonical_args(),
+        encoded_args=encoded_args(),
         func=resumed,
         args=(),
         kwargs={},
@@ -343,7 +343,7 @@ async def test_original_traceback_is_preserved_on_function_exception(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
-            canonical_args=canonical_args(),
+            encoded_args=encoded_args(),
             func=sample_func,
             args=(),
             kwargs={},
@@ -370,7 +370,7 @@ async def test_start_is_committed_before_function_body_runs(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
-        canonical_args=canonical_args(),
+        encoded_args=encoded_args(),
         func=sample_func,
         args=(),
         kwargs={},
@@ -390,7 +390,7 @@ async def test_function_exception_rolls_back_body_scope_writes(
 
     async def sample_func():
         assert test_context.current_execution_id == base_execution_id
-        execution = Execution.start(scratch_id, canonical_args())
+        execution = Execution.start(scratch_id, encoded_args())
         execution.complete(SerializedValue(await serializer.serialize("saved", str)))
         await test_context.repository.save(execution)
         raise ValueError("oops")
@@ -399,7 +399,7 @@ async def test_function_exception_rolls_back_body_scope_writes(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
-            canonical_args=canonical_args(),
+            encoded_args=encoded_args(),
             func=sample_func,
             args=(),
             kwargs={},
@@ -439,7 +439,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
     token = set_context(ctx)
     try:
         async with ctx.get_transaction_scope():
-            execution = Execution.start(nested_execution_id, canonical_args())
+            execution = Execution.start(nested_execution_id, encoded_args())
             execution.complete(
                 SerializedValue(await serializer.serialize("child", str))
             )
@@ -452,7 +452,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
             await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
-                canonical_args=canonical_args(),
+                encoded_args=encoded_args(),
                 func=sample_func,
                 args=(),
                 kwargs={},
@@ -506,7 +506,7 @@ async def test_execution_failed_emits_after_body_transaction_closes(
     try:
 
         async def sample_func():
-            execution = Execution.start(scratch_id, canonical_args())
+            execution = Execution.start(scratch_id, encoded_args())
             execution.complete(
                 SerializedValue(await serializer.serialize("scratch", str))
             )
@@ -517,7 +517,7 @@ async def test_execution_failed_emits_after_body_transaction_closes(
             await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
-                canonical_args=canonical_args(),
+                encoded_args=encoded_args(),
                 func=sample_func,
                 args=(),
                 kwargs={},
@@ -563,7 +563,7 @@ async def test_failed_handler_failure_does_not_replace_original_exception(
                 await execute(
                     ctx=ctx,
                     execution_id=base_execution_id,
-                    canonical_args=canonical_args(),
+                    encoded_args=encoded_args(),
                     func=sample_func,
                     args=(),
                     kwargs={},
@@ -620,7 +620,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
             await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
-                canonical_args=canonical_args(),
+                encoded_args=encoded_args(),
                 func=sample_func,
                 args=(),
                 kwargs={},
@@ -666,7 +666,7 @@ async def test_completed_handler_failure_does_not_affect_result_or_completion(
             result = await execute(
                 ctx=ctx,
                 execution_id=base_execution_id,
-                canonical_args=canonical_args(),
+                encoded_args=encoded_args(),
                 func=sample_func,
                 args=(),
                 kwargs={},
@@ -696,11 +696,11 @@ async def test_nested_child_commits_without_losing_parent_staging(
         return "child"
 
     async def parent_func():
-        await test_context.repository.save(Execution.start(marker_id, canonical_args()))
+        await test_context.repository.save(Execution.start(marker_id, encoded_args()))
         child = await execute(
             ctx=test_context,
             execution_id=nested_execution_id,
-            canonical_args=canonical_args(),
+            encoded_args=encoded_args(),
             func=child_func,
             args=(),
             kwargs={},
@@ -717,7 +717,7 @@ async def test_nested_child_commits_without_losing_parent_staging(
     result = await execute(
         ctx=test_context,
         execution_id=base_execution_id,
-        canonical_args=canonical_args(),
+        encoded_args=encoded_args(),
         func=parent_func,
         args=(),
         kwargs={},
@@ -745,7 +745,7 @@ async def test_base_exception_after_start_keeps_started_record(
         await execute(
             ctx=test_context,
             execution_id=base_execution_id,
-            canonical_args=canonical_args(),
+            encoded_args=encoded_args(),
             func=sample_func,
             args=(),
             kwargs={},

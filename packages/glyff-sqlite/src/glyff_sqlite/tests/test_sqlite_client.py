@@ -3,7 +3,7 @@ from pathlib import Path
 
 from glyff import Execution, SerializedValue, TransactionScope
 from glyff.store.utils import execution_id_to_path
-from glyff.testing import canonical_args, eid
+from glyff.testing import encoded_args, eid
 from glyff_sqlite import SQLiteBackend
 from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
 
@@ -81,7 +81,7 @@ async def test_sqlite_backend_stores_execution_columns_as_readable_json(
     db = tmp_path / "readable.sqlite3"
     backend = SQLiteBackend(db)
     execution_id = eid("task")
-    execution = Execution.start(execution_id, canonical_args())
+    execution = Execution.start(execution_id, encoded_args())
     execution.complete(SerializedValue(b'{"answer":42}'))
     execution.set_metadata("trace", SerializedValue(b'{"step":1}'))
 

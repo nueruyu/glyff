@@ -25,7 +25,7 @@ _EXECUTIONS_FILE = "executions.json"
 _FORMAT_FILE = "glyff_format.json"
 
 # Bump when the stored layout changes.
-FORMAT_VERSION = 2
+FORMAT_VERSION = 1
 
 
 def _initialize_format_sync(client: FileClient) -> None:

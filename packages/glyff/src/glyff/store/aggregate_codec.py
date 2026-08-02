@@ -11,7 +11,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .._models import Execution, ExecutionId, ExecutionStatus, Metadata, SerializedValue
+from .._models import (
+    EncodedArguments,
+    Execution,
+    ExecutionId,
+    ExecutionStatus,
+    Metadata,
+    SerializedValue,
+)
 from ..exceptions import SerializationError
 from ..serialization._utils import stable_json_dumps
 from ..serialization.constants import DEFAULT_ENCODING
@@ -77,7 +84,7 @@ def _json_bytes(value: object) -> bytes:
     return stable_json_dumps(value).encode(DEFAULT_ENCODING)
 
 
-def _pack_args(args: SerializedValue) -> str:
+def _pack_args(args: EncodedArguments) -> str:
     # An opaque string, not an embedded JSON value: preserve the exact digest
     # preimage (see Execution.args).
     try:
@@ -104,7 +111,7 @@ def execution_from_dict(execution_id: ExecutionId, stored: dict[str, Any]) -> Ex
     return Execution(
         id=execution_id,
         status=status,
-        args=SerializedValue(stored["args"].encode(DEFAULT_ENCODING)),
+        args=EncodedArguments(stored["args"].encode(DEFAULT_ENCODING)),
         result=_unpack_value(stored.get("result"))
         if status is ExecutionStatus.COMPLETED
         else None,

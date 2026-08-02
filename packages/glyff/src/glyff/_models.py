@@ -12,9 +12,21 @@ CanonicalValue: TypeAlias = (
 )
 
 
-def args_digest(data: bytes) -> str:
-    """An execution key's ``args_hash``: the digest over its canonical arguments."""
-    return hashlib.sha256(data).hexdigest()
+@dataclass(frozen=True)
+class EncodedArguments:
+    """A call's canonical arguments, encoded.
+
+    Distinct from :class:`SerializedValue`: that carries application values through
+    a ``Serializer``, while these come from the canonicalization path and are the
+    preimage of the execution's key.
+    """
+
+    data: bytes
+
+    @property
+    def digest(self) -> str:
+        """The ``args_hash`` of an execution keyed by these arguments."""
+        return hashlib.sha256(self.data).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -70,12 +82,12 @@ class Execution:
 
     id: ExecutionId
     status: ExecutionStatus
-    args: SerializedValue
+    args: EncodedArguments
     """The canonical arguments this call was keyed by.
 
     Invariant, enforced on construction and relied on by migration:
 
-        id.args_hash == args_digest(args.data)
+        id.args_hash == args.digest
 
     Stores must therefore round-trip these bytes untouched; re-encoding them would
     break the key.
@@ -84,14 +96,14 @@ class Execution:
     metadata: dict[str, Metadata] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.id.args_hash != args_digest(self.args.data):
+        if self.id.args_hash != self.args.digest:
             raise ValueError(
                 f"Execution {self.id} does not match its recorded arguments: "
                 "args_hash must be the digest of args."
             )
 
     @classmethod
-    def start(cls, execution_id: ExecutionId, args: SerializedValue) -> "Execution":
+    def start(cls, execution_id: ExecutionId, args: EncodedArguments) -> "Execution":
         return cls(id=execution_id, status=ExecutionStatus.STARTED, args=args)
 
     def complete(self, result: SerializedValue) -> None:

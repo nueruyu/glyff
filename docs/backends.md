@@ -37,7 +37,7 @@ against the shared contract suite in `glyff.testing`: subclass the contract
 classes (`ExecutionBackendContract`, `DurableBackendContract`, and the
 text/binary-safety variants) and provide your backend factory. The shipped
 backends run the same suite. It also exports the reference `PruningEventHandler`
-and the helpers `save_execution`, `value`, and the pair `eid` / `canonical_args`,
+and the helpers `save_execution`, `value`, and the pair `eid` / `encoded_args`,
 which build an execution that satisfies the `args_hash` invariant.
 
 ## Planned contract extensions

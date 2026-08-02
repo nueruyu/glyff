@@ -4,7 +4,7 @@ from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
 from ._executor import execute
-from ._models import ExecutionId, SerializedValue, args_digest
+from ._models import EncodedArguments, ExecutionId
 from .exceptions import MissingTypeHintError, TypeHintResolutionError
 from .serialization._utils import encode_canonical
 
@@ -40,17 +40,16 @@ async def _resolve_call_identity(
     task_name: str,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-) -> tuple[ExecutionId, SerializedValue]:
+) -> tuple[ExecutionId, EncodedArguments]:
     """Return the execution id for one call and the canonical arguments it is keyed by."""
     parent_id = ctx.current_execution_id
     canonical = ctx.canonicalizer.canonicalize_args(func, sig, args, kwargs)
-    data = encode_canonical(canonical)
-    args_hash = args_digest(data)
-    seq = await ctx.sequencer.next(parent_id, task_name, args_hash)
+    encoded = EncodedArguments(encode_canonical(canonical))
+    seq = await ctx.sequencer.next(parent_id, task_name, encoded.digest)
     execution_id = ExecutionId(
-        parent_id=parent_id, name=task_name, sequence=seq, args_hash=args_hash
+        parent_id=parent_id, name=task_name, sequence=seq, args_hash=encoded.digest
     )
-    return execution_id, SerializedValue(data)
+    return execution_id, encoded
 
 
 def engrave(func: Callable[P, R]) -> Callable[P, R]:
@@ -84,13 +83,13 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
     @functools.wraps(func)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         ctx = get_context()
-        execution_id, canonical_args = await _resolve_call_identity(
+        execution_id, encoded_args = await _resolve_call_identity(
             ctx, func, sig, task_name, args, kwargs
         )
         result = await execute(
             ctx=ctx,
             execution_id=execution_id,
-            canonical_args=canonical_args,
+            encoded_args=encoded_args,
             func=func,
             args=args,
             kwargs=kwargs,

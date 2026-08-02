@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 from glyff import Execution, ExecutionStatus, SerializedValue
-from glyff.testing import canonical_args, eid
+from glyff.testing import encoded_args, eid
 
 from glyff_file_store import FileExecutionRepository, FileTransactionProvider
 from glyff_file_store._file_client import FileClient
@@ -553,7 +553,7 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     child = eid("child", parent=parent)
 
     parent_tx = await transaction_provider.begin_transaction()
-    await repository.save(Execution.start(parent, canonical_args()))
+    await repository.save(Execution.start(parent, encoded_args()))
 
     def parent_meta(data: bytes | None) -> bytes | None:
         return b'{"state":"parent"}'
@@ -561,7 +561,7 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     client.stage_update("metadata/parent.json", parent_meta)
 
     child_tx = await transaction_provider.begin_transaction()
-    child_execution = Execution.start(child, canonical_args())
+    child_execution = Execution.start(child, encoded_args())
     child_execution.complete(SerializedValue(await serializer.serialize("child", str)))
     await repository.save(child_execution)
     await child_tx.commit()

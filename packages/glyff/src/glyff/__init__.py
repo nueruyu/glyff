@@ -11,6 +11,7 @@ from ._interfaces import (
 )
 from ._models import (
     CanonicalValue,
+    EncodedArguments,
     Execution,
     ExecutionId,
     ExecutionStatus,
@@ -33,6 +34,7 @@ __all__ = [
     "TransactionScope",
     "ExecutionRepository",
     "CanonicalValue",
+    "EncodedArguments",
     "Execution",
     "ExecutionId",
     "ExecutionStatus",

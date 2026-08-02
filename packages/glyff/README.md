@@ -34,7 +34,8 @@ pip install glyff
 | `ExecutionId`         | Identifier for a recorded function execution.                   |
 | `Execution`           | Aggregate Root for a recorded function execution.               |
 | `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`.                                   |
-| `SerializedValue`     | Serializer-neutral persisted value.                             |
+| `SerializedValue`     | Serializer-neutral persisted value (results, metadata).         |
+| `EncodedArguments`    | A call's canonical arguments, the preimage of its key.          |
 | `Metadata`            | Metadata entry owned by an `Execution`.                         |
 | `ExecutionRepository` | Repository for execution aggregates.                            |
 | `Transaction`         | Active transaction boundary.                                    |
