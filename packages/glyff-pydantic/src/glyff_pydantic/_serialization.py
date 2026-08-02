@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import Any
 
 from glyff.exceptions import SerializationError
 from glyff import CanonicalValue
-from glyff.serialization import JsonArgsCanonicalizer, JsonSerializer
+from glyff.serialization import (
+    JsonArgsCanonicalizer,
+    JsonSerializer,
+    OpaqueContext,
+    OpaquePolicy,
+    RaiseOnOpaque,
+)
 from pydantic import BaseModel, TypeAdapter
-from pydantic_core import to_jsonable_python
+from pydantic_core import PydanticSerializationError, to_jsonable_python
 
 
 class PydanticSerializer(JsonSerializer):
@@ -57,42 +62,36 @@ class PydanticSerializer(JsonSerializer):
         return adapter.validate_json(data)
 
 
+class _PydanticScalars(OpaquePolicy):
+    """Represents the scalars pydantic knows — datetime, UUID, Decimal — by value.
+
+    They reach a policy because they have no structural representation, which is
+    exactly what a policy decides. Tagging their output is right too: a datetime
+    and the string spelling of it are different arguments.
+    """
+
+    def __init__(self, fallback: OpaquePolicy) -> None:
+        self._fallback = fallback
+
+    def represent(self, ctx: OpaqueContext) -> Any:
+        try:
+            return to_jsonable_python(ctx.value)
+        except PydanticSerializationError:
+            return self._fallback.represent(ctx)
+
+
 class PydanticArgsCanonicalizer(JsonArgsCanonicalizer):
     """An ArgsCanonicalizer that understands Pydantic models."""
 
+    def __init__(self, opaque_policy: OpaquePolicy | None = None) -> None:
+        fallback = RaiseOnOpaque() if opaque_policy is None else opaque_policy
+        super().__init__(_PydanticScalars(fallback))
+
     def _canonicalize(self, obj: Any) -> CanonicalValue:
         if isinstance(obj, BaseModel):
-            return self._model_to_canonical(obj)
+            # Dump to python types only. The shared walk owns every container from
+            # here, so a model's mappings and sets get the same key checks and
+            # ordering as anything else; pydantic's own encoder would stringify
+            # mapping keys first and collapse two distinct keys into one.
+            return super()._canonicalize(obj.model_dump(mode="python"))
         return super()._canonicalize(obj)
-
-    def _model_to_canonical(self, obj: BaseModel) -> CanonicalValue:
-        # Dump to python types, order any sets, then let pydantic_core encode the
-        # scalars it knows (datetime, UUID, Decimal) and hand the rest back to the
-        # shared walk.
-        dumped = self._sort_sets(obj.model_dump(mode="python"))
-        return super()._canonicalize(
-            to_jsonable_python(dumped, fallback=self._canonicalize)
-        )
-
-    def _sort_sets(self, val: Any) -> Any:
-        # Sets have to be ordered before pydantic_core sees them: it emits a set in
-        # (hash-randomized) iteration order, and by the time the shared walk runs
-        # the set has already become a list.
-        if isinstance(val, (set, frozenset)):
-            items = [self._sort_sets(x) for x in val]
-            try:
-                return sorted(items)
-            except TypeError:
-                return sorted(
-                    items,
-                    key=lambda e: json.dumps(
-                        e, sort_keys=True, default=self._canonicalize
-                    ),
-                )
-        if isinstance(val, dict):
-            return {k: self._sort_sets(v) for k, v in val.items()}
-        if isinstance(val, list):
-            return [self._sort_sets(x) for x in val]
-        if isinstance(val, tuple):
-            return tuple(self._sort_sets(x) for x in val)
-        return val

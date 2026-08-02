@@ -1,8 +1,9 @@
 import dataclasses
 import inspect
+from typing import Any
 
 import pytest
-from glyff.exceptions import SerializationError
+from glyff.exceptions import SerializationError, UnserializableArgumentError
 from glyff import ArgsCanonicalizer, Serializer
 from pydantic import BaseModel
 
@@ -347,20 +348,36 @@ def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
     assert first != other
 
 
-def test_model_set_field_is_sorted_for_a_stable_canonical_form():
-    """A model's set field is emitted as a sorted list so the canonical form is process-stable.
-
-    pydantic_core would otherwise emit the set in (hash-randomized) iteration order.
-    """
-    from glyff_pydantic import PydanticArgsCanonicalizer
-
+def test_model_set_field_is_sorted_for_a_stable_canonical_form(
+    canonicalizer: ArgsCanonicalizer,
+):
     class M(BaseModel):
         tags: set
 
-    dumped = PydanticArgsCanonicalizer()._model_to_canonical(
-        M(tags={"gamma", "alpha", "beta"})
+    def f(a: object):
+        pass
+
+    canonical = canonicalizer.canonicalize_args(
+        f, inspect.signature(f), (M(tags={"gamma", "alpha", "beta"}),), {}
     )
-    assert dumped == {"tags": ["alpha", "beta", "gamma"]}
+    assert canonical == {"a": {"tags": ["alpha", "beta", "gamma"]}}
+
+
+def test_model_mapping_keys_that_collide_are_rejected(
+    canonicalizer: ArgsCanonicalizer,
+):
+    # pydantic's own encoder stringifies mapping keys, which would collapse 1 and
+    # "1" into one entry before the shared walk could object.
+    class M(BaseModel):
+        data: dict[Any, str]
+
+    def f(a: object):
+        pass
+
+    with pytest.raises(UnserializableArgumentError, match="canonicalize to"):
+        canonicalizer.canonicalize_args(
+            f, inspect.signature(f), (M(data={1: "integer", "1": "string"}),), {}
+        )
 
 
 def test_model_set_field_is_content_based(canonicalizer: ArgsCanonicalizer):

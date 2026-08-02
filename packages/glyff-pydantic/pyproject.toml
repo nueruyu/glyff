@@ -1,6 +1,6 @@
 [project]
 name = "glyff-pydantic"
-description = "Pydantic-based Serializer and ArgsHasher for glyff."
+description = "Pydantic-based Serializer and ArgsCanonicalizer for glyff."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"

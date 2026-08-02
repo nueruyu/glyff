@@ -41,6 +41,7 @@ pip install glyff
 | `TransactionProvider` | Provider used by `TransactionScope`.                            |
 | `Serializer`          | Protocol for value serialization.                               |
 | `ArgsCanonicalizer`   | Contract for normalizing call arguments into a canonical form.  |
+| `CanonicalValue`      | The JSON data model value a canonicalizer returns.              |
 
 `engrave` also takes an explicit identity —
 `@engrave(name="chat.reply", version=2)` — so recorded histories survive

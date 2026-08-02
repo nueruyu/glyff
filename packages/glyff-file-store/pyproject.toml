@@ -1,6 +1,6 @@
 [project]
 name = "glyff-file-store"
-description = "File-based SessionStore implementation for glyff."
+description = "File-based execution backend for glyff."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"

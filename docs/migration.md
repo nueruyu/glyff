@@ -62,11 +62,11 @@ dependence on the canonicalizer that wrote the record.
 > **Planned** — [#41](https://github.com/nueruyu/glyff/issues/41) (generation
 > stamp and typed mismatch error; the store format stamp above has landed),
 > [#42](https://github.com/nueruyu/glyff/issues/42) (repository enumeration, so
-> a script can walk a session's records), and the runner that ships the encoder
-> and digest a rewritten key is recomputed with — until it lands, recomputing
-> keys yourself means reproducing glyff's canonical encoding, which is not a
-> supported surface. Resuming a session on changed code diverges silently in the
-> meantime; pin paused sessions to the code that started them.
+> a script can walk a session's records). The encoder and digest that recompute a
+> rewritten key ship with the runner; until then, reproducing glyff's canonical
+> encoding yourself is not a supported surface. Resuming a session on changed
+> code diverges silently in the meantime, so pin paused sessions to the code that
+> started them.
 
 ## Running without migration
 

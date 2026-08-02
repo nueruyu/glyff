@@ -57,8 +57,8 @@ class SerializationError(GlyffError):
 
 class UnserializableArgumentError(SerializationError):
     """
-    Raised when an argument to an engraved function cannot be deterministically
-    serialized for hashing.
+    Raised when an argument to an engraved function has no deterministic
+    canonical form, so the call cannot be given a stable identity.
     """
 
     pass

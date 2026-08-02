@@ -108,6 +108,15 @@ def test_canonical_rejects_keys_that_collide_once_stringified():
         canonical({True: "boolean", "true": "string"})
 
 
+def test_canonical_renders_str_subclass_keys_as_their_builtin():
+    class CustomKey(str):
+        def __str__(self) -> str:
+            return "rewritten"
+
+    # json keys the entry by the string's own data, so identity must too.
+    assert canonical({CustomKey("actual"): 1}) == {"actual": 1}
+
+
 def test_canonical_renders_int_subclass_keys_as_their_builtin():
     class Port(int):
         def __repr__(self) -> str:

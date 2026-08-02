@@ -1,6 +1,6 @@
 [project]
 name = "glyff-sqlite"
-description = "SQLite-backed durable SessionStore for glyff."
+description = "SQLite-backed durable execution backend for glyff."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"

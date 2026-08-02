@@ -96,10 +96,10 @@ def _compared_fields(obj: Any) -> list[dataclasses.Field]:
 
 def _canonical_key(key: Any) -> str:
     # Stringify keys here rather than at encoding time, so the form stays stable
-    # across a JSON round trip. Subclasses render as their builtin does, as json's
-    # own encoder would.
+    # across a JSON round trip. Always through the builtin, as json's own encoder
+    # does: a subclass' __str__ or __repr__ must not reach identity.
     if isinstance(key, str):
-        return str(key)
+        return str.__str__(key)
     if isinstance(key, bool):
         return "true" if key else "false"
     if key is None:

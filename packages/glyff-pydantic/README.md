@@ -21,10 +21,13 @@ This package depends on `glyff>=0.1.0` and `pydantic>=2.0`.
 | `PydanticSerializer` | Serializes values to JSON using `TypeAdapter`. Restores typed values on read.                    |
 | `PydanticArgsCanonicalizer` | Canonicalizes function arguments through Pydantic's own dump, for stable, type-aware identity. |
 
-Both work with arbitrary types supported by Pydantic v2: models, dataclasses,
-unions, generics, and standard library types.
+`PydanticSerializer` works with any type `TypeAdapter` handles. The
+canonicalizer's reach is narrower by design: it dumps `BaseModel` instances and
+represents the scalars pydantic knows (`datetime`, `UUID`, `Decimal`), while
+every container is walked by glyff's shared canonicalization so mappings, sets
+and opaque values follow one set of rules.
 
-Argument hashes are part of an execution's identity, so they must stay stable
+Canonical arguments are part of an execution's identity, so they must stay stable
 across code changes — see
 [execution identity](https://github.com/nueruyu/glyff/blob/main/docs/execution-identity.md)
 for what the canonicalizer may and may not see.

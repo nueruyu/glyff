@@ -36,14 +36,9 @@ Implement the two objects and expose them as a bundle. Verify the implementation
 against the shared contract suite in `glyff.testing`: subclass the contract
 classes (`ExecutionBackendContract`, `DurableBackendContract`, and the
 text/binary-safety variants) and provide your backend factory. The shipped
-backends run the same suite. `glyff.testing` also exports the reference `PruningEventHandler` and the
-helpers `eid`, `canonical_args`, `value`, and `save_execution` — `eid` and
-`canonical_args` pair up, so an execution built from them satisfies the
-`args_hash` invariant.
-
-> **Planned** — [#36](https://github.com/nueruyu/glyff/issues/36) promotes the
-> suite from glyff's internal test tree to `glyff.testing`. Until then it lives
-> under `glyff.tests.contracts` and is not public.
+backends run the same suite. It also exports the reference `PruningEventHandler`
+and the helpers `save_execution`, `value`, and the pair `eid` / `canonical_args`,
+which build an execution that satisfies the `args_hash` invariant.
 
 ## Planned contract extensions
 
