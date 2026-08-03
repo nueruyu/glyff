@@ -12,6 +12,7 @@ from typing import Protocol
 import pytest
 
 from glyff import (
+    CanonicalValue,
     EncodedArguments,
     Execution,
     ExecutionId,
@@ -23,6 +24,7 @@ from glyff import (
     TransactionScope,
 )
 from glyff.exceptions import SerializationError
+from glyff.serialization._utils import encode_canonical
 
 
 class BackendHandle(Protocol):
@@ -38,7 +40,7 @@ def eid(
     *,
     parent: ExecutionId | None = None,
     sequence: int = 0,
-    args: object = None,
+    args: CanonicalValue = None,
 ) -> ExecutionId:
     """An execution id keyed by ``args``, which :func:`encoded_args` records."""
     return ExecutionId(
@@ -49,9 +51,9 @@ def eid(
     )
 
 
-def encoded_args(raw: object = None) -> EncodedArguments:
+def encoded_args(raw: CanonicalValue = None) -> EncodedArguments:
     """The canonical arguments an id built by :func:`eid` is keyed by."""
-    return EncodedArguments(value({} if raw is None else raw).data)
+    return EncodedArguments(encode_canonical({} if raw is None else raw))
 
 
 def value(raw: object = "value") -> SerializedValue:

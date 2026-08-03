@@ -3,7 +3,7 @@ import inspect
 
 import pytest
 
-from glyff.exceptions import SerializationError, UnserializableArgumentError
+from glyff.exceptions import SerializationError, ArgumentCanonicalizationError
 from glyff.serialization import (
     JsonArgsCanonicalizer,
     JsonSerializer,
@@ -140,7 +140,7 @@ def test_canonical_opaque_arg_raises_by_default(canonicalizer: JsonArgsCanonical
 
     # By default an opaque value (no value representation) is rejected rather than
     # identified by class name, so distinct instances can never silently collide.
-    with pytest.raises(UnserializableArgumentError):
+    with pytest.raises(ArgumentCanonicalizationError):
         canonicalizer.canonicalize_args(func_with_obj, sig, (MyPlainClass("id1"),), {})
 
 
@@ -287,7 +287,7 @@ def test_canonical_plain_self_raises_by_default(canonicalizer: JsonArgsCanonical
 
     # A plain (non-dataclass) `self` has no value representation, so by default it is
     # rejected instead of being collapsed to its class name.
-    with pytest.raises(UnserializableArgumentError):
+    with pytest.raises(ArgumentCanonicalizationError):
         canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 10), {})
 
 
@@ -334,7 +334,7 @@ def test_canonical_dataclass_with_nested_plain_service():
     a2 = Agent("researcher", [Tool(threading.Lock())])
     a3 = Agent("writer", [Tool(threading.Lock())])
 
-    with pytest.raises(UnserializableArgumentError):
+    with pytest.raises(ArgumentCanonicalizationError):
         JsonArgsCanonicalizer().canonicalize_args(func, sig, (a1, "hi"), {})
 
     canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
@@ -430,7 +430,7 @@ def test_opaque_policy_applies_to_nested_dataclass_member():
 
     sig = inspect.signature(func)
 
-    with pytest.raises(UnserializableArgumentError):
+    with pytest.raises(ArgumentCanonicalizationError):
         JsonArgsCanonicalizer().canonicalize_args(func, sig, (Holder(Svc()),), {})
 
     canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
@@ -451,7 +451,7 @@ def test_opaque_policy_applies_to_set_members():
     sig = inspect.signature(func)
     values = {Svc(), Svc()}
 
-    with pytest.raises(UnserializableArgumentError):
+    with pytest.raises(ArgumentCanonicalizationError):
         JsonArgsCanonicalizer().canonicalize_args(func, sig, (values,), {})
 
     canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())

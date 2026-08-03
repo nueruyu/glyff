@@ -5,7 +5,7 @@ import hashlib
 import pytest
 
 from glyff import CanonicalValue, EncodedArguments
-from glyff.exceptions import UnserializableArgumentError
+from glyff.exceptions import ArgumentCanonicalizationError
 from glyff.serialization import QualnameOpaque
 from glyff.serialization._utils import (
     _sorted_canonical,
@@ -100,10 +100,10 @@ def test_canonical_coerces_non_string_mapping_keys():
 def test_canonical_rejects_keys_that_collide_once_stringified():
     # 1 and "1" would collapse into one entry, silently keying two different calls
     # the same way.
-    with pytest.raises(UnserializableArgumentError, match="canonicalize to"):
+    with pytest.raises(ArgumentCanonicalizationError, match="canonicalize to"):
         canonical({1: "integer", "1": "string"})
 
-    with pytest.raises(UnserializableArgumentError, match="canonicalize to"):
+    with pytest.raises(ArgumentCanonicalizationError, match="canonicalize to"):
         canonical({True: "boolean", "true": "string"})
 
 
@@ -125,7 +125,7 @@ def test_canonical_renders_int_subclass_keys_as_their_builtin():
 
 
 def test_canonical_rejects_unrepresentable_mapping_keys():
-    with pytest.raises(UnserializableArgumentError, match="Dictionary keys"):
+    with pytest.raises(ArgumentCanonicalizationError, match="Dictionary keys"):
         canonical({(1, 2): "a"})
 
 
@@ -133,7 +133,7 @@ def test_canonical_rejects_opaque_values_by_default():
     class Service:
         pass
 
-    with pytest.raises(UnserializableArgumentError, match="no value representation"):
+    with pytest.raises(ArgumentCanonicalizationError, match="no value representation"):
         canonical(Service())
 
 
@@ -160,7 +160,9 @@ def test_encode_canonical_sorts_keys_and_stays_compact():
 
 
 def test_encode_canonical_rejects_values_outside_the_json_data_model():
-    with pytest.raises(UnserializableArgumentError, match="not in the JSON data model"):
+    with pytest.raises(
+        ArgumentCanonicalizationError, match="not in the JSON data model"
+    ):
         encode_canonical({"a": {1, 2}})  # type: ignore[dict-item]
 
 

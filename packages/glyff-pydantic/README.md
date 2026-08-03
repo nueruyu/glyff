@@ -3,8 +3,8 @@
 Pydantic-based `Serializer` and `ArgsCanonicalizer` implementations for
 [glyff](https://pypi.org/project/glyff/).
 
-Enables glyff sessions to record arguments and results that are Pydantic
-models, or any type Pydantic's `TypeAdapter` can handle.
+Lets a glyff session record results of any type Pydantic's `TypeAdapter` can
+handle, and key executions on arguments that are Pydantic models.
 
 ## Install
 
@@ -12,7 +12,7 @@ models, or any type Pydantic's `TypeAdapter` can handle.
 pip install glyff-pydantic
 ```
 
-This package depends on `glyff>=0.1.0` and `pydantic>=2.0`.
+This package depends on `glyff>=0.14.0` and `pydantic>=2.0`.
 
 ## Public API
 

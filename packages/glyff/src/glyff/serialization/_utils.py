@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Callable, TypeAlias
 
 from .._models import CanonicalValue
-from ..exceptions import UnserializableArgumentError
+from ..exceptions import ArgumentCanonicalizationError
 from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
 # Namespaces a policy's output so an opaque value can never collide with a native
@@ -59,7 +59,7 @@ class RaiseOnOpaque(OpaquePolicy):
 
     def represent(self, ctx: OpaqueContext) -> Any:
         value = ctx.value
-        raise UnserializableArgumentError(
+        raise ArgumentCanonicalizationError(
             f"Cannot canonicalize opaque value of type '{type(value).__name__}': it "
             "has no value representation. Give it a serializable representation "
             "(e.g. a dataclass or model), or pass an opaque policy to the "
@@ -112,7 +112,7 @@ def _canonical_key(key: Any) -> str:
         return float.__repr__(key)
     if isinstance(key, int):
         return int.__repr__(key)
-    raise UnserializableArgumentError(
+    raise ArgumentCanonicalizationError(
         f"Dictionary keys must be str, int, float, bool or None, "
         f"not '{type(key).__name__}'."
     )
@@ -123,7 +123,7 @@ def _canonical_mapping(obj: dict, recurse: _Recurse) -> dict[str, CanonicalValue
     for key, value in obj.items():
         name = _canonical_key(key)
         if name in canonical:
-            raise UnserializableArgumentError(
+            raise ArgumentCanonicalizationError(
                 f"Two keys of this mapping canonicalize to {name!r}. Distinct "
                 "arguments must stay distinct, or the calls would collapse onto "
                 "one execution key."
@@ -188,7 +188,7 @@ def to_canonical(
 
 
 def _reject(obj: Any) -> Any:
-    raise UnserializableArgumentError(
+    raise ArgumentCanonicalizationError(
         f"Value of type '{type(obj).__name__}' is not in the JSON data model, so it "
         "cannot be encoded. Canonicalize it first."
     )
@@ -216,21 +216,19 @@ def stable_json_dumps(
     indent: int | str | None = None,
     ensure_ascii: bool = False,
 ) -> str:
-    """Creates a stable JSON string from arbitrary data."""
-    try:
-        return json.dumps(
-            data,
-            indent=indent,
-            sort_keys=True,
-            ensure_ascii=ensure_ascii,
-            default=default or to_serializable,
-            separators=JSON_SEPARATORS if indent is None else None,
-        )
-    except TypeError as e:
-        raise UnserializableArgumentError(
-            "Value could not be serialized to JSON. "
-            f"Ensure all components are JSON-serializable. Original error: {e}"
-        ) from e
+    """Creates a stable JSON string from arbitrary data.
+
+    Raises ``TypeError`` for anything ``default`` cannot handle; each caller wraps
+    that in the error its own boundary means.
+    """
+    return json.dumps(
+        data,
+        indent=indent,
+        sort_keys=True,
+        ensure_ascii=ensure_ascii,
+        default=default or to_serializable,
+        separators=JSON_SEPARATORS if indent is None else None,
+    )
 
 
 def bind_args(sig: inspect.Signature, args: tuple, kwargs: dict) -> dict[str, Any]:

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
+import decimal
+import enum
+import ipaddress
+import pathlib
+import uuid
 from typing import Any
 
 from glyff.exceptions import SerializationError
@@ -13,7 +19,7 @@ from glyff.serialization import (
     RaiseOnOpaque,
 )
 from pydantic import BaseModel, TypeAdapter
-from pydantic_core import PydanticSerializationError, to_jsonable_python
+from pydantic_core import to_jsonable_python
 
 
 class PydanticSerializer(JsonSerializer):
@@ -62,22 +68,35 @@ class PydanticSerializer(JsonSerializer):
         return adapter.validate_json(data)
 
 
-class _PydanticScalars(OpaquePolicy):
-    """Represents the scalars pydantic knows — datetime, UUID, Decimal — by value.
+# Types pydantic encodes as a single JSON scalar. Deliberately an allowlist of
+# inputs rather than a check on the output: pydantic also converts iterables, and
+# handing it one would both walk a container behind the shared canonicalization
+# and consume a generator the engraved call has not run yet.
+_SCALARS = (
+    datetime.date,  # also datetime.datetime
+    datetime.time,
+    datetime.timedelta,
+    decimal.Decimal,
+    enum.Enum,
+    ipaddress.IPv4Address,
+    ipaddress.IPv4Network,
+    ipaddress.IPv6Address,
+    ipaddress.IPv6Network,
+    pathlib.PurePath,
+    uuid.UUID,
+)
 
-    They reach a policy because they have no structural representation, which is
-    exactly what a policy decides. Tagging their output is right too: a datetime
-    and the string spelling of it are different arguments.
-    """
+
+class _PydanticScalars(OpaquePolicy):
+    """Represents the scalar types pydantic knows, deferring everything else."""
 
     def __init__(self, fallback: OpaquePolicy) -> None:
         self._fallback = fallback
 
     def represent(self, ctx: OpaqueContext) -> Any:
-        try:
+        if isinstance(ctx.value, _SCALARS):
             return to_jsonable_python(ctx.value)
-        except PydanticSerializationError:
-            return self._fallback.represent(ctx)
+        return self._fallback.represent(ctx)
 
 
 class PydanticArgsCanonicalizer(JsonArgsCanonicalizer):

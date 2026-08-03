@@ -13,7 +13,7 @@ A `Backend` (`_interfaces.py`) is a bundle of two objects:
 | `ExecutionRepository` | Aggregate persistence: `get`, `save`, `descendants_of`, `delete_many`. |
 | `TransactionProvider` | Owns transaction boundaries; `begin_transaction` returns a `Transaction` with `commit`/`rollback`. |
 
-The repository stores `Execution` aggregates whole — status, result, metadata —
+The repository stores `Execution` aggregates whole — args, status, result, metadata —
 and core assumes nothing about the medium underneath. Tables, files, and key
 prefixes are a backend's own business, which is why there is
 [no schema-customization interface](#non-goal-a-schema-customization-interface).

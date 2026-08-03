@@ -35,6 +35,7 @@ async def execute(
 
     cached = await repository.get(execution_id)
     if cached is not None and cached.status == ExecutionStatus.COMPLETED:
+        # A completed execution always carries a result; the aggregate enforces it.
         assert cached.result is not None
         return await serializer.deserialize(cached.result.data, return_type)
 

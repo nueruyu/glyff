@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TypeAlias
 
+from .exceptions import InvalidExecutionError
+
 # A value in the JSON data model. Canonicalizing a call's arguments produces one of
 # these, and a migration's argument conversion both receives and returns one.
 CanonicalValue: TypeAlias = (
@@ -97,9 +99,16 @@ class Execution:
 
     def __post_init__(self) -> None:
         if self.id.args_hash != self.args.digest:
-            raise ValueError(
+            raise InvalidExecutionError(
                 f"Execution {self.id} does not match its recorded arguments: "
                 "args_hash must be the digest of args."
+            )
+        completed = self.status is ExecutionStatus.COMPLETED
+        if completed and self.result is None:
+            raise InvalidExecutionError(f"Completed execution {self.id} has no result.")
+        if not completed and self.result is not None:
+            raise InvalidExecutionError(
+                f"Execution {self.id} carries a result but is not completed."
             )
 
     @classmethod

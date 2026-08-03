@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 from .._interfaces import ArgsCanonicalizer, Serializer
 from .._models import CanonicalValue
-from ..exceptions import SerializationError, UnserializableArgumentError
+from ..exceptions import ArgumentCanonicalizationError, SerializationError
 from .constants import DEFAULT_ENCODING
 from ._utils import (
     OpaquePolicy,
@@ -42,7 +42,7 @@ class JsonSerializer(Serializer):
     async def serialize(self, value: Any, type_hint: type) -> bytes:
         try:
             return self._encode(value)
-        except UnserializableArgumentError as e:
+        except TypeError as e:
             raise SerializationError(
                 f"Value of type {value.__class__.__name__} could not be serialized "
                 f"to JSON. Original error: {e}"
@@ -76,9 +76,9 @@ class JsonArgsCanonicalizer(ArgsCanonicalizer):
     ) -> CanonicalValue:
         try:
             return self.canonicalize_value(bind_args(sig, args, kwargs))
-        except UnserializableArgumentError as e:
+        except ArgumentCanonicalizationError as e:
             func_name = getattr(func, "__qualname__", func.__name__)
-            raise UnserializableArgumentError(
+            raise ArgumentCanonicalizationError(
                 f"Arguments to '{func_name}' could not be canonicalized. "
                 f"Ensure all arguments have a value representation. Original error: {e}"
             ) from e

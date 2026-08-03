@@ -12,6 +12,7 @@ from .._models import (
     Metadata,
     SerializedValue,
 )
+from ..exceptions import InvalidExecutionError
 from ._memory_client import MemoryClient
 from .utils import execution_id_to_path, path_to_execution_id
 
@@ -90,7 +91,10 @@ class MemoryExecutionRepository(ExecutionRepository):
             return None
 
         args_data = await self._client.read(self._id_to_key(execution_id, "args"))
-        assert isinstance(args_data, bytes)
+        if not isinstance(args_data, bytes):
+            raise InvalidExecutionError(
+                f"Execution {execution_id} is stored without its arguments."
+            )
         result_data = await self._client.read(self._id_to_key(execution_id, "result"))
         raw_metadata = await self._client.read(
             self._id_to_key(execution_id, "metadata")

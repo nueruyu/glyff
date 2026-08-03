@@ -1,9 +1,11 @@
 import dataclasses
+import datetime
 import inspect
+import uuid
 from typing import Any
 
 import pytest
-from glyff.exceptions import SerializationError, UnserializableArgumentError
+from glyff.exceptions import SerializationError, ArgumentCanonicalizationError
 from glyff import ArgsCanonicalizer, Serializer
 from pydantic import BaseModel
 
@@ -138,7 +140,7 @@ async def test_serialize_non_serializable_raises_custom_error(serializer: Serial
 
 
 def test_canonical_opaque_arg_raises_by_default(canonicalizer: ArgsCanonicalizer):
-    from glyff.exceptions import UnserializableArgumentError
+    from glyff.exceptions import ArgumentCanonicalizationError
 
     class PlainA:
         pass
@@ -149,7 +151,7 @@ def test_canonical_opaque_arg_raises_by_default(canonicalizer: ArgsCanonicalizer
     sig = inspect.signature(func_with_obj)
 
     # By default an opaque value is rejected rather than identified by class name.
-    with pytest.raises(UnserializableArgumentError):
+    with pytest.raises(ArgumentCanonicalizationError):
         canonicalizer.canonicalize_args(func_with_obj, sig, (PlainA(),), {})
 
 
@@ -311,14 +313,14 @@ def test_canonical_model_with_opaque_member_raises_by_default(
     canonicalizer: ArgsCanonicalizer,
 ):
     """A model holding an opaque member is rejected by the default policy."""
-    from glyff.exceptions import UnserializableArgumentError
+    from glyff.exceptions import ArgumentCanonicalizationError
 
     Agent, Tool = _agent_model_with_opaque_member()
     func = Agent.run
     sig = inspect.signature(func)
     a1 = Agent(name="researcher", tool=Tool(1))
 
-    with pytest.raises(UnserializableArgumentError):
+    with pytest.raises(ArgumentCanonicalizationError):
         canonicalizer.canonicalize_args(func, sig, (a1, "hi"), {})
 
 
@@ -363,6 +365,45 @@ def test_model_set_field_is_sorted_for_a_stable_canonical_form(
     assert canonical == {"a": {"tags": ["alpha", "beta", "gamma"]}}
 
 
+def test_scalars_pydantic_knows_are_represented_by_value(
+    canonicalizer: ArgsCanonicalizer,
+):
+    class M(BaseModel):
+        at: datetime.datetime
+        ref: uuid.UUID
+
+    def f(a: object):
+        pass
+
+    canonical = canonicalizer.canonicalize_args(
+        f,
+        inspect.signature(f),
+        (M(at=datetime.datetime(2024, 1, 1), ref=uuid.UUID(int=0)),),
+        {},
+    )
+    assert canonical == {
+        "a": {
+            "at": {"__glyff_opaque__": "2024-01-01T00:00:00"},
+            "ref": {"__glyff_opaque__": "00000000-0000-0000-0000-000000000000"},
+        }
+    }
+
+
+def test_non_scalars_are_left_to_the_opaque_policy(canonicalizer: ArgsCanonicalizer):
+    # pydantic would happily walk an iterable, which would both bypass the shared
+    # key checks and consume a generator the engraved call has not run yet.
+    def gen():
+        yield {1: "integer", "1": "string"}
+
+    def f(a: object):
+        pass
+
+    values = gen()
+    with pytest.raises(ArgumentCanonicalizationError):
+        canonicalizer.canonicalize_args(f, inspect.signature(f), (values,), {})
+    assert len(list(values)) == 1
+
+
 def test_model_mapping_keys_that_collide_are_rejected(
     canonicalizer: ArgsCanonicalizer,
 ):
@@ -374,7 +415,7 @@ def test_model_mapping_keys_that_collide_are_rejected(
     def f(a: object):
         pass
 
-    with pytest.raises(UnserializableArgumentError, match="canonicalize to"):
+    with pytest.raises(ArgumentCanonicalizationError, match="canonicalize to"):
         canonicalizer.canonicalize_args(
             f, inspect.signature(f), (M(data={1: "integer", "1": "string"}),), {}
         )
