@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from glyff import ArgsCanonicalizer, engrave
+from glyff import ArgumentCanonicalizer, engrave
 from glyff.tests.types import BackendFactory, make_session
 
 
@@ -50,24 +50,30 @@ async def par_root(delay_a: float, delay_b: float) -> str:
 
 
 async def test_parallel_tasks_complete_successfully(
-    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
+    backend_factory: BackendFactory,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer,
 ):
     backend = backend_factory("par-success")
-    async with make_session("par-success", backend, canonicalizer, serializer):
+    async with make_session("par-success", backend, argument_canonicalizer, serializer):
         result = await par_root(0.01, 0.005)
     assert result == "AB"
     assert sorted(_calls) == ["a", "b"]
 
 
 async def test_parallel_interrupted_task_is_retried_on_resume(
-    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
+    backend_factory: BackendFactory,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer,
 ):
     global _interrupt_b
     backend = backend_factory("par-resume")
 
     _interrupt_b = True
     with pytest.raises(ParallelPause):
-        async with make_session("par-resume", backend, canonicalizer, serializer):
+        async with make_session(
+            "par-resume", backend, argument_canonicalizer, serializer
+        ):
             await par_root(0.005, 0.01)
 
     assert "a" in _calls
@@ -76,7 +82,7 @@ async def test_parallel_interrupted_task_is_retried_on_resume(
     _calls.clear()
 
     _interrupt_b = False
-    async with make_session("par-resume", backend, canonicalizer, serializer):
+    async with make_session("par-resume", backend, argument_canonicalizer, serializer):
         result = await par_root(0.005, 0.01)
 
     assert result == "AB"

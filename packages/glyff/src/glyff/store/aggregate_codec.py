@@ -12,7 +12,7 @@ import json
 from typing import Any
 
 from .._models import (
-    EncodedArguments,
+    CanonicalArguments,
     Execution,
     ExecutionId,
     ExecutionStatus,
@@ -84,21 +84,21 @@ def _json_bytes(value: object) -> bytes:
     return stable_json_dumps(value).encode(DEFAULT_ENCODING)
 
 
-def _pack_args(args: EncodedArguments) -> str:
+def _pack_arguments(arguments: CanonicalArguments) -> str:
     # An opaque string, not an embedded JSON value: preserve the exact digest
     # preimage (see Execution.args).
     try:
-        return args.data.decode(DEFAULT_ENCODING)
+        return arguments.data.decode(DEFAULT_ENCODING)
     except UnicodeDecodeError as exc:
         raise SerializationError(
-            f"{_TEXT_BACKEND_JSON_ERROR} Invalid args: data is not valid UTF-8."
+            f"{_TEXT_BACKEND_JSON_ERROR} Invalid arguments: data is not valid UTF-8."
         ) from exc
 
 
 def execution_to_dict(execution: Execution) -> dict[str, Any]:
     """Serialize an Execution aggregate to a JSON-ready dict."""
     return {
-        "args": _pack_args(execution.args),
+        "arguments": _pack_arguments(execution.arguments),
         "status": _STATUS_NAMES[execution.status],
         "result": _pack_value(execution.result, context="result"),
         "metadata": _pack_metadata(execution.metadata),
@@ -111,7 +111,7 @@ def execution_from_dict(execution_id: ExecutionId, stored: dict[str, Any]) -> Ex
     return Execution(
         id=execution_id,
         status=status,
-        args=EncodedArguments(stored["args"].encode(DEFAULT_ENCODING)),
+        arguments=CanonicalArguments(stored["arguments"].encode(DEFAULT_ENCODING)),
         result=_unpack_value(stored.get("result"))
         if status is ExecutionStatus.COMPLETED
         else None,

@@ -6,10 +6,10 @@ from typing import Any
 
 import pytest
 from glyff.exceptions import SerializationError, ArgumentCanonicalizationError
-from glyff import ArgsCanonicalizer, Serializer
+from glyff import ArgumentCanonicalizer, Serializer
 from pydantic import BaseModel
 
-from glyff_pydantic import PydanticArgsCanonicalizer, PydanticSerializer
+from glyff_pydantic import PydanticArgumentCanonicalizer, PydanticSerializer
 
 
 class MyModel(BaseModel):
@@ -48,41 +48,49 @@ def serializer() -> Serializer:
 
 
 @pytest.fixture
-def canonicalizer() -> ArgsCanonicalizer:
-    return PydanticArgsCanonicalizer()
+def argument_canonicalizer() -> ArgumentCanonicalizer:
+    return PydanticArgumentCanonicalizer()
 
 
 def test_canonicalize_args_positional_vs_keyword_are_equal(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     sig = inspect.signature(sample_func)
-    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {"b": "test"})
-    second = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {"b": "test"})
+    second = argument_canonicalizer.canonicalize(
         sample_func, sig, (), {"a": 1, "b": "test"}
     )
     assert first == second
 
 
-def test_canonicalize_args_defaults_are_included(canonicalizer: ArgsCanonicalizer):
+def test_canonicalize_args_defaults_are_included(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
     sig = inspect.signature(sample_func)
-    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
-    second = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {})
+    second = argument_canonicalizer.canonicalize(
         sample_func, sig, (), {"a": 1, "b": "default"}
     )
     assert first == second
 
 
-def test_canonicalize_args_different_values_differ(canonicalizer: ArgsCanonicalizer):
+def test_canonicalize_args_different_values_differ(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
     sig = inspect.signature(sample_func)
-    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
-    second = canonicalizer.canonicalize_args(sample_func, sig, (2,), {})
+    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {})
+    second = argument_canonicalizer.canonicalize(sample_func, sig, (2,), {})
     assert first != second
 
 
-def test_canonicalize_args_is_deterministic(canonicalizer: ArgsCanonicalizer):
+def test_canonicalize_args_is_deterministic(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
     sig = inspect.signature(sample_func)
-    first = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
-    second = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
+    first = argument_canonicalizer.canonicalize(sample_func, sig, (42,), {"b": "hello"})
+    second = argument_canonicalizer.canonicalize(
+        sample_func, sig, (42,), {"b": "hello"}
+    )
     assert first == second
 
 
@@ -139,7 +147,9 @@ async def test_serialize_non_serializable_raises_custom_error(serializer: Serial
         await serializer.serialize(object(), object)
 
 
-def test_canonical_opaque_arg_raises_by_default(canonicalizer: ArgsCanonicalizer):
+def test_canonical_opaque_arg_raises_by_default(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
     from glyff.exceptions import ArgumentCanonicalizationError
 
     class PlainA:
@@ -151,11 +161,11 @@ def test_canonical_opaque_arg_raises_by_default(canonicalizer: ArgsCanonicalizer
     sig = inspect.signature(func_with_obj)
 
     with pytest.raises(ArgumentCanonicalizationError):
-        canonicalizer.canonicalize_args(func_with_obj, sig, (PlainA(),), {})
+        argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainA(),), {})
 
 
 def test_canonical_opaque_arg_by_class_with_qualname_policy():
-    from glyff.serialization import QualnameOpaque
+    from glyff.serialization import OpaqueByTypeName
 
     class PlainA:
         pass
@@ -168,10 +178,12 @@ def test_canonical_opaque_arg_by_class_with_qualname_policy():
 
     sig = inspect.signature(func_with_obj)
 
-    canonicalizer = PydanticArgsCanonicalizer(opaque_policy=QualnameOpaque())
-    first = canonicalizer.canonicalize_args(func_with_obj, sig, (PlainA(),), {})
-    second = canonicalizer.canonicalize_args(func_with_obj, sig, (PlainA(),), {})
-    different = canonicalizer.canonicalize_args(func_with_obj, sig, (PlainB(),), {})
+    argument_canonicalizer = PydanticArgumentCanonicalizer(
+        opaque_policy=OpaqueByTypeName()
+    )
+    first = argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainA(),), {})
+    second = argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainA(),), {})
+    different = argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainB(),), {})
 
     # With the opt-in qualname policy, opaque values are identified by their class
     assert first == second
@@ -179,7 +191,7 @@ def test_canonical_opaque_arg_by_class_with_qualname_policy():
 
 
 def test_canonical_nested_dataclass_type_and_callable_values(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     @dataclasses.dataclass(frozen=True)
     class Container:
@@ -191,7 +203,7 @@ def test_canonical_nested_dataclass_type_and_callable_values(
         pass
 
     sig = inspect.signature(func)
-    first = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(
         func,
         sig,
         (
@@ -203,7 +215,7 @@ def test_canonical_nested_dataclass_type_and_callable_values(
         ),
         {},
     )
-    second = canonicalizer.canonicalize_args(
+    second = argument_canonicalizer.canonicalize(
         func,
         sig,
         (
@@ -219,49 +231,53 @@ def test_canonical_nested_dataclass_type_and_callable_values(
     assert first == second
 
 
-def test_canonical_callable_values_by_qualified_name(canonicalizer: ArgsCanonicalizer):
+def test_canonical_callable_values_by_qualified_name(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
     def func(callback):
         pass
 
     sig = inspect.signature(func)
-    first = canonicalizer.canonicalize_args(func, sig, (helper_func,), {})
-    second = canonicalizer.canonicalize_args(func, sig, (helper_func,), {})
-    different = canonicalizer.canonicalize_args(func, sig, (another_helper_func,), {})
+    first = argument_canonicalizer.canonicalize(func, sig, (helper_func,), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (helper_func,), {})
+    different = argument_canonicalizer.canonicalize(
+        func, sig, (another_helper_func,), {}
+    )
 
     assert first == second
     assert first != different
 
 
 def test_method_identity_differs_for_different_pydantic_instances(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     inst1 = MyModel(x=1, y="a")
     inst2 = MyModel(x=2, y="a")
     func = MyModel.method
     sig = inspect.signature(func)
 
-    first = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
-    second = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
+    first = argument_canonicalizer.canonicalize(func, sig, (inst1, 10), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (inst2, 10), {})
 
     assert first != second
 
 
 def test_method_identity_is_same_for_identical_pydantic_instances(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     inst1 = MyModel(x=1, y="a")
     inst2 = MyModel(x=1, y="a")
     func = MyModel.method
     sig = inspect.signature(func)
 
-    first = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
-    second = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
+    first = argument_canonicalizer.canonicalize(func, sig, (inst1, 10), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (inst2, 10), {})
 
     assert first == second
 
 
 def test_canonical_ignores_compare_false_dataclass_fields(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     @dataclasses.dataclass
     class AgentWithDep:
@@ -274,13 +290,13 @@ def test_canonical_ignores_compare_false_dataclass_fields(
     func = AgentWithDep.run
     sig = inspect.signature(func)
 
-    first = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(
         func, sig, (AgentWithDep("a", counter=1), "q"), {}
     )
-    second = canonicalizer.canonicalize_args(
+    second = argument_canonicalizer.canonicalize(
         func, sig, (AgentWithDep("a", counter=99), "q"), {}
     )
-    other = canonicalizer.canonicalize_args(
+    other = argument_canonicalizer.canonicalize(
         func, sig, (AgentWithDep("b", counter=1), "q"), {}
     )
 
@@ -307,7 +323,7 @@ def _agent_model_with_opaque_member():
 
 
 def test_canonical_model_with_opaque_member_raises_by_default(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     """A model holding an opaque member is rejected by the default policy."""
     from glyff.exceptions import ArgumentCanonicalizationError
@@ -318,7 +334,7 @@ def test_canonical_model_with_opaque_member_raises_by_default(
     a1 = Agent(name="researcher", tool=Tool(1))
 
     with pytest.raises(ArgumentCanonicalizationError):
-        canonicalizer.canonicalize_args(func, sig, (a1, "hi"), {})
+        argument_canonicalizer.canonicalize(func, sig, (a1, "hi"), {})
 
 
 def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
@@ -327,7 +343,7 @@ def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
     The model's serializable state differentiates calls while the opaque member is
     identified by its class instead of raising.
     """
-    from glyff.serialization import QualnameOpaque
+    from glyff.serialization import OpaqueByTypeName
 
     Agent, Tool = _agent_model_with_opaque_member()
     func = Agent.run
@@ -337,10 +353,12 @@ def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
     a2 = Agent(name="researcher", tool=Tool(2))
     a3 = Agent(name="writer", tool=Tool(1))
 
-    canonicalizer = PydanticArgsCanonicalizer(opaque_policy=QualnameOpaque())
-    first = canonicalizer.canonicalize_args(func, sig, (a1, "hi"), {})
-    second = canonicalizer.canonicalize_args(func, sig, (a2, "hi"), {})
-    other = canonicalizer.canonicalize_args(func, sig, (a3, "hi"), {})
+    argument_canonicalizer = PydanticArgumentCanonicalizer(
+        opaque_policy=OpaqueByTypeName()
+    )
+    first = argument_canonicalizer.canonicalize(func, sig, (a1, "hi"), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (a2, "hi"), {})
+    other = argument_canonicalizer.canonicalize(func, sig, (a3, "hi"), {})
 
     # Opaque tool identified by class (first == second), serializable state differentiates.
     assert first == second
@@ -348,7 +366,7 @@ def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
 
 
 def test_model_set_field_is_sorted_for_a_stable_canonical_form(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     class M(BaseModel):
         tags: set
@@ -356,14 +374,14 @@ def test_model_set_field_is_sorted_for_a_stable_canonical_form(
     def f(a: object):
         pass
 
-    canonical = canonicalizer.canonicalize_args(
+    canonical = argument_canonicalizer.canonicalize(
         f, inspect.signature(f), (M(tags={"gamma", "alpha", "beta"}),), {}
     )
     assert canonical == {"a": {"tags": ["alpha", "beta", "gamma"]}}
 
 
 def test_scalars_pydantic_knows_are_represented_by_value(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     class M(BaseModel):
         at: datetime.datetime
@@ -372,7 +390,7 @@ def test_scalars_pydantic_knows_are_represented_by_value(
     def f(a: object):
         pass
 
-    canonical = canonicalizer.canonicalize_args(
+    canonical = argument_canonicalizer.canonicalize(
         f,
         inspect.signature(f),
         (M(at=datetime.datetime(2024, 1, 1), ref=uuid.UUID(int=0)),),
@@ -386,7 +404,9 @@ def test_scalars_pydantic_knows_are_represented_by_value(
     }
 
 
-def test_non_scalars_are_left_to_the_opaque_policy(canonicalizer: ArgsCanonicalizer):
+def test_non_scalars_are_left_to_the_opaque_policy(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
     # pydantic would happily walk an iterable, which would both bypass the shared
     # key checks and consume a generator the engraved call has not run yet.
     def gen():
@@ -397,12 +417,12 @@ def test_non_scalars_are_left_to_the_opaque_policy(canonicalizer: ArgsCanonicali
 
     values = gen()
     with pytest.raises(ArgumentCanonicalizationError):
-        canonicalizer.canonicalize_args(f, inspect.signature(f), (values,), {})
+        argument_canonicalizer.canonicalize(f, inspect.signature(f), (values,), {})
     assert len(list(values)) == 1
 
 
 def test_model_mapping_keys_that_collide_are_rejected(
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     # pydantic's own encoder stringifies mapping keys, which would collapse 1 and
     # "1" into one entry before the shared walk could object.
@@ -413,12 +433,14 @@ def test_model_mapping_keys_that_collide_are_rejected(
         pass
 
     with pytest.raises(ArgumentCanonicalizationError, match="canonicalize to"):
-        canonicalizer.canonicalize_args(
+        argument_canonicalizer.canonicalize(
             f, inspect.signature(f), (M(data={1: "integer", "1": "string"}),), {}
         )
 
 
-def test_model_set_field_is_content_based(canonicalizer: ArgsCanonicalizer):
+def test_model_set_field_is_content_based(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
     class M(BaseModel):
         tags: set
 
@@ -426,9 +448,9 @@ def test_model_set_field_is_content_based(canonicalizer: ArgsCanonicalizer):
         pass
 
     sig = inspect.signature(f)
-    first = canonicalizer.canonicalize_args(f, sig, (M(tags={1, 2, 3}),), {})
-    second = canonicalizer.canonicalize_args(f, sig, (M(tags={3, 2, 1}),), {})
-    other = canonicalizer.canonicalize_args(f, sig, (M(tags={4, 5, 6}),), {})
+    first = argument_canonicalizer.canonicalize(f, sig, (M(tags={1, 2, 3}),), {})
+    second = argument_canonicalizer.canonicalize(f, sig, (M(tags={3, 2, 1}),), {})
+    other = argument_canonicalizer.canonicalize(f, sig, (M(tags={4, 5, 6}),), {})
 
     assert first == second
     assert first != other

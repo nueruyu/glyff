@@ -3,7 +3,7 @@
 import pytest
 
 from glyff import (
-    ArgsCanonicalizer,
+    ArgumentCanonicalizer,
     Execution,
     ExecutionId,
     MetadataAccessor,
@@ -16,7 +16,7 @@ from glyff._event_system import EventEmitter
 from glyff.testing import encoded_args, make_execution_id
 from glyff._sequencer import Sequencer
 from glyff.exceptions import NoCurrentExecutionError
-from glyff.serialization import JsonArgsCanonicalizer, JsonSerializer
+from glyff.serialization import JsonArgumentCanonicalizer, JsonSerializer
 from glyff.store import MemoryBackend
 from glyff.tests.types import BackendFactory, make_session
 
@@ -147,7 +147,9 @@ async def test_get_metadata_unknown_execution_returns_none(test_context: Context
 
 
 async def test_ctx_metadata_roundtrips_and_persists(
-    backend_factory: BackendFactory, canonicalizer: ArgsCanonicalizer, serializer
+    backend_factory: BackendFactory,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer,
 ):
     captured: dict[str, ExecutionId] = {}
 
@@ -160,7 +162,7 @@ async def test_ctx_metadata_roundtrips_and_persists(
         return "done"
 
     backend = backend_factory("meta-ctx")
-    async with make_session("meta-ctx", backend, canonicalizer, serializer):
+    async with make_session("meta-ctx", backend, argument_canonicalizer, serializer):
         result = await annotate()
 
     assert result == "done"
@@ -179,7 +181,7 @@ async def test_ctx_set_metadata_requires_active_execution():
         backend=backend,
         serializer=JsonSerializer(),
         sequencer=Sequencer(),
-        canonicalizer=JsonArgsCanonicalizer(),
+        argument_canonicalizer=JsonArgumentCanonicalizer(),
         event_emitter=EventEmitter([]),
     )
     token = set_context(ctx)

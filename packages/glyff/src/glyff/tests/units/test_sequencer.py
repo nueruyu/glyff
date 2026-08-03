@@ -54,7 +54,7 @@ async def test_reset_does_not_affect_other_parents():
     assert await s.next(p2, "child", _H) == 1
 
 
-async def test_sequence_is_scoped_by_args_hash() -> None:
+async def test_sequence_is_scoped_by_arguments_digest() -> None:
     sequencer = Sequencer()
     parent = ExecutionId(None, "parent", 0, "parent-hash")
 
@@ -66,7 +66,7 @@ async def test_sequence_is_scoped_by_args_hash() -> None:
     assert (first_x, first_y, second_x, second_y) == (0, 0, 1, 1)
 
 
-async def test_reset_for_call_resets_all_args_hash_scoped_children() -> None:
+async def test_reset_for_call_resets_all_digest_scoped_children() -> None:
     sequencer = Sequencer()
     parent = ExecutionId(None, "parent", 0, "parent-hash")
 

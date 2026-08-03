@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import pytest
-from glyff import ArgsCanonicalizer, ExecutionId
-from glyff.serialization import JsonArgsCanonicalizer, JsonSerializer
+from glyff import ArgumentCanonicalizer, ExecutionId
+from glyff.serialization import JsonArgumentCanonicalizer, JsonSerializer
 from glyff.testing import make_execution_id
 from glyff_sqlite import SQLiteBackend
 
@@ -18,8 +18,8 @@ def serializer() -> JsonSerializer:
 
 
 @pytest.fixture
-def canonicalizer() -> ArgsCanonicalizer:
-    return JsonArgsCanonicalizer()
+def argument_canonicalizer() -> ArgumentCanonicalizer:
+    return JsonArgumentCanonicalizer()
 
 
 @pytest.fixture

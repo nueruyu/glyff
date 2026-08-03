@@ -36,7 +36,7 @@ def test_set_metadata_keeps_metadata_inside_execution():
 
 
 def test_execution_rejects_arguments_that_do_not_match_its_key():
-    with pytest.raises(InvalidExecutionError, match="args_hash"):
+    with pytest.raises(InvalidExecutionError, match="arguments_digest"):
         Execution.start(
             make_execution_id("task", args={"a": 1}), encoded_args({"b": 2})
         )
@@ -47,7 +47,7 @@ def test_completed_execution_must_carry_a_result():
         Execution(
             id=make_execution_id("task"),
             status=ExecutionStatus.COMPLETED,
-            args=encoded_args(),
+            arguments=encoded_args(),
         )
 
 
@@ -56,6 +56,6 @@ def test_uncompleted_execution_must_not_carry_a_result():
         Execution(
             id=make_execution_id("task"),
             status=ExecutionStatus.STARTED,
-            args=encoded_args(),
+            arguments=encoded_args(),
             result=SerializedValue(b"1"),
         )

@@ -10,7 +10,7 @@ from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
 
 def record(value: str) -> SQLiteExecutionRecord:
     return SQLiteExecutionRecord(
-        args="{}",
+        arguments="{}",
         status="completed",
         result=f'"{value}"',
         metadata="{}",
@@ -40,7 +40,7 @@ async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
     rows = await client.read_sql("PRAGMA table_info(glyff_executions)")
     assert [row[1] for row in rows] == [
         "path",
-        "args",
+        "arguments",
         "status",
         "result",
         "metadata",

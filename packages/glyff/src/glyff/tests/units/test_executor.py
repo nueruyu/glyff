@@ -84,7 +84,7 @@ async def test_successful_execution(
 async def test_completion_prunes_descendants_when_enabled(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
-    canonicalizer,
+    argument_canonicalizer,
     serializer: Serializer,
 ):
     emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
@@ -93,7 +93,7 @@ async def test_completion_prunes_descendants_when_enabled(
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        canonicalizer=canonicalizer,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=emitter,
     )
     token = set_context(ctx)
@@ -132,7 +132,7 @@ async def test_completion_prunes_descendants_when_enabled(
 async def test_nested_completion_prunes(
     mock_backend: StubBackend,
     nested_execution_id: ExecutionId,
-    canonicalizer,
+    argument_canonicalizer,
     serializer: Serializer,
 ):
     emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
@@ -141,7 +141,7 @@ async def test_nested_completion_prunes(
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        canonicalizer=canonicalizer,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=emitter,
     )
     token = set_context(ctx)
@@ -204,7 +204,7 @@ async def test_completed_task_is_skipped(
     test_context.sequencer.reset_for_call = AsyncMock()
 
     path = execution_id_to_path(base_execution_id)
-    mock_backend._client.data[_make_key(path, "args")] = encoded_args().data
+    mock_backend._client.data[_make_key(path, "arguments")] = encoded_args().data
     mock_backend._client.data[_make_key(path, "status")] = ExecutionStatus.COMPLETED
     mock_backend._client.data[_make_key(path, "result")] = await serializer.serialize(
         "cached_result", str
@@ -238,7 +238,7 @@ async def test_started_record_is_retryable(
     # A leftover STARTED record (an interrupted prior attempt) does not block
     # re-execution.
     path = execution_id_to_path(base_execution_id)
-    mock_backend._client.data[_make_key(path, "args")] = encoded_args().data
+    mock_backend._client.data[_make_key(path, "arguments")] = encoded_args().data
     mock_backend._client.data[_make_key(path, "status")] = ExecutionStatus.STARTED
 
     result = await execute(
@@ -415,7 +415,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     nested_execution_id: ExecutionId,
-    canonicalizer,
+    argument_canonicalizer,
     serializer: Serializer,
 ):
     seen_exceptions: list[Exception] = []
@@ -433,7 +433,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        canonicalizer=canonicalizer,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=EventEmitter([CleanupOnFailure()]),
     )
     token = set_context(ctx)
@@ -476,7 +476,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
 async def test_execution_failed_emits_after_body_transaction_closes(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
-    canonicalizer,
+    argument_canonicalizer,
     serializer: Serializer,
 ):
     scratch_id = make_execution_id("scratch", parent=base_execution_id)
@@ -499,7 +499,7 @@ async def test_execution_failed_emits_after_body_transaction_closes(
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        canonicalizer=canonicalizer,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=EventEmitter([ObserveFailure()]),
     )
     token = set_context(ctx)
@@ -536,7 +536,7 @@ async def test_execution_failed_emits_after_body_transaction_closes(
 async def test_failed_handler_failure_does_not_replace_original_exception(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    canonicalizer,
+    argument_canonicalizer,
     caplog,
 ):
     class FailingFailedHandler(EventHandler[ExecutionFailed]):
@@ -549,7 +549,7 @@ async def test_failed_handler_failure_does_not_replace_original_exception(
         backend=backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        canonicalizer=canonicalizer,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=EventEmitter([FailingFailedHandler()]),
     )
     token = set_context(ctx)
@@ -582,7 +582,7 @@ async def test_failed_handler_failure_does_not_replace_original_exception(
 async def test_execution_save_failure_rolls_back_complete_transaction(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    canonicalizer,
+    argument_canonicalizer,
 ):
     class FailingCompleteRepository(StubExecutionRepository):
         async def save(self, execution: Execution) -> None:
@@ -606,7 +606,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
         backend=backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        canonicalizer=canonicalizer,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=EventEmitter([RecordFailures()]),
     )
     token = set_context(ctx)
@@ -640,7 +640,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
 async def test_completed_handler_failure_does_not_affect_result_or_completion(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    canonicalizer,
+    argument_canonicalizer,
     caplog,
 ):
     class FailingCompletedHandler(EventHandler[ExecutionCompleted]):
@@ -653,7 +653,7 @@ async def test_completed_handler_failure_does_not_affect_result_or_completion(
         backend=backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        canonicalizer=canonicalizer,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=EventEmitter([FailingCompletedHandler()]),
     )
     token = set_context(ctx)

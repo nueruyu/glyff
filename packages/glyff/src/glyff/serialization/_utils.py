@@ -21,27 +21,19 @@ def _qualified_name(obj: Any) -> str:
     return f"{obj.__module__}.{obj.__qualname__}"
 
 
-@dataclasses.dataclass(frozen=True)
-class OpaqueContext:
-    """The context handed to an :class:`OpaquePolicy` for a single opaque value."""
-
-    value: Any
-
-
 class OpaquePolicy(ABC):
     """Maps a value with no value representation to a canonical one."""
 
     @abstractmethod
-    def represent(self, ctx: OpaqueContext) -> Any:
-        """Return a JSON-encodable representation of ``ctx.value``, or raise to reject it."""
+    def represent(self, value: Any) -> Any:
+        """Return a JSON-encodable representation of ``value``, or raise to reject it."""
         ...
 
 
-class RaiseOnOpaque(OpaquePolicy):
+class RejectOpaque(OpaquePolicy):
     """Default policy: reject opaque values so distinct instances never silently collide."""
 
-    def represent(self, ctx: OpaqueContext) -> Any:
-        value = ctx.value
+    def represent(self, value: Any) -> Any:
         raise ArgumentCanonicalizationError(
             f"Cannot canonicalize opaque value of type '{type(value).__name__}': it "
             "has no value representation. Give it a serializable representation "
@@ -50,7 +42,7 @@ class RaiseOnOpaque(OpaquePolicy):
         )
 
 
-class QualnameOpaque(OpaquePolicy):
+class OpaqueByTypeName(OpaquePolicy):
     """Opt-in policy: identify an opaque value by its class' qualified name.
 
     Collapses every instance of a class to one representation. Safe only when the
@@ -58,17 +50,17 @@ class QualnameOpaque(OpaquePolicy):
     dependencies), since distinct instances then canonicalize identically.
     """
 
-    def represent(self, ctx: OpaqueContext) -> Any:
-        return _qualified_name(type(ctx.value))
+    def represent(self, value: Any) -> Any:
+        return _qualified_name(type(value))
 
 
 # Shared, stateless singleton used as the default wherever a policy is optional.
-_DEFAULT_OPAQUE_POLICY: OpaquePolicy = RaiseOnOpaque()
+_DEFAULT_OPAQUE_POLICY: OpaquePolicy = RejectOpaque()
 
 _Recurse: TypeAlias = Callable[[Any], "CanonicalValue"]
 
 
-def _compared_fields(obj: Any) -> list[dataclasses.Field]:
+def _identity_fields(obj: Any) -> list[dataclasses.Field]:
     # A field the dataclass excludes from equality never distinguished two calls.
     return [
         f
@@ -115,7 +107,7 @@ def _canonical_mapping(obj: dict, recurse: _Recurse) -> dict[str, CanonicalValue
     return canonical
 
 
-def _sorted_canonical(values: Any, recurse: _Recurse) -> list:
+def _canonicalize_set(values: Any, recurse: _Recurse) -> list:
     # set/frozenset have no inherent order, so canonicalize the members first and
     # then order them. Members are often unorderable among themselves (dicts from
     # dataclasses, mixed types), so fall back to ordering by their encoded form.
@@ -135,7 +127,7 @@ def to_canonical(
 
     ``recurse`` handles nested values; it defaults to this function and exists so a
     subclass canonicalizer stays in control of the whole walk (see
-    :class:`~glyff.serialization.JsonArgsCanonicalizer`).
+    :class:`~glyff.serialization.JsonArgumentCanonicalizer`).
 
     The mapping is deliberately one-way: what it drops is what identity never
     depended on.
@@ -156,18 +148,18 @@ def to_canonical(
             "keywords": _canonical_mapping(obj.keywords, recurse),
         }
     if dataclasses.is_dataclass(obj):
-        return {f.name: recurse(getattr(obj, f.name)) for f in _compared_fields(obj)}
+        return {f.name: recurse(getattr(obj, f.name)) for f in _identity_fields(obj)}
     if isinstance(obj, dict):
         return _canonical_mapping(obj, recurse)
     if isinstance(obj, (list, tuple)):
         return [recurse(v) for v in obj]
     if isinstance(obj, (set, frozenset)):
-        return _sorted_canonical(obj, recurse)
+        return _canonicalize_set(obj, recurse)
     if isinstance(obj, (bytes, bytearray)):
         return obj.hex()
     if callable(obj) and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
-    return {_OPAQUE_TAG: recurse(policy.represent(OpaqueContext(value=obj)))}
+    return {_OPAQUE_TAG: recurse(policy.represent(obj))}
 
 
 def _reject(obj: Any) -> Any:
@@ -214,7 +206,7 @@ def stable_json_dumps(
     )
 
 
-def bind_args(sig: inspect.Signature, args: tuple, kwargs: dict) -> dict[str, Any]:
+def bind_arguments(sig: inspect.Signature, args: tuple, kwargs: dict) -> dict[str, Any]:
     """Binds arguments into a name->value dict, including *args/**kwargs.
 
     Variadic parameters appear as a tuple (var-positional) and dict (var-keyword),

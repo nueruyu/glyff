@@ -2,7 +2,7 @@ from typing import Any, Callable
 
 from ._context import Context
 from ._models import (
-    EncodedArguments,
+    CanonicalArguments,
     Execution,
     ExecutionId,
     ExecutionStatus,
@@ -14,7 +14,7 @@ from .events import ExecutionCompleted, ExecutionFailed
 async def execute(
     ctx: Context,
     execution_id: ExecutionId,
-    encoded_args: EncodedArguments,
+    encoded_args: CanonicalArguments,
     func: Callable[..., Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],

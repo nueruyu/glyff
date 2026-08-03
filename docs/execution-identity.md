@@ -13,8 +13,8 @@ An `ExecutionId` (`_models.py`) has four components:
 | --- | --- |
 | `parent_id` | The nearest engraved ancestor on the call stack, forming a chain up to the session root. |
 | `name` | The engraved function's name — explicit `name=`/`version=` when given, derived from the function otherwise. |
-| `args_hash` | A digest over the canonical form of the bound arguments, produced by the session's `ArgsCanonicalizer`. |
-| `sequence` | An ordinal from an independent counter per `(parent_id, name, args_hash)` (`_sequencer.py`). |
+| `arguments_digest` | A digest over the canonical form of the bound arguments, produced by the session's `ArgumentCanonicalizer`. |
+| `sequence` | An ordinal from an independent counter per `(parent_id, name, arguments_digest)` (`_sequencer.py`). |
 
 Keys are **content-addressed, not positional**: the sequence counter is scoped to
 the exact `(parent, name, args)` identity, not to a session-wide step number.
@@ -79,16 +79,18 @@ for use as an idempotency key when
 ## Canonical arguments
 
 Identity runs through a **canonical form**, not directly through a hash. The
-session's `ArgsCanonicalizer` normalizes the bound arguments into the JSON data
-model; glyff encodes that once, and those bytes are both digested into
-`args_hash` and recorded on the execution. So for every recorded execution:
+session's `ArgumentCanonicalizer` normalizes the bound arguments into the JSON
+data model; glyff encodes that once, and those bytes are both digested into
+`arguments_digest` and recorded on the execution. So for every recorded
+execution:
 
 ```
-id.args_hash == execution.args.digest
+id.arguments_digest == execution.arguments.digest
 ```
 
-`Execution.args` is an `EncodedArguments`, distinct from the `SerializedValue`
-that carries results and metadata: only one of the two is a key's preimage.
+`Execution.arguments` is a `CanonicalArguments`, distinct from the
+`SerializedValue` that carries results and metadata: only one of the two is a
+key's preimage.
 `Execution` enforces the invariant on construction, and stores keep the bytes
 verbatim — anything that re-encoded them would break the key. It is what lets a
 [migration](./migration.md#in-flight-sessions-across-code-changes) rewrite an
@@ -112,23 +114,21 @@ A value with no value representation raises rather than being approximated.
 For values that are deliberately opaque — a service object passed as `self`, a
 client handle — glyff owns the canonicalization contract, not the taxonomy of
 what counts as opaque in your application.
-`JsonArgsCanonicalizer(opaque_policy=...)` takes an `OpaquePolicy`, and
+`JsonArgumentCanonicalizer(opaque_policy=...)` takes an `OpaquePolicy`, and
 `glyff.serialization` ships two:
 
 | Policy | Behavior |
 | --- | --- |
-| `RaiseOnOpaque` (default) | Rejects the value with `UnserializableArgumentError`, so distinct instances never silently collide. |
-| `QualnameOpaque` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
+| `RejectOpaque` (default) | Rejects the value with `ArgumentCanonicalizationError`, so distinct instances never silently collide. |
+| `OpaqueByTypeName` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
 
-A policy receives an `OpaqueContext` rather than the bare value, so the signature
-can grow without breaking implementations. Policy return values are namespaced,
-so a policy that returns `"pkg.Cls"` cannot collide with a plain string argument
-of the same text. The same classification governs what is *stored*, not just what
+Policy return values are namespaced, so a policy that returns `"pkg.Cls"` cannot
+collide with a plain string argument of the same text. The same classification governs what is *stored*, not just what
 is hashed — an opaque value the policy rejects never reaches the store.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard
 > composable policies (marker attribute, type list, predicate). Today anything
-> beyond `QualnameOpaque` means implementing `OpaquePolicy` yourself.
+> beyond `OpaqueByTypeName` means implementing `OpaquePolicy` yourself.
 
 ## Choosing engrave boundaries
 
@@ -139,8 +139,8 @@ compatibility you have to maintain.
 
 - **Boundary arguments must be explicit and deterministically derived** from
   session inputs or recorded results. Non-engraved code re-runs live on resume, so
-  a nondeterministic input (a timestamp, a random id) changes `args_hash` and
-  cache-misses a completed boundary.
+  a nondeterministic input (a timestamp, a random id) changes the
+  `arguments_digest` and cache-misses a completed boundary.
 - **Everything inside a boundary re-executes on resume**, so in-boundary code must
   be pure or idempotent. Engrave non-idempotent side effects and pause points
   individually, at the grain you need them recorded.

@@ -2,14 +2,14 @@ import inspect
 import json
 from typing import Any, Callable
 
-from .._interfaces import ArgsCanonicalizer, Serializer
+from .._interfaces import ArgumentCanonicalizer, Serializer
 from .._models import CanonicalValue
 from ..exceptions import ArgumentCanonicalizationError, SerializationError
 from .constants import DEFAULT_ENCODING
 from ._utils import (
     OpaquePolicy,
-    RaiseOnOpaque,
-    bind_args,
+    RejectOpaque,
+    bind_arguments,
     stable_json_dumps,
     to_canonical,
     to_serializable,
@@ -52,16 +52,14 @@ class JsonSerializer(Serializer):
         return json.loads(data.decode(DEFAULT_ENCODING))
 
 
-class JsonArgsCanonicalizer(ArgsCanonicalizer):
-    """An ArgsCanonicalizer that normalizes into the JSON data model."""
+class JsonArgumentCanonicalizer(ArgumentCanonicalizer):
+    """An ArgumentCanonicalizer that normalizes into the JSON data model."""
 
     def __init__(self, opaque_policy: OpaquePolicy | None = None) -> None:
         # How to represent values with no value representation. Defaults to raising,
         # so distinct instances never silently collide on their class name. Compare
         # to None explicitly: a custom policy may be a falsy object.
-        self._opaque_policy = (
-            RaiseOnOpaque() if opaque_policy is None else opaque_policy
-        )
+        self._opaque_policy = RejectOpaque() if opaque_policy is None else opaque_policy
 
     def canonicalize_value(self, obj: Any) -> CanonicalValue:
         """Canonicalizes one value. Override to support extra types.
@@ -71,11 +69,11 @@ class JsonArgsCanonicalizer(ArgsCanonicalizer):
         """
         return to_canonical(obj, self._opaque_policy, self.canonicalize_value)
 
-    def canonicalize_args(
+    def canonicalize(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
     ) -> CanonicalValue:
         try:
-            return self.canonicalize_value(bind_args(sig, args, kwargs))
+            return self.canonicalize_value(bind_arguments(sig, args, kwargs))
         except ArgumentCanonicalizationError as e:
             func_name = getattr(func, "__qualname__", func.__name__)
             raise ArgumentCanonicalizationError(

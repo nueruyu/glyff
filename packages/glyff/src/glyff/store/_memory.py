@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
 from .._models import (
-    EncodedArguments,
+    CanonicalArguments,
     Execution,
     ExecutionId,
     Metadata,
@@ -17,7 +17,7 @@ from ._memory_client import MemoryClient
 from .utils import execution_id_to_path, path_to_execution_id
 
 _KEY_PREFIX = "execution::"
-_PARTS = ("args", "status", "result", "metadata")
+_PARTS = ("arguments", "status", "result", "metadata")
 
 
 def _make_key(path: str, part: str) -> str:
@@ -90,8 +90,10 @@ class MemoryExecutionRepository(ExecutionRepository):
         if status is None:
             return None
 
-        args_data = await self._client.read(self._id_to_key(execution_id, "args"))
-        if not isinstance(args_data, bytes):
+        arguments_data = await self._client.read(
+            self._id_to_key(execution_id, "arguments")
+        )
+        if not isinstance(arguments_data, bytes):
             raise InvalidExecutionError(
                 f"Execution {execution_id} is stored without its arguments."
             )
@@ -109,7 +111,7 @@ class MemoryExecutionRepository(ExecutionRepository):
         return Execution(
             id=execution_id,
             status=status,
-            args=EncodedArguments(args_data),
+            arguments=CanonicalArguments(arguments_data),
             result=SerializedValue(result_data)
             if isinstance(result_data, bytes)
             else None,
@@ -122,8 +124,8 @@ class MemoryExecutionRepository(ExecutionRepository):
             execution.status,
         )
         self._client.stage_write(
-            self._id_to_key(execution.id, "args"),
-            execution.args.data,
+            self._id_to_key(execution.id, "arguments"),
+            execution.arguments.data,
         )
 
         if execution.result is not None:

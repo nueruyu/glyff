@@ -5,11 +5,10 @@ import pytest
 
 from glyff.exceptions import SerializationError, ArgumentCanonicalizationError
 from glyff.serialization import (
-    JsonArgsCanonicalizer,
+    JsonArgumentCanonicalizer,
     JsonSerializer,
-    OpaqueContext,
     OpaquePolicy,
-    QualnameOpaque,
+    OpaqueByTypeName,
 )
 
 
@@ -54,62 +53,68 @@ def serializer() -> JsonSerializer:
 
 
 @pytest.fixture
-def canonicalizer() -> JsonArgsCanonicalizer:
-    return JsonArgsCanonicalizer()
+def argument_canonicalizer() -> JsonArgumentCanonicalizer:
+    return JsonArgumentCanonicalizer()
 
 
 def test_canonicalize_args_positional_vs_keyword_are_equal(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     sig = inspect.signature(sample_func)
-    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {"b": "test"})
-    second = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {"b": "test"})
+    second = argument_canonicalizer.canonicalize(
         sample_func, sig, (), {"a": 1, "b": "test"}
     )
     assert first == second
 
 
-def test_canonicalize_args_defaults_are_included(canonicalizer: JsonArgsCanonicalizer):
+def test_canonicalize_args_defaults_are_included(
+    argument_canonicalizer: JsonArgumentCanonicalizer,
+):
     sig = inspect.signature(sample_func)
-    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
-    second = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {})
+    second = argument_canonicalizer.canonicalize(
         sample_func, sig, (), {"a": 1, "b": "default"}
     )
     assert first == second
 
 
 def test_canonicalize_args_different_values_differ(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     sig = inspect.signature(sample_func)
-    first = canonicalizer.canonicalize_args(sample_func, sig, (1,), {})
-    second = canonicalizer.canonicalize_args(sample_func, sig, (2,), {})
+    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {})
+    second = argument_canonicalizer.canonicalize(sample_func, sig, (2,), {})
     assert first != second
 
 
 def test_canonicalize_args_includes_var_positional_and_keyword(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     def func(a, *args, **kwargs):
         pass
 
     sig = inspect.signature(func)
     # *args and **kwargs must affect identity, otherwise distinct calls collide.
-    assert canonicalizer.canonicalize_args(
+    assert argument_canonicalizer.canonicalize(
         func, sig, (1, 2), {}
-    ) != canonicalizer.canonicalize_args(func, sig, (1, 3), {})
-    assert canonicalizer.canonicalize_args(
+    ) != argument_canonicalizer.canonicalize(func, sig, (1, 3), {})
+    assert argument_canonicalizer.canonicalize(
         func, sig, (1,), {"x": 2}
-    ) != canonicalizer.canonicalize_args(func, sig, (1,), {"x": 3})
-    assert canonicalizer.canonicalize_args(
+    ) != argument_canonicalizer.canonicalize(func, sig, (1,), {"x": 3})
+    assert argument_canonicalizer.canonicalize(
         func, sig, (1, 2), {"x": 3}
-    ) == canonicalizer.canonicalize_args(func, sig, (1, 2), {"x": 3})
+    ) == argument_canonicalizer.canonicalize(func, sig, (1, 2), {"x": 3})
 
 
-def test_canonicalize_args_is_deterministic(canonicalizer: JsonArgsCanonicalizer):
+def test_canonicalize_args_is_deterministic(
+    argument_canonicalizer: JsonArgumentCanonicalizer,
+):
     sig = inspect.signature(sample_func)
-    first = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
-    second = canonicalizer.canonicalize_args(sample_func, sig, (42,), {"b": "hello"})
+    first = argument_canonicalizer.canonicalize(sample_func, sig, (42,), {"b": "hello"})
+    second = argument_canonicalizer.canonicalize(
+        sample_func, sig, (42,), {"b": "hello"}
+    )
     assert first == second
 
 
@@ -132,7 +137,9 @@ async def test_serialize_non_serializable_raises_custom_error(
         await serializer.serialize(object(), object)
 
 
-def test_canonical_opaque_arg_raises_by_default(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_opaque_arg_raises_by_default(
+    argument_canonicalizer: JsonArgumentCanonicalizer,
+):
     def func_with_obj(a: object):
         pass
 
@@ -140,24 +147,26 @@ def test_canonical_opaque_arg_raises_by_default(canonicalizer: JsonArgsCanonical
 
     # By default an opaque value (no value representation) is rejected rather than
     with pytest.raises(ArgumentCanonicalizationError):
-        canonicalizer.canonicalize_args(func_with_obj, sig, (MyPlainClass("id1"),), {})
+        argument_canonicalizer.canonicalize(
+            func_with_obj, sig, (MyPlainClass("id1"),), {}
+        )
 
 
 def test_canonical_opaque_arg_by_class_with_qualname_policy():
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
 
     def func_with_obj(a: object):
         pass
 
     sig = inspect.signature(func_with_obj)
 
-    first = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(
         func_with_obj, sig, (MyPlainClass("id1"),), {}
     )
-    second = canonicalizer.canonicalize_args(
+    second = argument_canonicalizer.canonicalize(
         func_with_obj, sig, (MyPlainClass("id2"),), {}
     )
-    different = canonicalizer.canonicalize_args(func_with_obj, sig, (object(),), {})
+    different = argument_canonicalizer.canonicalize(func_with_obj, sig, (object(),), {})
 
     # With the opt-in qualname policy, opaque values are identified by their class:
     assert first == second
@@ -165,7 +174,7 @@ def test_canonical_opaque_arg_by_class_with_qualname_policy():
 
 
 def test_canonical_nested_dataclass_and_type_values(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     @dataclasses.dataclass(frozen=True)
     class Container:
@@ -176,13 +185,13 @@ def test_canonical_nested_dataclass_and_type_values(
         pass
 
     sig = inspect.signature(func)
-    first = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(
         func,
         sig,
         (Container(data=MyDataClass(id="id1", value=100), cls=AnotherClass),),
         {},
     )
-    second = canonicalizer.canonicalize_args(
+    second = argument_canonicalizer.canonicalize(
         func,
         sig,
         (Container(data=MyDataClass(id="id1", value=100), cls=AnotherClass),),
@@ -193,21 +202,25 @@ def test_canonical_nested_dataclass_and_type_values(
 
 
 def test_canonical_callable_values_by_qualified_name(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     def func(callback):
         pass
 
     sig = inspect.signature(func)
-    first = canonicalizer.canonicalize_args(func, sig, (helper_func,), {})
-    second = canonicalizer.canonicalize_args(func, sig, (helper_func,), {})
-    different = canonicalizer.canonicalize_args(func, sig, (another_helper_func,), {})
+    first = argument_canonicalizer.canonicalize(func, sig, (helper_func,), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (helper_func,), {})
+    different = argument_canonicalizer.canonicalize(
+        func, sig, (another_helper_func,), {}
+    )
 
     assert first == second
     assert first != different
 
 
-def test_canonical_partial_by_components(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_partial_by_components(
+    argument_canonicalizer: JsonArgumentCanonicalizer,
+):
     import functools
 
     def func(callback):
@@ -219,19 +232,19 @@ def test_canonical_partial_by_components(canonicalizer: JsonArgsCanonicalizer):
         return a + b
 
     # partials hash by their func/args/keywords, not all collapsing to "functools.partial".
-    first = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(
         func, sig, (functools.partial(base, 1),), {}
     )
-    h1_again = canonicalizer.canonicalize_args(
+    h1_again = argument_canonicalizer.canonicalize(
         func, sig, (functools.partial(base, 1),), {}
     )
-    diff_arg = canonicalizer.canonicalize_args(
+    diff_arg = argument_canonicalizer.canonicalize(
         func, sig, (functools.partial(base, 2),), {}
     )
-    diff_kw = canonicalizer.canonicalize_args(
+    diff_kw = argument_canonicalizer.canonicalize(
         func, sig, (functools.partial(base, 1, b=9),), {}
     )
-    diff_func = canonicalizer.canonicalize_args(
+    diff_func = argument_canonicalizer.canonicalize(
         func, sig, (functools.partial(helper_func),), {}
     )
 
@@ -242,63 +255,71 @@ def test_canonical_partial_by_components(canonicalizer: JsonArgsCanonicalizer):
 
 
 def test_method_hash_differs_for_different_dataclass_instances(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     inst1 = MyDataClass(id="id1", value=100)
     inst2 = MyDataClass(id="id2", value=100)
     func = MyDataClass.method
     sig = inspect.signature(func)
 
-    first = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
-    second = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
+    first = argument_canonicalizer.canonicalize(func, sig, (inst1, 10), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (inst2, 10), {})
 
     assert first != second
 
 
 def test_method_hash_is_same_for_identical_dataclass_instances(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     inst1 = MyDataClass(id="id1", value=100)
     inst2 = MyDataClass(id="id1", value=100)
     func = MyDataClass.method
     sig = inspect.signature(func)
 
-    first = canonicalizer.canonicalize_args(func, sig, (inst1, 10), {})
-    second = canonicalizer.canonicalize_args(func, sig, (inst2, 10), {})
+    first = argument_canonicalizer.canonicalize(func, sig, (inst1, 10), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (inst2, 10), {})
 
     assert first == second
 
 
-def test_class_method_hash_is_stable(canonicalizer: JsonArgsCanonicalizer):
+def test_class_method_hash_is_stable(argument_canonicalizer: JsonArgumentCanonicalizer):
     func = AnotherClass.class_method.__func__
     sig = inspect.signature(func)
 
-    first = canonicalizer.canonicalize_args(func, sig, (AnotherClass, 10), {})
-    second = canonicalizer.canonicalize_args(func, sig, (AnotherClass, 10), {})
+    first = argument_canonicalizer.canonicalize(func, sig, (AnotherClass, 10), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (AnotherClass, 10), {})
 
     assert first == second
 
 
-def test_canonical_plain_self_raises_by_default(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_plain_self_raises_by_default(
+    argument_canonicalizer: JsonArgumentCanonicalizer,
+):
     func = MyPlainClass.method
     sig = inspect.signature(func)
 
     # A plain (non-dataclass) `self` has no value representation, so by default it is
     # rejected instead of being collapsed to its class name.
     with pytest.raises(ArgumentCanonicalizationError):
-        canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 10), {})
+        argument_canonicalizer.canonicalize(func, sig, (MyPlainClass("id1"), 10), {})
 
 
 def test_canonical_plain_self_by_class_with_qualname_policy():
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
     func = MyPlainClass.method
     sig = inspect.signature(func)
 
     # Opt in to qualname hashing to treat the receiver as a stateless service: calls on
     # different instances of the same class collapse while arguments still differentiate.
-    first = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 10), {})
-    second = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id2"), 10), {})
-    other = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"), 20), {})
+    first = argument_canonicalizer.canonicalize(
+        func, sig, (MyPlainClass("id1"), 10), {}
+    )
+    second = argument_canonicalizer.canonicalize(
+        func, sig, (MyPlainClass("id2"), 10), {}
+    )
+    other = argument_canonicalizer.canonicalize(
+        func, sig, (MyPlainClass("id1"), 20), {}
+    )
 
     assert first == second
     assert first != other
@@ -333,38 +354,36 @@ def test_canonical_dataclass_with_nested_plain_service():
     a3 = Agent("writer", [Tool(threading.Lock())])
 
     with pytest.raises(ArgumentCanonicalizationError):
-        JsonArgsCanonicalizer().canonicalize_args(func, sig, (a1, "hi"), {})
+        JsonArgumentCanonicalizer().canonicalize(func, sig, (a1, "hi"), {})
 
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
-    first = canonicalizer.canonicalize_args(func, sig, (a1, "hi"), {})
-    second = canonicalizer.canonicalize_args(func, sig, (a2, "hi"), {})
-    other = canonicalizer.canonicalize_args(func, sig, (a3, "hi"), {})
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    first = argument_canonicalizer.canonicalize(func, sig, (a1, "hi"), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (a2, "hi"), {})
+    other = argument_canonicalizer.canonicalize(func, sig, (a3, "hi"), {})
 
     assert first == second
     assert first != other
 
 
-def test_custom_opaque_policy_receives_value_in_context():
-    """A custom policy is consulted with the opaque value wrapped in an OpaqueContext."""
-
+def test_custom_opaque_policy_receives_the_value():
     class Marker:
         pass
 
     seen: list = []
 
     class RecordingPolicy(OpaquePolicy):
-        def represent(self, ctx: OpaqueContext):
-            seen.append(ctx.value)
+        def represent(self, value):
+            seen.append(value)
             return "recorded"
 
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=RecordingPolicy())
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=RecordingPolicy())
 
     def func(a: object):
         pass
 
     sig = inspect.signature(func)
     marker = Marker()
-    canonicalizer.canonicalize_args(func, sig, (marker,), {})
+    argument_canonicalizer.canonicalize(func, sig, (marker,), {})
 
     assert seen == [marker]
 
@@ -372,18 +391,18 @@ def test_custom_opaque_policy_receives_value_in_context():
 def test_opaque_value_does_not_collide_with_native_representation():
     """An opaque value must not equal a native value sharing the policy's output.
 
-    QualnameOpaque renders MyPlainClass as its qualified name; a literal string equal
+    OpaqueByTypeName renders MyPlainClass as its qualified name; a literal string equal
     to that qualname must still hash differently, since the framework tags opaque output.
     """
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
 
     def func(a: object):
         pass
 
     sig = inspect.signature(func)
     qualname = f"{MyPlainClass.__module__}.{MyPlainClass.__qualname__}"
-    opaque = canonicalizer.canonicalize_args(func, sig, (MyPlainClass("id1"),), {})
-    literal = canonicalizer.canonicalize_args(func, sig, (qualname,), {})
+    opaque = argument_canonicalizer.canonicalize(func, sig, (MyPlainClass("id1"),), {})
+    literal = argument_canonicalizer.canonicalize(func, sig, (qualname,), {})
 
     assert opaque != literal
 
@@ -396,18 +415,18 @@ def test_custom_opaque_policy_result_differentiates_hash():
             self.token = token
 
     class ByToken(OpaquePolicy):
-        def represent(self, ctx: OpaqueContext):
-            return ctx.value.token
+        def represent(self, value):
+            return value.token
 
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=ByToken())
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=ByToken())
 
     def func(a: object):
         pass
 
     sig = inspect.signature(func)
-    a = canonicalizer.canonicalize_args(func, sig, (Tok("a"),), {})
-    a_again = canonicalizer.canonicalize_args(func, sig, (Tok("a"),), {})
-    b = canonicalizer.canonicalize_args(func, sig, (Tok("b"),), {})
+    a = argument_canonicalizer.canonicalize(func, sig, (Tok("a"),), {})
+    a_again = argument_canonicalizer.canonicalize(func, sig, (Tok("a"),), {})
+    b = argument_canonicalizer.canonicalize(func, sig, (Tok("b"),), {})
 
     assert a == a_again
     assert a != b
@@ -429,11 +448,11 @@ def test_opaque_policy_applies_to_nested_dataclass_member():
     sig = inspect.signature(func)
 
     with pytest.raises(ArgumentCanonicalizationError):
-        JsonArgsCanonicalizer().canonicalize_args(func, sig, (Holder(Svc()),), {})
+        JsonArgumentCanonicalizer().canonicalize(func, sig, (Holder(Svc()),), {})
 
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
-    first = canonicalizer.canonicalize_args(func, sig, (Holder(Svc()),), {})
-    second = canonicalizer.canonicalize_args(func, sig, (Holder(Svc()),), {})
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    first = argument_canonicalizer.canonicalize(func, sig, (Holder(Svc()),), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (Holder(Svc()),), {})
     assert first == second
 
 
@@ -450,10 +469,10 @@ def test_opaque_policy_applies_to_set_members():
     values = {Svc(), Svc()}
 
     with pytest.raises(ArgumentCanonicalizationError):
-        JsonArgsCanonicalizer().canonicalize_args(func, sig, (values,), {})
+        JsonArgumentCanonicalizer().canonicalize(func, sig, (values,), {})
 
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=QualnameOpaque())
-    assert canonicalizer.canonicalize_args(func, sig, (values,), {}) is not None
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    assert argument_canonicalizer.canonicalize(func, sig, (values,), {}) is not None
 
 
 def test_falsy_custom_opaque_policy_is_respected():
@@ -463,24 +482,24 @@ def test_falsy_custom_opaque_policy_is_respected():
         def __bool__(self):
             return False
 
-        def represent(self, ctx: OpaqueContext):
+        def represent(self, value):
             return "from-falsy"
 
     class Svc:
         pass
 
-    canonicalizer = JsonArgsCanonicalizer(opaque_policy=FalsyPolicy())
+    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=FalsyPolicy())
 
     def func(a: object):
         pass
 
     sig = inspect.signature(func)
-    # Would raise if the falsy policy were dropped in favour of RaiseOnOpaque.
-    assert canonicalizer.canonicalize_args(func, sig, (Svc(),), {}) is not None
+    # Would raise if the falsy policy were dropped in favour of RejectOpaque.
+    assert argument_canonicalizer.canonicalize(func, sig, (Svc(),), {}) is not None
 
 
 def test_canonical_set_is_by_content_and_order_independent(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     def func(a: set):
         pass
@@ -489,36 +508,38 @@ def test_canonical_set_is_by_content_and_order_independent(
 
     # Value types json doesn't encode natively (set/frozenset) are hashed by content,
     # independent of insertion order, rather than colliding on "builtins.set".
-    h_ab = canonicalizer.canonicalize_args(func, sig, ({1, 2, 3},), {})
-    h_ba = canonicalizer.canonicalize_args(func, sig, ({3, 2, 1},), {})
-    h_cd = canonicalizer.canonicalize_args(func, sig, ({4, 5, 6},), {})
+    h_ab = argument_canonicalizer.canonicalize(func, sig, ({1, 2, 3},), {})
+    h_ba = argument_canonicalizer.canonicalize(func, sig, ({3, 2, 1},), {})
+    h_cd = argument_canonicalizer.canonicalize(func, sig, ({4, 5, 6},), {})
 
     assert h_ab == h_ba
     assert h_ab != h_cd
 
 
 def test_canonical_frozenset_matches_equivalent_set(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     def func(a: object):
         pass
 
     sig = inspect.signature(func)
-    h_set = canonicalizer.canonicalize_args(func, sig, ({1, 2},), {})
-    h_frozen = canonicalizer.canonicalize_args(func, sig, (frozenset({2, 1}),), {})
+    h_set = argument_canonicalizer.canonicalize(func, sig, ({1, 2},), {})
+    h_frozen = argument_canonicalizer.canonicalize(func, sig, (frozenset({2, 1}),), {})
 
     # Both reduce to the same sorted content representation.
     assert h_set == h_frozen
 
 
-def test_canonical_bytes_is_by_content(canonicalizer: JsonArgsCanonicalizer):
+def test_canonical_bytes_is_by_content(
+    argument_canonicalizer: JsonArgumentCanonicalizer,
+):
     def func(a: bytes):
         pass
 
     sig = inspect.signature(func)
-    first = canonicalizer.canonicalize_args(func, sig, (b"abc",), {})
-    second = canonicalizer.canonicalize_args(func, sig, (b"abc",), {})
-    other = canonicalizer.canonicalize_args(func, sig, (b"xyz",), {})
+    first = argument_canonicalizer.canonicalize(func, sig, (b"abc",), {})
+    second = argument_canonicalizer.canonicalize(func, sig, (b"abc",), {})
+    other = argument_canonicalizer.canonicalize(func, sig, (b"xyz",), {})
 
     assert first == second
     assert first != other
@@ -536,20 +557,20 @@ class AgentWithDep:
 
 
 def test_canonical_ignores_compare_false_dataclass_fields(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     func = AgentWithDep.run
     sig = inspect.signature(func)
 
     # `counter` is field(compare=False), so it is excluded from the hash; only `name`
     # and the call arguments differentiate.
-    first = canonicalizer.canonicalize_args(
+    first = argument_canonicalizer.canonicalize(
         func, sig, (AgentWithDep("a", counter=1), "q"), {}
     )
-    second = canonicalizer.canonicalize_args(
+    second = argument_canonicalizer.canonicalize(
         func, sig, (AgentWithDep("a", counter=99), "q"), {}
     )
-    other = canonicalizer.canonicalize_args(
+    other = argument_canonicalizer.canonicalize(
         func, sig, (AgentWithDep("b", counter=1), "q"), {}
     )
 
@@ -568,13 +589,13 @@ async def test_serialize_includes_compare_false_dataclass_fields(
 
 
 def test_regular_function_with_self_parameter_is_hashed_normally(
-    canonicalizer: JsonArgsCanonicalizer,
+    argument_canonicalizer: JsonArgumentCanonicalizer,
 ):
     def regular_func(self: str, x: int):
         pass
 
     sig = inspect.signature(regular_func)
-    result = canonicalizer.canonicalize_args(
+    result = argument_canonicalizer.canonicalize(
         regular_func, sig, ("a serializable string", 10), {}
     )
     assert result is not None

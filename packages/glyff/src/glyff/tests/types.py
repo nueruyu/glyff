@@ -1,7 +1,7 @@
 from typing import Callable
 
 from glyff import (
-    ArgsCanonicalizer,
+    ArgumentCanonicalizer,
     Backend,
     EventEmitter,
     Serializer,
@@ -14,7 +14,7 @@ BackendFactory = Callable[[str], Backend]
 def make_session(
     session_id: str,
     backend: Backend,
-    canonicalizer: ArgsCanonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
     serializer: Serializer,
     event_emitter: EventEmitter | None = None,
 ) -> Session:
@@ -22,6 +22,6 @@ def make_session(
         id=session_id,
         backend=backend,
         serializer=serializer,
-        canonicalizer=canonicalizer,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=event_emitter,
     )

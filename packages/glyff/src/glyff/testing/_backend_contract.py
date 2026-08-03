@@ -13,7 +13,7 @@ import pytest
 
 from glyff import (
     CanonicalValue,
-    EncodedArguments,
+    CanonicalArguments,
     Execution,
     ExecutionId,
     ExecutionRepository,
@@ -47,13 +47,13 @@ def make_execution_id(
         parent_id=parent,
         name=name,
         sequence=sequence,
-        args_hash=encoded_args(args).digest,
+        arguments_digest=encoded_args(args).digest,
     )
 
 
-def encoded_args(raw: CanonicalValue = None) -> EncodedArguments:
+def encoded_args(raw: CanonicalValue = None) -> CanonicalArguments:
     """The canonical arguments an id built by :func:`make_execution_id` is keyed by."""
-    return EncodedArguments(encode_canonical({} if raw is None else raw))
+    return CanonicalArguments(encode_canonical({} if raw is None else raw))
 
 
 def serialized_value(raw: object = "value") -> SerializedValue:
@@ -115,7 +115,7 @@ class ExecutionBackendContract:
         loaded = await backend.repository.get(execution_id)
         assert loaded is not None
         # Byte equality, not JSON equality: non-ASCII catches a store that re-encodes.
-        assert loaded.args.data == args.data
+        assert loaded.arguments.data == args.data
 
     async def test_completed_execution_keeps_its_args(
         self, backend_factory: BackendFactory
@@ -130,7 +130,7 @@ class ExecutionBackendContract:
 
         loaded = await backend.repository.get(execution_id)
         assert loaded is not None
-        assert loaded.args.data == args.data
+        assert loaded.arguments.data == args.data
 
     async def test_save_completed_result_then_get(
         self, backend_factory: BackendFactory
@@ -323,7 +323,7 @@ class ExecutionBackendContract:
         backend = backend_factory("collision")
         p1 = make_execution_id("p1")
         p2 = make_execution_id("p2")
-        # Identical (name, sequence, args_hash) frame under different parents
+        # Identical (name, sequence, arguments_digest) frame under different parents
         # must remain independent records (the full-path key scheme guarantees
         # this; a flat key scheme would collide).
         leaf1 = make_execution_id("leaf", parent=p1, args="same")

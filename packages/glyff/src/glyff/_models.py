@@ -15,11 +15,11 @@ CanonicalValue: TypeAlias = (
 
 
 @dataclass(frozen=True)
-class EncodedArguments:
+class CanonicalArguments:
     """Canonical argument bytes, the preimage of an execution's key.
 
     Not a :class:`SerializedValue`: that carries application values through a
-    ``Serializer``, and only these derive an ``args_hash``. Stores must round-trip
+    ``Serializer``, and only these derive an ``arguments_digest``. Stores must round-trip
     them untouched — re-encoding would change the key.
     """
 
@@ -40,7 +40,7 @@ class ExecutionId:
     parent_id: ExecutionId | None
     name: str
     sequence: int
-    args_hash: str
+    arguments_digest: str
 
     def __str__(self) -> str:
         """
@@ -83,16 +83,16 @@ class Execution:
 
     id: ExecutionId
     status: ExecutionStatus
-    args: EncodedArguments
-    """The arguments this call was keyed by: ``id.args_hash == args.digest``."""
+    arguments: CanonicalArguments
+    """The arguments this call was keyed by: ``id.arguments_digest == arguments.digest``."""
     result: SerializedValue | None = None
     metadata: dict[str, Metadata] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.id.args_hash != self.args.digest:
+        if self.id.arguments_digest != self.arguments.digest:
             raise InvalidExecutionError(
                 f"Execution {self.id} does not match its recorded arguments: "
-                "args_hash must be the digest of args."
+                "arguments_digest must be the digest of arguments."
             )
         completed = self.status is ExecutionStatus.COMPLETED
         if completed and self.result is None:
@@ -103,8 +103,10 @@ class Execution:
             )
 
     @classmethod
-    def start(cls, execution_id: ExecutionId, args: EncodedArguments) -> "Execution":
-        return cls(id=execution_id, status=ExecutionStatus.STARTED, args=args)
+    def start(
+        cls, execution_id: ExecutionId, arguments: CanonicalArguments
+    ) -> "Execution":
+        return cls(id=execution_id, status=ExecutionStatus.STARTED, arguments=arguments)
 
     def complete(self, result: SerializedValue) -> None:
         if self.status is ExecutionStatus.COMPLETED:

@@ -55,9 +55,9 @@ glyff does not auto-migrate a paused session onto new code. Instead:
 
 What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),
-byte-for-byte the preimage of its `args_hash`. Remapping an argument is therefore
-a transformation of recorded JSON, with no dead Python types to keep alive and no
-dependence on the canonicalizer that wrote the record.
+byte-for-byte the preimage of its `arguments_digest`. Remapping an argument is
+therefore a transformation of recorded JSON, with no dead Python types to keep
+alive and no dependence on the canonicalizer that wrote the record.
 
 > **Planned** — [#41](https://github.com/nueruyu/glyff/issues/41) (generation
 > stamp and typed mismatch error; the store format stamp above has landed),

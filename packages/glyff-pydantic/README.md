@@ -1,6 +1,6 @@
 # glyff-pydantic
 
-Pydantic-based `Serializer` and `ArgsCanonicalizer` implementations for
+Pydantic-based `Serializer` and `ArgumentCanonicalizer` implementations for
 [glyff](https://pypi.org/project/glyff/).
 
 Lets a glyff session record results of any type Pydantic's `TypeAdapter` can
@@ -19,7 +19,7 @@ This package depends on `glyff>=0.14.0` and `pydantic>=2.0`.
 | Name                 | Description                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------------ |
 | `PydanticSerializer` | Serializes values to JSON using `TypeAdapter`. Restores typed values on read.                    |
-| `PydanticArgsCanonicalizer` | Canonicalizes function arguments through Pydantic's own dump, for stable, type-aware identity. |
+| `PydanticArgumentCanonicalizer` | Canonicalizes function arguments through Pydantic's own dump, for stable, type-aware identity. |
 
 `PydanticSerializer` works with any type `TypeAdapter` handles. The
 canonicalizer's reach is narrower by design: it dumps `BaseModel` instances and

@@ -4,7 +4,7 @@ from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
 from ._executor import execute
-from ._models import EncodedArguments, ExecutionId
+from ._models import CanonicalArguments, ExecutionId
 from .exceptions import MissingTypeHintError, TypeHintResolutionError
 from .serialization._utils import encode_canonical
 
@@ -40,14 +40,17 @@ async def _resolve_call_identity(
     task_name: str,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-) -> tuple[ExecutionId, EncodedArguments]:
+) -> tuple[ExecutionId, CanonicalArguments]:
     """Return the execution id for one call and the canonical arguments it is keyed by."""
     parent_id = ctx.current_execution_id
-    canonical = ctx.canonicalizer.canonicalize_args(func, sig, args, kwargs)
-    encoded = EncodedArguments(encode_canonical(canonical))
+    canonical = ctx.argument_canonicalizer.canonicalize(func, sig, args, kwargs)
+    encoded = CanonicalArguments(encode_canonical(canonical))
     seq = await ctx.sequencer.next(parent_id, task_name, encoded.digest)
     execution_id = ExecutionId(
-        parent_id=parent_id, name=task_name, sequence=seq, args_hash=encoded.digest
+        parent_id=parent_id,
+        name=task_name,
+        sequence=seq,
+        arguments_digest=encoded.digest,
     )
     return execution_id, encoded
 

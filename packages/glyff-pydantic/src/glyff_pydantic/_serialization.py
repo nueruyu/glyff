@@ -12,11 +12,10 @@ from typing import Any
 from glyff.exceptions import SerializationError
 from glyff import CanonicalValue
 from glyff.serialization import (
-    JsonArgsCanonicalizer,
+    JsonArgumentCanonicalizer,
     JsonSerializer,
-    OpaqueContext,
     OpaquePolicy,
-    RaiseOnOpaque,
+    RejectOpaque,
 )
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -87,24 +86,24 @@ _SCALARS = (
 )
 
 
-class _PydanticScalars(OpaquePolicy):
+class _PydanticScalarPolicy(OpaquePolicy):
     """Represents the scalar types pydantic knows, deferring everything else."""
 
     def __init__(self, fallback: OpaquePolicy) -> None:
         self._fallback = fallback
 
-    def represent(self, ctx: OpaqueContext) -> Any:
-        if isinstance(ctx.value, _SCALARS):
-            return to_jsonable_python(ctx.value)
-        return self._fallback.represent(ctx)
+    def represent(self, value: Any) -> Any:
+        if isinstance(value, _SCALARS):
+            return to_jsonable_python(value)
+        return self._fallback.represent(value)
 
 
-class PydanticArgsCanonicalizer(JsonArgsCanonicalizer):
-    """An ArgsCanonicalizer that understands Pydantic models."""
+class PydanticArgumentCanonicalizer(JsonArgumentCanonicalizer):
+    """An ArgumentCanonicalizer that understands Pydantic models."""
 
     def __init__(self, opaque_policy: OpaquePolicy | None = None) -> None:
-        fallback = RaiseOnOpaque() if opaque_policy is None else opaque_policy
-        super().__init__(_PydanticScalars(fallback))
+        fallback = RejectOpaque() if opaque_policy is None else opaque_policy
+        super().__init__(_PydanticScalarPolicy(fallback))
 
     def canonicalize_value(self, obj: Any) -> CanonicalValue:
         if isinstance(obj, BaseModel):

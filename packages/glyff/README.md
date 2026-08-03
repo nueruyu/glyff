@@ -35,13 +35,13 @@ pip install glyff
 | `Execution`           | Aggregate Root for a recorded function execution.               |
 | `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`.                                   |
 | `SerializedValue`     | Serializer-neutral persisted value (results, metadata).         |
-| `EncodedArguments`    | A call's canonical arguments, the preimage of its key.          |
+| `CanonicalArguments`    | A call's canonical arguments, the preimage of its key.          |
 | `Metadata`            | Metadata entry owned by an `Execution`.                         |
 | `ExecutionRepository` | Repository for execution aggregates.                            |
 | `Transaction`         | Active transaction boundary.                                    |
 | `TransactionProvider` | Provider used by `TransactionScope`.                            |
 | `Serializer`          | Protocol for value serialization.                               |
-| `ArgsCanonicalizer`   | Contract for normalizing call arguments into a canonical form.  |
+| `ArgumentCanonicalizer`   | Contract for normalizing call arguments into a canonical form.  |
 | `CanonicalValue`      | The JSON data model value a canonicalizer returns.              |
 
 `engrave` also takes an explicit identity —

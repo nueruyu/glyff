@@ -4,11 +4,11 @@ import hashlib
 
 import pytest
 
-from glyff import CanonicalValue, EncodedArguments
+from glyff import CanonicalValue, CanonicalArguments
 from glyff.exceptions import ArgumentCanonicalizationError
-from glyff.serialization import QualnameOpaque
+from glyff.serialization import OpaqueByTypeName
 from glyff.serialization._utils import (
-    _sorted_canonical,
+    _canonicalize_set,
     encode_canonical,
     stable_json_dumps,
     to_canonical,
@@ -21,10 +21,10 @@ def canonical(obj: object, **kwargs) -> CanonicalValue:
 
 def test_sorted_canonical_is_stable_for_partial_order_elements():
     # frozenset only defines a partial order, so a direct sorted() would leave
-    # incomparable elements in process-randomized input order. _sorted_canonical must
+    # incomparable elements in process-randomized input order. _canonicalize_set must
     # instead order them by their encoded form.
     values = {frozenset({"a", "b"}), frozenset({"c", "d"}), frozenset({"e"})}
-    ordered = _sorted_canonical(values, to_canonical)
+    ordered = _canonicalize_set(values, to_canonical)
     assert ordered == sorted(ordered, key=encode_canonical)
 
 
@@ -141,7 +141,7 @@ def test_canonical_tags_policy_output_so_it_cannot_collide():
     class Service:
         pass
 
-    tagged = canonical(Service(), policy=QualnameOpaque())
+    tagged = canonical(Service(), policy=OpaqueByTypeName())
     assert tagged != canonical(f"{__name__}.test_canonical_tags_policy_output.Service")
     assert list(tagged) == ["__glyff_opaque__"]  # type: ignore[arg-type]
 
@@ -150,7 +150,7 @@ def test_canonical_applies_the_policy_at_any_depth():
     class Service:
         pass
 
-    assert canonical({"a": [Service()]}, policy=QualnameOpaque()) == {
+    assert canonical({"a": [Service()]}, policy=OpaqueByTypeName()) == {
         "a": [{"__glyff_opaque__": f"{__name__}.{Service.__qualname__}"}]
     }
 
@@ -168,4 +168,4 @@ def test_encode_canonical_rejects_values_outside_the_json_data_model():
 
 def test_encoded_arguments_digest_is_sha256_of_their_bytes():
     data = encode_canonical({"a": 1})
-    assert EncodedArguments(data).digest == hashlib.sha256(data).hexdigest()
+    assert CanonicalArguments(data).digest == hashlib.sha256(data).hexdigest()
