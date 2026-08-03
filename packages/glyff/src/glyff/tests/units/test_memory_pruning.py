@@ -1,7 +1,7 @@
 from typing import cast
 
 from glyff import Execution, ExecutionStatus, SerializedValue
-from glyff.testing import encoded_args, eid
+from glyff.testing import encoded_args, make_execution_id
 from glyff._context import TransactionScope
 from glyff.store import MemoryBackend, MemoryExecutionRepository
 from glyff.store._memory import _make_key
@@ -15,10 +15,10 @@ async def _save(backend: MemoryBackend, execution: Execution) -> None:
 
 async def test_descendants_of_returns_strict_transitive_descendants(serializer):
     backend = MemoryBackend()
-    root = eid("root")
-    a = eid("a", parent=root)
-    b = eid("b", parent=root)
-    grand = eid("grand", parent=a)
+    root = make_execution_id("root")
+    a = make_execution_id("a", parent=root)
+    b = make_execution_id("b", parent=root)
+    grand = make_execution_id("grand", parent=a)
 
     for execution_id in (root, a, b, grand):
         await _save(backend, Execution.start(execution_id, encoded_args()))
@@ -30,7 +30,7 @@ async def test_descendants_of_returns_strict_transitive_descendants(serializer):
 
 async def test_delete_many_removes_execution_parts(serializer):
     backend = MemoryBackend()
-    execution_id = eid("root")
+    execution_id = make_execution_id("root")
     execution = Execution.start(execution_id, encoded_args())
     execution.complete(SerializedValue(await serializer.serialize("ok", str)))
     execution.set_metadata("k", SerializedValue(await serializer.serialize("v", str)))
@@ -44,8 +44,8 @@ async def test_delete_many_removes_execution_parts(serializer):
 
 async def test_descendants_ignore_metadata_only_orphans(serializer):
     backend = MemoryBackend()
-    root = eid("root")
-    child = eid("child", parent=root)
+    root = make_execution_id("root")
+    child = make_execution_id("child", parent=root)
     path = execution_id_to_path(child)
     repository = cast(MemoryExecutionRepository, backend.repository)
     repository._client.data[_make_key(path, "metadata")] = {"k": b'"v"'}
@@ -55,11 +55,11 @@ async def test_descendants_ignore_metadata_only_orphans(serializer):
 
 async def test_delete_one_descendant_preserves_siblings(serializer):
     backend = MemoryBackend()
-    root = eid("root")
-    p1 = eid("p1", parent=root)
-    p2 = eid("p2", parent=root)
-    leaf1 = eid("leaf", parent=p1)
-    leaf2 = eid("leaf", parent=p2)
+    root = make_execution_id("root")
+    p1 = make_execution_id("p1", parent=root)
+    p2 = make_execution_id("p2", parent=root)
+    leaf1 = make_execution_id("leaf", parent=p1)
+    leaf2 = make_execution_id("leaf", parent=p2)
 
     for execution_id in (root, p1, p2, leaf1, leaf2):
         execution = Execution.start(execution_id, encoded_args())

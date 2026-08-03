@@ -28,9 +28,9 @@ from ._backend_contract import (
     ExecutionBackendContract,
     TextBackendContract,
     encoded_args,
-    eid,
+    make_execution_id,
     save_execution,
-    value,
+    serialized_value,
 )
 from ._pruning import PruningEventHandler
 
@@ -41,7 +41,7 @@ __all__ = [
     "TextBackendContract",
     "PruningEventHandler",
     "encoded_args",
-    "eid",
+    "make_execution_id",
     "save_execution",
-    "value",
+    "serialized_value",
 ]

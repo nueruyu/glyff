@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 from glyff import Execution, ExecutionStatus, SerializedValue
-from glyff.testing import encoded_args, eid
+from glyff.testing import encoded_args, make_execution_id
 
 from glyff_file_store import FileExecutionRepository, FileTransactionProvider
 from glyff_file_store._file_client import FileClient
@@ -549,8 +549,8 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
     repository = FileExecutionRepository(client)
     transaction_provider = FileTransactionProvider(client)
 
-    parent = eid("parent")
-    child = eid("child", parent=parent)
+    parent = make_execution_id("parent")
+    child = make_execution_id("child", parent=parent)
 
     parent_tx = await transaction_provider.begin_transaction()
     await repository.save(Execution.start(parent, encoded_args()))

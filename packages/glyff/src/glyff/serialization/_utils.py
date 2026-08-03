@@ -1,10 +1,4 @@
-"""Canonicalize call arguments for identity, and serialize values for storage.
-
-Two paths that must not be confused. **Canonicalization** normalizes arguments
-into the JSON data model: one-way, deliberately lossy, and deferring values with
-no value representation to a pluggable :class:`OpaquePolicy`. **Serialization**
-encodes results and metadata faithfully and raises on what it cannot represent.
-"""
+"""Canonical argument encoding and JSON serialization helpers."""
 
 import dataclasses
 import functools
@@ -29,24 +23,13 @@ def _qualified_name(obj: Any) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class OpaqueContext:
-    """The context handed to an :class:`OpaquePolicy` for a single opaque value.
-
-    Only ``value`` is populated today; the object exists so the policy signature can
-    gain fields (e.g. parameter name, function) without breaking implementations. See
-    the standard-policies follow-up for the planned additions.
-    """
+    """The context handed to an :class:`OpaquePolicy` for a single opaque value."""
 
     value: Any
 
 
 class OpaquePolicy(ABC):
-    """Decides how a value with no value representation contributes to identity.
-
-    glyff owns the canonicalization contract (encode by value, else defer here); it
-    does not own the taxonomy of what is opaque or how it is marked. Inject a policy
-    to recognise your own markers and turn each matched value into a canonical
-    representation.
-    """
+    """Maps a value with no value representation to a canonical one."""
 
     @abstractmethod
     def represent(self, ctx: OpaqueContext) -> Any:

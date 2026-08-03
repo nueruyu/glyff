@@ -16,18 +16,17 @@ CanonicalValue: TypeAlias = (
 
 @dataclass(frozen=True)
 class EncodedArguments:
-    """A call's canonical arguments, encoded.
+    """Canonical argument bytes, the preimage of an execution's key.
 
-    Distinct from :class:`SerializedValue`: that carries application values through
-    a ``Serializer``, while these come from the canonicalization path and are the
-    preimage of the execution's key.
+    Not a :class:`SerializedValue`: that carries application values through a
+    ``Serializer``, and only these derive an ``args_hash``. Stores must round-trip
+    them untouched — re-encoding would change the key.
     """
 
     data: bytes
 
     @property
     def digest(self) -> str:
-        """The ``args_hash`` of an execution keyed by these arguments."""
         return hashlib.sha256(self.data).hexdigest()
 
 
@@ -72,7 +71,7 @@ class SerializedValue:
 
 @dataclass(frozen=True)
 class Metadata:
-    """Child entity/value object inside the Execution aggregate."""
+    """A named serialized entry owned by an Execution."""
 
     key: str
     value: SerializedValue
@@ -80,20 +79,12 @@ class Metadata:
 
 @dataclass
 class Execution:
-    """Aggregate Root for a single task execution."""
+    """A recorded task execution."""
 
     id: ExecutionId
     status: ExecutionStatus
     args: EncodedArguments
-    """The canonical arguments this call was keyed by.
-
-    Invariant, enforced on construction and relied on by migration:
-
-        id.args_hash == args.digest
-
-    Stores must therefore round-trip these bytes untouched; re-encoding them would
-    break the key.
-    """
+    """The arguments this call was keyed by: ``id.args_hash == args.digest``."""
     result: SerializedValue | None = None
     metadata: dict[str, Metadata] = field(default_factory=dict)
 

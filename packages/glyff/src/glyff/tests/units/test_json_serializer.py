@@ -139,7 +139,6 @@ def test_canonical_opaque_arg_raises_by_default(canonicalizer: JsonArgsCanonical
     sig = inspect.signature(func_with_obj)
 
     # By default an opaque value (no value representation) is rejected rather than
-    # identified by class name, so distinct instances can never silently collide.
     with pytest.raises(ArgumentCanonicalizationError):
         canonicalizer.canonicalize_args(func_with_obj, sig, (MyPlainClass("id1"),), {})
 
@@ -161,7 +160,6 @@ def test_canonical_opaque_arg_by_class_with_qualname_policy():
     different = canonicalizer.canonicalize_args(func_with_obj, sig, (object(),), {})
 
     # With the opt-in qualname policy, opaque values are identified by their class:
-    # instances of the same class collapse to one form while a different class differs.
     assert first == second
     assert first != different
 

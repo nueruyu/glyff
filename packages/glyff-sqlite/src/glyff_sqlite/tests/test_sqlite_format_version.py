@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 from glyff import Execution, TransactionScope
-from glyff.testing import encoded_args, eid
+from glyff.testing import encoded_args, make_execution_id
 from glyff.exceptions import StoreFormatVersionError
 
 from glyff_sqlite import SQLiteBackend
@@ -85,7 +85,7 @@ class TestConfigurableTablePrefix:
         db = tmp_path / "custom.sqlite3"
         backend = SQLiteBackend(db, table_prefix="app")
 
-        execution_id = eid("task")
+        execution_id = make_execution_id("task")
         execution = Execution.start(execution_id, encoded_args())
         async with TransactionScope(backend.transaction_provider):
             await backend.repository.save(execution)

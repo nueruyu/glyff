@@ -25,7 +25,7 @@ class JsonSerializer(Serializer):
         self._indent = indent
         self._ensure_ascii = ensure_ascii
 
-    def to_jsonable(self, obj: Any) -> Any:
+    def json_default(self, obj: Any) -> Any:
         """json.dumps default hook. Override to support extra types."""
         return to_serializable(obj)
 
@@ -33,7 +33,7 @@ class JsonSerializer(Serializer):
         """Encodes a JSON-ready value to stable JSON bytes."""
         text = stable_json_dumps(
             value,
-            default=self.to_jsonable,
+            default=self.json_default,
             indent=self._indent,
             ensure_ascii=self._ensure_ascii,
         )

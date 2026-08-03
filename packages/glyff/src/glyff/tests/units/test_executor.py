@@ -21,7 +21,7 @@ from glyff.store import MemoryExecutionRepository
 from glyff.store._memory import _make_key
 from glyff.store._memory_client import MemoryClient
 from glyff.store.utils import execution_id_to_path
-from glyff.testing import PruningEventHandler, encoded_args, eid
+from glyff.testing import PruningEventHandler, encoded_args, make_execution_id
 from glyff.tests.stubs.store import StubBackend, StubExecutionRepository
 
 
@@ -98,7 +98,7 @@ async def test_completion_prunes_descendants_when_enabled(
     )
     token = set_context(ctx)
     try:
-        child = eid("child", parent=base_execution_id)
+        child = make_execution_id("child", parent=base_execution_id)
 
         async def sample_func():
             async with ctx.get_transaction_scope():
@@ -386,7 +386,7 @@ async def test_function_exception_rolls_back_body_scope_writes(
     test_context: Context,
     serializer: Serializer,
 ):
-    scratch_id = eid("scratch", parent=base_execution_id)
+    scratch_id = make_execution_id("scratch", parent=base_execution_id)
 
     async def sample_func():
         assert test_context.current_execution_id == base_execution_id
@@ -479,7 +479,7 @@ async def test_execution_failed_emits_after_body_transaction_closes(
     canonicalizer,
     serializer: Serializer,
 ):
-    scratch_id = eid("scratch", parent=base_execution_id)
+    scratch_id = make_execution_id("scratch", parent=base_execution_id)
     handler_saw_scratch: list[bool] = []
     write_errors: list[str] = []
 
@@ -690,7 +690,7 @@ async def test_nested_child_commits_without_losing_parent_staging(
     nested_execution_id: ExecutionId,
     test_context: Context,
 ):
-    marker_id = eid("marker", parent=base_execution_id)
+    marker_id = make_execution_id("marker", parent=base_execution_id)
 
     async def child_func():
         return "child"

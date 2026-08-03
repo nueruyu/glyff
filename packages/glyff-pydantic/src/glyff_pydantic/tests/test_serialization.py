@@ -150,7 +150,6 @@ def test_canonical_opaque_arg_raises_by_default(canonicalizer: ArgsCanonicalizer
 
     sig = inspect.signature(func_with_obj)
 
-    # By default an opaque value is rejected rather than identified by class name.
     with pytest.raises(ArgumentCanonicalizationError):
         canonicalizer.canonicalize_args(func_with_obj, sig, (PlainA(),), {})
 
@@ -175,7 +174,6 @@ def test_canonical_opaque_arg_by_class_with_qualname_policy():
     different = canonicalizer.canonicalize_args(func_with_obj, sig, (PlainB(),), {})
 
     # With the opt-in qualname policy, opaque values are identified by their class
-    # qualified name: same class canonicalizes identically, a different class differs.
     assert first == second
     assert first != different
 
@@ -276,7 +274,6 @@ def test_canonical_ignores_compare_false_dataclass_fields(
     func = AgentWithDep.run
     sig = inspect.signature(func)
 
-    # field(compare=False) is excluded via the shared dataclass logic.
     first = canonicalizer.canonicalize_args(
         func, sig, (AgentWithDep("a", counter=1), "q"), {}
     )

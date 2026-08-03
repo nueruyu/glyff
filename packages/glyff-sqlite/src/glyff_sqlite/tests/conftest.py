@@ -3,13 +3,13 @@ from pathlib import Path
 import pytest
 from glyff import ArgsCanonicalizer, ExecutionId
 from glyff.serialization import JsonArgsCanonicalizer, JsonSerializer
-from glyff.testing import eid
+from glyff.testing import make_execution_id
 from glyff_sqlite import SQLiteBackend
 
 
 @pytest.fixture
 def base_execution_id() -> ExecutionId:
-    return eid("test_func")
+    return make_execution_id("test_func")
 
 
 @pytest.fixture

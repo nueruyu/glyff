@@ -32,10 +32,10 @@ class PydanticSerializer(JsonSerializer):
         self._adapters: dict[Any, TypeAdapter] = {}
         self._lock = asyncio.Lock()
 
-    def to_jsonable(self, obj: Any) -> Any:
+    def json_default(self, obj: Any) -> Any:
         if isinstance(obj, BaseModel):
             return obj.model_dump(mode="json")
-        return super().to_jsonable(obj)
+        return super().json_default(obj)
 
     async def _get_adapter(self, type_hint: type) -> TypeAdapter:
         try:
@@ -108,9 +108,7 @@ class PydanticArgsCanonicalizer(JsonArgsCanonicalizer):
 
     def canonicalize_value(self, obj: Any) -> CanonicalValue:
         if isinstance(obj, BaseModel):
-            # Dump to python types only. The shared walk owns every container from
-            # here, so a model's mappings and sets get the same key checks and
-            # ordering as anything else; pydantic's own encoder would stringify
-            # mapping keys first and collapse two distinct keys into one.
+            # Keep container traversal in the shared walk, so a model's mapping
+            # collision checks and set ordering match every other argument.
             return super().canonicalize_value(obj.model_dump(mode="python"))
         return super().canonicalize_value(obj)

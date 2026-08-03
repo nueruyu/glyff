@@ -13,7 +13,7 @@ from glyff import (
 )
 from glyff._context import Context, reset_context, set_context
 from glyff._event_system import EventEmitter
-from glyff.testing import encoded_args, eid
+from glyff.testing import encoded_args, make_execution_id
 from glyff._sequencer import Sequencer
 from glyff.exceptions import NoCurrentExecutionError
 from glyff.serialization import JsonArgsCanonicalizer, JsonSerializer
@@ -22,7 +22,7 @@ from glyff.tests.types import BackendFactory, make_session
 
 
 def _eid(name: str, parent: ExecutionId | None = None) -> ExecutionId:
-    return eid(name, parent=parent)
+    return make_execution_id(name, parent=parent)
 
 
 async def _start(ctx: Context, eid: ExecutionId) -> None:
