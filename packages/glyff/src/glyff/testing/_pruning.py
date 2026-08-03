@@ -25,6 +25,11 @@ class PruningEventHandler(EventHandler[ExecutionCompleted]):
 
     async def handle(self, event: ExecutionCompleted) -> None:
         async with event.context.get_transaction_scope():
-            descendants = await self._repository.descendants_of(event.execution_id)
+            descendants = [
+                execution.id
+                async for execution in self._repository.executions(
+                    under=event.execution_id
+                )
+            ]
             if descendants:
                 await self._repository.delete_many(descendants)

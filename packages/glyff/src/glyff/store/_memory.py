@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 
-from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
+from .._interfaces import (
+    AppVersionStore,
+    ExecutionRepository,
+    Transaction,
+    TransactionProvider,
+)
 from .._models import (
     CanonicalArguments,
     Execution,
     ExecutionId,
+    ExecutionStatus,
     Metadata,
     SerializedValue,
 )
@@ -144,14 +150,22 @@ class MemoryExecutionRepository(ExecutionRepository):
         else:
             self._client.stage_delete(self._id_to_key(execution.id, "metadata"))
 
-    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        prefix = execution_id_to_path(execution_id) + "/"
-        paths: set[str] = set()
-        for key in self._client.all_keys():
-            path = _key_to_path(key)
-            if path is not None and path.startswith(prefix):
-                paths.add(path)
-        return [path_to_execution_id(p) for p in paths]
+    async def executions(
+        self,
+        *,
+        status: ExecutionStatus | None = None,
+        under: ExecutionId | None = None,
+    ) -> AsyncIterator[Execution]:
+        prefix = execution_id_to_path(under) + "/" if under is not None else ""
+        paths = sorted(
+            path
+            for path in (_key_to_path(key) for key in self._client.all_keys())
+            if path is not None and path.startswith(prefix)
+        )
+        for path in paths:
+            execution = await self.get(path_to_execution_id(path))
+            if execution is not None and status in (None, execution.status):
+                yield execution
 
     async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
         for execution_id in execution_ids:
@@ -174,3 +188,6 @@ class MemoryBackend:
         self.transaction_provider: TransactionProvider = MemoryTransactionProvider(
             client
         )
+        # Nothing here outlives the process that wrote it, so there is no
+        # generation to record.
+        self.app_version: AppVersionStore | None = None

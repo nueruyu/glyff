@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import AsyncIterator, Callable, Iterable
 from typing import Any, NamedTuple
 
 from glyff import (
+    AppVersionStore,
     Execution,
     ExecutionId,
     ExecutionRepository,
+    ExecutionStatus,
     Transaction,
     TransactionProvider,
 )
@@ -50,9 +52,14 @@ class StubExecutionRepository(ExecutionRepository):
         self._record("save", execution)
         await self._impl.save(execution)
 
-    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        self._record("descendants_of", execution_id)
-        return await self._impl.descendants_of(execution_id)
+    def executions(
+        self,
+        *,
+        status: ExecutionStatus | None = None,
+        under: ExecutionId | None = None,
+    ) -> AsyncIterator[Execution]:
+        self._record("executions", status=status, under=under)
+        return self._impl.executions(status=status, under=under)
 
     async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
         execution_ids = list(execution_ids)
@@ -82,6 +89,7 @@ class StubBackend:
         self.transaction_provider = StubTransactionProvider(
             self._record, MemoryTransactionProvider(client)
         )
+        self.app_version: AppVersionStore | None = None
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append(Call(name, args, kwargs))

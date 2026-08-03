@@ -13,7 +13,11 @@ async def _save(backend: MemoryBackend, execution: Execution) -> None:
         await backend.repository.save(execution)
 
 
-async def test_descendants_of_returns_strict_transitive_descendants(serializer):
+async def _ids_under(backend: MemoryBackend, execution_id) -> set:
+    return {e.id async for e in backend.repository.executions(under=execution_id)}
+
+
+async def test_executions_under_returns_strict_transitive_descendants(serializer):
     backend = MemoryBackend()
     root = make_execution_id("root")
     a = make_execution_id("a", parent=root)
@@ -23,9 +27,9 @@ async def test_descendants_of_returns_strict_transitive_descendants(serializer):
     for execution_id in (root, a, b, grand):
         await _save(backend, Execution.start(execution_id, canonical_arguments()))
 
-    assert set(await backend.repository.descendants_of(root)) == {a, b, grand}
-    assert set(await backend.repository.descendants_of(a)) == {grand}
-    assert await backend.repository.descendants_of(grand) == []
+    assert await _ids_under(backend, root) == {a, b, grand}
+    assert await _ids_under(backend, a) == {grand}
+    assert await _ids_under(backend, grand) == set()
 
 
 async def test_delete_many_removes_execution_parts(serializer):
@@ -42,7 +46,7 @@ async def test_delete_many_removes_execution_parts(serializer):
     assert await backend.repository.get(execution_id) is None
 
 
-async def test_descendants_ignore_metadata_only_orphans(serializer):
+async def test_executions_ignore_metadata_only_orphans(serializer):
     backend = MemoryBackend()
     root = make_execution_id("root")
     child = make_execution_id("child", parent=root)
@@ -50,7 +54,7 @@ async def test_descendants_ignore_metadata_only_orphans(serializer):
     repository = cast(MemoryExecutionRepository, backend.repository)
     repository._client.data[_make_key(path, "metadata")] = {"k": b'"v"'}
 
-    assert await backend.repository.descendants_of(root) == []
+    assert await _ids_under(backend, root) == set()
 
 
 async def test_delete_one_descendant_preserves_siblings(serializer):

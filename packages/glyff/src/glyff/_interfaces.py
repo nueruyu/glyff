@@ -1,9 +1,9 @@
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from typing import Any, Callable, Protocol
 
-from ._models import CanonicalValue, Execution, ExecutionId
+from ._models import CanonicalValue, Execution, ExecutionId, ExecutionStatus
 
 
 class Transaction(ABC):
@@ -42,10 +42,41 @@ class ExecutionRepository(ABC):
     async def save(self, execution: Execution) -> None: ...
 
     @abstractmethod
-    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]: ...
+    def executions(
+        self,
+        *,
+        status: ExecutionStatus | None = None,
+        under: ExecutionId | None = None,
+    ) -> AsyncIterator[Execution]:
+        """Yields the stored executions, each after its own ancestors.
+
+        ``status`` keeps only executions in that state, ``under`` only the strict
+        descendants of that execution. Records staged in the caller's open
+        transaction are included.
+        """
+        ...
 
     @abstractmethod
     async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None: ...
+
+
+class AppVersionStore(ABC):
+    """Reads and writes the application version a store's records were written under.
+
+    A generation marker owned by the application, unlike the store's own format
+    version: glyff only records it and refuses a mismatch (see
+    :class:`~glyff.exceptions.AppVersionMismatchError`).
+    """
+
+    @abstractmethod
+    async def read(self) -> str | None:
+        """Returns the recorded version, or ``None`` if the store carries none."""
+        ...
+
+    @abstractmethod
+    async def write(self, app_version: str) -> None:
+        """Stages the version into the caller's open transaction."""
+        ...
 
 
 class Serializer(ABC):
@@ -87,3 +118,8 @@ class Backend(Protocol):
 
     @property
     def transaction_provider(self) -> TransactionProvider: ...
+
+    @property
+    def app_version(self) -> AppVersionStore | None:
+        """``None`` for a store too ephemeral to outlive the code that wrote it."""
+        ...

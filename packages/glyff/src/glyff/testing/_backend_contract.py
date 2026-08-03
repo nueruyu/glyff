@@ -12,6 +12,7 @@ from typing import Protocol
 import pytest
 
 from glyff import (
+    AppVersionStore,
     CanonicalValue,
     CanonicalArguments,
     Execution,
@@ -30,6 +31,7 @@ from glyff.serialization._utils import encode_canonical
 class BackendHandle(Protocol):
     repository: ExecutionRepository
     transaction_provider: TransactionProvider
+    app_version: AppVersionStore | None
 
 
 BackendFactory = Callable[[str], BackendHandle]
@@ -89,6 +91,10 @@ class ExecutionBackendContract:
         assert isinstance(backend.repository, ExecutionRepository)
         assert isinstance(backend.transaction_provider, TransactionProvider)
         assert not hasattr(backend.repository, "serializer")
+        # None is a valid answer: a store too ephemeral to outlive its code.
+        assert backend.app_version is None or isinstance(
+            backend.app_version, AppVersionStore
+        )
 
     async def test_get_missing_returns_none(self, backend_factory: BackendFactory):
         backend = backend_factory("missing")
@@ -307,10 +313,57 @@ class ExecutionBackendContract:
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
 
-    async def test_descendants_of_returns_strict_descendants_only(
+    async def test_executions_is_empty_for_a_fresh_store(
         self, backend_factory: BackendFactory
     ):
-        backend = backend_factory("descendants")
+        backend = backend_factory("enumerate-empty")
+        assert [e async for e in backend.repository.executions()] == []
+
+    async def test_executions_yields_each_record_after_its_ancestors(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate")
+        root = make_execution_id("root")
+        child = make_execution_id("child", parent=root)
+        grandchild = make_execution_id("grandchild", parent=child)
+
+        async with TransactionScope(backend.transaction_provider):
+            # Saved leaf-first: the order comes from the contract, not insertion.
+            for execution_id in [grandchild, child, root]:
+                await backend.repository.save(
+                    Execution.start(execution_id, canonical_arguments())
+                )
+
+        yielded = [e.id async for e in backend.repository.executions()]
+        assert set(yielded) == {root, child, grandchild}
+        assert yielded.index(root) < yielded.index(child) < yielded.index(grandchild)
+
+    async def test_executions_yields_whole_aggregates(
+        self, backend_factory: BackendFactory
+    ):
+        # Enumeration returns Executions rather than ids so a consumer that needs
+        # arguments or results does not have to read every record back.
+        backend = backend_factory("enumerate-aggregate")
+        execution = Execution.start(
+            make_execution_id("task", arguments={"a": 1}),
+            canonical_arguments({"a": 1}),
+        )
+        execution.set_metadata("trace", serialized_value("trace"))
+        execution.complete(serialized_value("done"))
+
+        await save_execution(backend, execution)
+
+        (loaded,) = [e async for e in backend.repository.executions()]
+        assert loaded.arguments.data == canonical_arguments({"a": 1}).data
+        assert loaded.result == serialized_value("done")
+        assert loaded.get_metadata("trace") == Metadata(
+            "trace", serialized_value("trace")
+        )
+
+    async def test_executions_under_returns_strict_descendants_only(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate-under")
         root = make_execution_id("root")
         child = make_execution_id("child", parent=root)
         grandchild = make_execution_id("grandchild", parent=child)
@@ -322,10 +375,65 @@ class ExecutionBackendContract:
                     Execution.start(execution_id, canonical_arguments())
                 )
 
-        descendants = await backend.repository.descendants_of(root)
-        assert set(descendants) == {child, grandchild}
-        assert root not in descendants
-        assert sibling not in descendants
+        under_root = {e.id async for e in backend.repository.executions(under=root)}
+        assert under_root == {child, grandchild}
+        assert {
+            e.id async for e in backend.repository.executions(under=grandchild)
+        } == set()
+
+    async def test_executions_filters_by_status(self, backend_factory: BackendFactory):
+        backend = backend_factory("enumerate-status")
+        started = make_execution_id("started")
+        completed = Execution.start(
+            make_execution_id("completed"), canonical_arguments()
+        )
+        completed.complete(serialized_value("done"))
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.save(
+                Execution.start(started, canonical_arguments())
+            )
+            await backend.repository.save(completed)
+
+        repository = backend.repository
+        assert [
+            e.id async for e in repository.executions(status=ExecutionStatus.STARTED)
+        ] == [started]
+        assert [
+            e.id async for e in repository.executions(status=ExecutionStatus.COMPLETED)
+        ] == [completed.id]
+
+    async def test_executions_sees_records_staged_in_the_open_transaction(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate-staged")
+        execution_id = make_execution_id("task")
+
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(
+            Execution.start(execution_id, canonical_arguments())
+        )
+        staged = [e.id async for e in backend.repository.executions()]
+        await tx.rollback()
+
+        assert staged == [execution_id]
+        assert [e async for e in backend.repository.executions()] == []
+
+    async def test_executions_omits_records_deleted_in_the_open_transaction(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate-staged-delete")
+        execution_id = make_execution_id("task")
+        await save_execution(
+            backend, Execution.start(execution_id, canonical_arguments())
+        )
+
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.delete_many([execution_id])
+        staged = [e.id async for e in backend.repository.executions()]
+        await tx.rollback()
+
+        assert staged == []
 
     async def test_same_frame_under_different_parents_do_not_collide(
         self, backend_factory: BackendFactory
@@ -543,6 +651,108 @@ class BinarySafeBackendContract:
         assert loaded.get_metadata("trace") == Metadata(
             "trace", SerializedValue(b"not-json")
         )
+
+
+class AppVersionContract:
+    """For a backend that records the application version behind its records.
+
+    A backend whose store cannot outlive the code that wrote it exposes
+    ``app_version = None`` and does not run this contract.
+    """
+
+    pytestmark = pytest.mark.asyncio
+
+    @pytest.fixture
+    def backend_factory(self) -> BackendFactory:
+        raise NotImplementedError
+
+    @staticmethod
+    def _versions(backend: BackendHandle) -> AppVersionStore:
+        assert backend.app_version is not None
+        return backend.app_version
+
+    async def test_fresh_store_records_no_version(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("version-fresh")
+        assert await self._versions(backend).read() is None
+
+    async def test_written_version_is_readable(self, backend_factory: BackendFactory):
+        backend = backend_factory("version-write")
+
+        async with TransactionScope(backend.transaction_provider):
+            await self._versions(backend).write("v1")
+
+        assert await self._versions(backend).read() == "v1"
+
+    async def test_write_requires_active_transaction(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("version-no-tx")
+        with pytest.raises(RuntimeError):
+            await self._versions(backend).write("v1")
+
+    async def test_rollback_discards_the_version(self, backend_factory: BackendFactory):
+        backend = backend_factory("version-rollback")
+
+        tx = await backend.transaction_provider.begin_transaction()
+        await self._versions(backend).write("v1")
+        await tx.rollback()
+
+        assert await self._versions(backend).read() is None
+
+    async def test_later_write_replaces_the_version(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("version-replace")
+
+        async with TransactionScope(backend.transaction_provider):
+            await self._versions(backend).write("v1")
+        async with TransactionScope(backend.transaction_provider):
+            await self._versions(backend).write("v2")
+
+        assert await self._versions(backend).read() == "v2"
+
+    async def test_version_commits_with_the_records_beside_it(
+        self, backend_factory: BackendFactory
+    ):
+        # What a migration needs: rewritten records and the version they were
+        # rewritten to become durable together, so neither can be observed alone.
+        backend = backend_factory("version-atomic")
+        execution_id = make_execution_id("task")
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.save(
+                Execution.start(execution_id, canonical_arguments())
+            )
+            await self._versions(backend).write("v2")
+
+        reopened = backend_factory("version-atomic")
+        assert await self._versions(reopened).read() == "v2"
+        assert await reopened.repository.get(execution_id) is not None
+
+    async def test_version_survives_reopen(self, backend_factory: BackendFactory):
+        session_id = "version-durable"
+        backend = backend_factory(session_id)
+
+        async with TransactionScope(backend.transaction_provider):
+            await self._versions(backend).write("v1")
+
+        reopened = backend_factory(session_id)
+        assert await self._versions(reopened).read() == "v1"
+
+    async def test_version_write_leaves_the_format_version_readable(
+        self, backend_factory: BackendFactory
+    ):
+        # Both versions share one slot; writing the application's must not drop
+        # glyff's, or reopening the store would fail its own format check.
+        session_id = "version-coexist"
+        backend = backend_factory(session_id)
+
+        async with TransactionScope(backend.transaction_provider):
+            await self._versions(backend).write("v1")
+
+        backend_factory(session_id)
 
 
 class DurableBackendContract:

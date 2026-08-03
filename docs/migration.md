@@ -2,7 +2,8 @@
 
 "Migration" is three problems with different owners. glyff migrates its own
 store, defines the contract for your recorded payloads, and refuses a session
-whose code generation has changed — it does not rewrite your in-flight sessions.
+whose application version has changed — it does not rewrite your in-flight
+sessions.
 
 ## The three layers
 
@@ -12,12 +13,16 @@ whose code generation has changed — it does not rewrite your in-flight session
 | User payload (recorded results, metadata) | The serializer boundary — you | Recorded values must deserialize under the current code. |
 | In-flight sessions across code changes | You, with glyff primitives | Raised as a typed error; never auto-migrated. |
 
+The first and last are each guarded by a version, owned by a different party, so
+a store carries both: glyff's `FORMAT_VERSION`, stamped when it first writes the
+store, and your `app_version`, recorded by the session that claimed it. The
+SQLite backend keeps them in one `<table_prefix>_meta` row, the file store in one
+`glyff_format.json` marker.
+
 ### glyff's store schema
 
-Store formats carry a version stamp. The SQLite backend records it in a
-`<table_prefix>_meta` table (alongside `<table_prefix>_executions`, default
-prefix `glyff`); the JSON file store writes a `glyff_format.json` marker beside
-the session's records. Both are at `FORMAT_VERSION = 1`.
+Store formats carry a version stamp, at `FORMAT_VERSION = 1` in both durable
+backends.
 
 A store written by an incompatible build raises `StoreFormatVersionError` rather
 than being misread. A fresh or pre-versioning store is stamped on first open. The
@@ -42,16 +47,19 @@ on top.
 
 glyff does not auto-migrate a paused session onto new code. Instead:
 
-- **A session records an application-supplied generation marker**
-  (`Session(app_version=...)`) on first write, and resuming with a different
-  value raises `SessionVersionMismatch` instead of replaying old records against
-  new code. The serializer identifier is stamped in the same slot, so switching
-  serializers also fails early.
-- **Sessions you decide to carry across** are handled by your own migration
-  script: a forward, offline batch that reads records through the repository,
-  remaps them, and writes them back — the same userland escape hatch as
-  [pruning](./events.md#pruning-completed-subtrees). Nothing is added to the
-  resume path.
+- **A session records an application-supplied generation marker.** Pass
+  `Session(app_version=...)`, and entering a session whose records were written
+  under a different value raises `AppVersionMismatchError` instead of replaying
+  them against code that may no longer mean the same thing. The value is opaque
+  to glyff, which only records it and compares it; what counts as a new
+  generation is yours to decide. Leave it unset to opt out — but once a session
+  has recorded one, dropping the declaration is refused too, so opting out is
+  not something a deleted argument does quietly.
+- **Sessions you decide to carry across** are handled by a forward, offline
+  batch that reads records through `ExecutionRepository.executions`, remaps
+  them, and writes them back with the new `app_version` — all in one
+  transaction, so a rewritten store is never left carrying the old version.
+  Nothing is added to the resume path.
 
 What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),
@@ -59,14 +67,12 @@ byte-for-byte the preimage of its `arguments_digest`. Remapping an argument is
 therefore a transformation of recorded JSON, with no dead Python types to keep
 alive and no dependence on the canonicalizer that wrote the record.
 
-> **Planned** — [#41](https://github.com/nueruyu/glyff/issues/41) (generation
-> stamp and typed mismatch error; the store format stamp above has landed),
-> [#42](https://github.com/nueruyu/glyff/issues/42) (repository enumeration, so
-> a script can walk a session's records). The encoder and digest that recompute a
-> rewritten key ship with the runner; until then, reproducing glyff's canonical
-> encoding yourself is not a supported surface. Resuming a session on changed
-> code diverges silently in the meantime, so pin paused sessions to the code that
-> started them.
+> **Planned** — the runner itself
+> ([#39](https://github.com/nueruyu/glyff/issues/39)). The primitives it needs
+> have landed: recorded arguments, `executions`, and the version stamp above.
+> The encoder and digest that recompute a rewritten key ship with the runner;
+> until then, reproducing glyff's canonical encoding yourself is not a supported
+> surface, so pin paused sessions to the code that started them.
 
 ## Running without migration
 

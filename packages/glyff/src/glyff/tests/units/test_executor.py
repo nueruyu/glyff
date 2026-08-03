@@ -122,8 +122,8 @@ async def test_completion_prunes_descendants_when_enabled(
         reset_context(token)
 
     assert result == "hello"
-    desc_calls = mock_backend.get_calls("descendants_of")
-    assert any(c.args[0] == base_execution_id for c in desc_calls)
+    enumerations = mock_backend.get_calls("executions")
+    assert any(c.kwargs["under"] == base_execution_id for c in enumerations)
     delete_calls = mock_backend.get_calls("delete_many")
     assert len(delete_calls) == 1
     assert delete_calls[0].args[0] == [child]
@@ -162,8 +162,8 @@ async def test_nested_completion_prunes(
     finally:
         reset_context(token)
 
-    desc_calls = mock_backend.get_calls("descendants_of")
-    assert any(c.args[0] == nested_execution_id for c in desc_calls)
+    enumerations = mock_backend.get_calls("executions")
+    assert any(c.kwargs["under"] == nested_execution_id for c in enumerations)
     assert not mock_backend.get_calls("delete_many")
 
 
@@ -185,7 +185,7 @@ async def test_completion_does_not_prune_when_disabled(
         return_type=str,
     )
 
-    assert not mock_backend.get_calls("descendants_of")
+    assert not mock_backend.get_calls("executions")
     assert not mock_backend.get_calls("delete_many")
 
 

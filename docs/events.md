@@ -25,7 +25,7 @@ completion needs a reconciliation sweep over the store alongside the event path.
 Once a call completes, any resume returns its recorded result and the calls
 underneath are never replayed. Those descendant records are dead weight, but when
 and whether to delete them is a retention policy glyff does not ship: it exposes
-`descendants_of` and `delete_many` on the repository, and you decide the rest.
+`executions` and `delete_many` on the repository, and you decide the rest.
 
 Drive them from an `ExecutionCompleted` handler, which runs after the completion
 is committed and so opens its own transaction:
@@ -41,7 +41,12 @@ class PruneDescendants(EventHandler[ExecutionCompleted]):
 
     async def handle(self, event: ExecutionCompleted) -> None:
         async with event.context.get_transaction_scope():
-            descendants = await self._repository.descendants_of(event.execution_id)
+            descendants = [
+                execution.id
+                async for execution in self._repository.executions(
+                    under=event.execution_id
+                )
+            ]
             if descendants:
                 await self._repository.delete_many(descendants)
 
@@ -74,5 +79,5 @@ transaction and the idempotency machinery is unnecessary.
 > **Planned** — [#43](https://github.com/nueruyu/glyff/issues/43) holds the
 > design; it blocks on [#40](https://github.com/nueruyu/glyff/issues/40)
 > (canonical id encoding) and [#42](https://github.com/nueruyu/glyff/issues/42)
-> (enumeration and transaction enlistment). The wrapper would live outside glyff
-> core.
+> (transaction enlistment; the sweep's enumeration has landed as
+> `executions`). The wrapper would live outside glyff core.

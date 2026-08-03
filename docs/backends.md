@@ -6,12 +6,25 @@ and what is being added.
 
 ## The contract
 
-A `Backend` (`_interfaces.py`) is a bundle of two objects:
+A `Backend` (`_interfaces.py`) is a bundle of three pieces:
 
 | Piece | Role |
 | --- | --- |
-| `ExecutionRepository` | Aggregate persistence: `get`, `save`, `descendants_of`, `delete_many`. |
+| `ExecutionRepository` | Aggregate persistence: `get`, `save`, `executions`, `delete_many`. |
 | `TransactionProvider` | Owns transaction boundaries; `begin_transaction` returns a `Transaction` with `commit`/`rollback`. |
+| `AppVersionStore \| None` | The application version behind the store's records, or `None` for a store too ephemeral to outlive the code that wrote it. |
+
+`executions(*, status=None, under=None)` yields whole aggregates, each after its
+own ancestors, including records staged in the caller's open transaction. It
+returns `Execution`s rather than ids because its consumers — reconciliation
+sweeps, [pruning](./events.md#pruning-completed-subtrees), and
+[migration](./migration.md) — need arguments and results, and because the path
+encoding an id is rebuilt from is a backend's internal business.
+
+The version store is written through the same staging as the records, so a
+migration's rewrites and the version it rewrote them to commit together. glyff
+only records that version and refuses a mismatch; what it means is the
+application's (see [migration](./migration.md)).
 
 The repository stores `Execution` aggregates whole — args, status, result, metadata —
 and core assumes nothing about the medium underneath. Tables, files, and key
@@ -32,31 +45,33 @@ JSON text.
 
 ## Writing your own
 
-Implement the two objects and expose them as a bundle. Verify the implementation
-against the shared contract suite in `glyff.testing`: subclass the contract
-classes (`ExecutionBackendContract`, `DurableBackendContract`, and the
-text/binary-safety variants) and provide your backend factory. The shipped
-backends run the same suite. It also exports the reference `PruningEventHandler`
-and the helpers `save_execution`, `serialized_value`, and the pair
-`make_execution_id` / `canonical_arguments`, which build an execution that
-satisfies the `arguments_digest` invariant.
+Implement the pieces above and expose them as a bundle. Verify the
+implementation against the shared contract suite in `glyff.testing`: subclass
+the contract classes (`ExecutionBackendContract`, `DurableBackendContract`,
+`AppVersionContract`, and the text/binary-safety variants) and provide your
+backend factory. A backend that records no application version exposes `None`
+and skips `AppVersionContract`. The shipped backends run the same suite. It also
+exports the reference `PruningEventHandler` and the helpers `save_execution`,
+`serialized_value`, and the pair `make_execution_id` / `canonical_arguments`,
+which build an execution that satisfies the `arguments_digest` invariant.
+
+## Session scope
+
+A backend instance covers one session — a file store directory, one set of
+SQLite tables — so nothing in the contract takes a session argument. The SQLite
+backend enforces it: execution paths carry no session component, so opening the
+same tables under a different `session_id` raises `StoreSessionMismatchError`
+rather than interleaving two histories.
 
 ## Planned contract extensions
 
-Two additions, both serving projection into an application database
-([#42](https://github.com/nueruyu/glyff/issues/42)):
-
-- **External transaction enlistment** — construct a backend on an externally
-  supplied connection or session (e.g. a SQLAlchemy `AsyncSession`) so glyff's
-  transaction scope joins the application's. Execution completion and the
-  application's own writes then commit atomically. Concrete
-  `glyff-sqlalchemy`/`glyff-postgres` backends follow once the interface exists.
-- **Repository enumeration** — iteration filterable by status and session scope,
-  which backends already do internally. Consumers are reconciliation sweeps (see
-  [events](./events.md#projecting-into-an-application-database)) and userland
-  [migration scripts](./migration.md#in-flight-sessions-across-code-changes).
-
-The contract suite grows with both.
+> **Planned** — **external transaction enlistment**
+> ([#42](https://github.com/nueruyu/glyff/issues/42)): construct a backend on an
+> externally supplied connection or session (e.g. a SQLAlchemy `AsyncSession`)
+> so glyff's transaction scope joins the application's. Execution completion and
+> the application's own writes then commit atomically. Concrete
+> `glyff-sqlalchemy`/`glyff-postgres` backends follow once the interface exists,
+> and the contract suite grows with it.
 
 ## Non-goal: a schema-customization interface
 

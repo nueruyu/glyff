@@ -16,7 +16,7 @@ def record(value: str) -> SQLiteExecutionRecord:
 
 
 def _client(database_path: Path) -> SQLiteClient:
-    client = SQLiteClient(database_path)
+    client = SQLiteClient(database_path, session_id="s")
     client._initialize_schema_sync()
     return client
 

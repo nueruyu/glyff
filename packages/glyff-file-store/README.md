@@ -23,9 +23,10 @@ This package depends on `glyff>=0.1.0`.
 
 | Name                      | Description                                               |
 | ------------------------- | --------------------------------------------------------- |
-| `JsonFileBackend`         | Bundle exposing repository and transaction provider.      |
+| `JsonFileBackend`         | Bundle exposing the store's collaborators.                |
 | `FileExecutionRepository` | Debug repository writing pretty-printed JSON.             |
 | `FileTransactionProvider` | Transaction provider for the file backend.                |
+| `FileAppVersionStore`     | Reads and writes the recorded application version.        |
 
 Construct it with a `base_dir` and `session_id`:
 
@@ -47,8 +48,11 @@ serializers used with this backend must produce JSON text. Canonical arguments
 are stored as a JSON *string* instead: the execution's key is the digest of
 those exact bytes, so they are kept verbatim rather than re-encoded.
 
-A `glyff_format.json` marker beside it records the store format version; a
-session written by an incompatible build is refused rather than misread.
+A `glyff_format.json` marker beside it carries both versions the store knows
+about: glyff's own `format_version`, so a session written by an incompatible
+build is refused rather than misread, and the `app_version` its records were
+written under. The latter is written through the same staged directory swap as
+the records, so a migration cannot rewrite one without the other.
 
 This format is intended for debugging and manual inspection, not as the durable
 or high-throughput backend.

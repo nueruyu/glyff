@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
 from typing import Any
 
 from glyff import (
+    AppVersionStore,
     Execution,
     ExecutionId,
     ExecutionRepository,
+    ExecutionStatus,
     Transaction,
     TransactionProvider,
 )
@@ -22,10 +24,18 @@ from ._transaction import _ClientTransaction
 
 _EXECUTIONS_FILE = "executions.json"
 
+# Holds both versions the store carries: glyff's own format version and the
+# application's, written by the session that claimed the directory.
 _FORMAT_FILE = "glyff_format.json"
+_FORMAT_VERSION_KEY = "format_version"
+_APP_VERSION_KEY = "app_version"
 
 # Bump when the stored layout changes.
 FORMAT_VERSION = 1
+
+
+def _encode_marker(marker: dict[str, Any]) -> bytes:
+    return json.dumps(marker, sort_keys=True).encode(DEFAULT_ENCODING)
 
 
 def _initialize_format_sync(client: FileClient) -> None:
@@ -37,12 +47,10 @@ def _initialize_format_sync(client: FileClient) -> None:
         raw = None
 
     if raw is None:
-        marker.write_bytes(
-            json.dumps({"format_version": FORMAT_VERSION}).encode(DEFAULT_ENCODING)
-        )
+        marker.write_bytes(_encode_marker({_FORMAT_VERSION_KEY: FORMAT_VERSION}))
         return
 
-    stored = json.loads(raw.decode(DEFAULT_ENCODING)).get("format_version")
+    stored = json.loads(raw.decode(DEFAULT_ENCODING)).get(_FORMAT_VERSION_KEY)
     if stored != FORMAT_VERSION:
         raise StoreFormatVersionError(
             f"File store session at {marker.parent} has format version {stored!r}, "
@@ -93,12 +101,22 @@ class FileExecutionRepository(ExecutionRepository):
 
         self._client.stage_update(_EXECUTIONS_FILE, fn)
 
-    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        prefix = execution_id_to_path(execution_id) + "/"
+    async def executions(
+        self,
+        *,
+        status: ExecutionStatus | None = None,
+        under: ExecutionId | None = None,
+    ) -> AsyncIterator[Execution]:
+        prefix = execution_id_to_path(under) + "/" if under is not None else ""
         raw = await self._client.read(_EXECUTIONS_FILE, staged=True)
         if raw is None:
-            return []
-        return [path_to_execution_id(k) for k in _decode(raw) if k.startswith(prefix)]
+            return
+        for path, stored in sorted(_decode(raw).items()):
+            if not path.startswith(prefix):
+                continue
+            execution = execution_from_dict(path_to_execution_id(path), stored)
+            if status in (None, execution.status):
+                yield execution
 
     async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
         keys = {execution_id_to_path(eid) for eid in execution_ids}
@@ -114,6 +132,31 @@ class FileExecutionRepository(ExecutionRepository):
             return _encode(executions)
 
         self._client.stage_update(_EXECUTIONS_FILE, fn)
+
+
+class FileAppVersionStore(AppVersionStore):
+    """Keeps the application version in the same marker as the format version.
+
+    Written through the staging buffer, so a migration's rewritten records and
+    the version they were rewritten to land in one directory swap.
+    """
+
+    def __init__(self, client: FileClient):
+        self._client = client
+
+    async def read(self) -> str | None:
+        raw = await self._client.read(_FORMAT_FILE, staged=True)
+        if raw is None:
+            return None
+        return json.loads(raw.decode(DEFAULT_ENCODING)).get(_APP_VERSION_KEY)
+
+    async def write(self, app_version: str) -> None:
+        def fn(data: bytes | None) -> bytes | None:
+            marker = json.loads(data.decode(DEFAULT_ENCODING)) if data else {}
+            marker[_APP_VERSION_KEY] = app_version
+            return _encode_marker(marker)
+
+        self._client.stage_update(_FORMAT_FILE, fn)
 
 
 class FileTransactionProvider(TransactionProvider):
@@ -141,3 +184,4 @@ class JsonFileBackend:
         _initialize_format_sync(client)
         self.repository: ExecutionRepository = FileExecutionRepository(client)
         self.transaction_provider: TransactionProvider = FileTransactionProvider(client)
+        self.app_version: AppVersionStore | None = FileAppVersionStore(client)

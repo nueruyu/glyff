@@ -89,3 +89,29 @@ class StoreFormatVersionError(GlyffError):
     """
 
     pass
+
+
+class StoreSessionMismatchError(GlyffError):
+    """
+    Raised when a session-scoped store already holds another session's records.
+
+    A store that keys executions by call path alone has no room for a second
+    session: two sessions writing into it would interleave into one history. The
+    store records which session claimed it and refuses any other, rather than
+    mixing them silently.
+    """
+
+    pass
+
+
+class AppVersionMismatchError(GlyffError):
+    """
+    Raised when a session's records were written under a different
+    ``app_version`` than the one now opening it.
+
+    Recorded results are replayed into the current code, so a generation change
+    is refused instead of resumed. Migrate the session forward, pin it to the
+    code that started it, or start a new one.
+    """
+
+    pass
