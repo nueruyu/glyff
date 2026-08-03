@@ -1,12 +1,12 @@
 import pytest
 
-from glyff import ArgsHasher, Serializer, Session, get_context
+from glyff import ArgumentCanonicalizer, Serializer, Session, get_context
 from glyff.exceptions import ContextNotSetError
 from glyff.store import MemoryBackend
 
 
 async def test_session_enter_sets_current_context(
-    hasher: ArgsHasher, serializer: Serializer
+    argument_canonicalizer: ArgumentCanonicalizer, serializer: Serializer
 ):
     backend = MemoryBackend()
 
@@ -14,7 +14,7 @@ async def test_session_enter_sets_current_context(
         id="session",
         backend=backend,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
     ) as session:
         ctx = get_context()
 
@@ -24,11 +24,11 @@ async def test_session_enter_sets_current_context(
         assert ctx.repository is backend.repository
         assert ctx.transaction_provider is backend.transaction_provider
         assert ctx.serializer is serializer
-        assert ctx.hasher is hasher
+        assert ctx.argument_canonicalizer is argument_canonicalizer
 
 
 async def test_session_exit_resets_current_context(
-    hasher: ArgsHasher, serializer: Serializer
+    argument_canonicalizer: ArgumentCanonicalizer, serializer: Serializer
 ):
     backend = MemoryBackend()
 
@@ -36,7 +36,7 @@ async def test_session_exit_resets_current_context(
         id="session",
         backend=backend,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
     ):
         assert get_context().session_id == "session"
 
@@ -45,7 +45,7 @@ async def test_session_exit_resets_current_context(
 
 
 async def test_session_exit_restores_previous_context(
-    hasher: ArgsHasher, serializer: Serializer
+    argument_canonicalizer: ArgumentCanonicalizer, serializer: Serializer
 ):
     outer_backend = MemoryBackend()
     inner_backend = MemoryBackend()
@@ -54,7 +54,7 @@ async def test_session_exit_restores_previous_context(
         id="outer",
         backend=outer_backend,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
     ):
         outer_ctx = get_context()
 
@@ -62,7 +62,7 @@ async def test_session_exit_restores_previous_context(
             id="inner",
             backend=inner_backend,
             serializer=serializer,
-            hasher=hasher,
+            argument_canonicalizer=argument_canonicalizer,
         ):
             inner_ctx = get_context()
             assert inner_ctx is not outer_ctx

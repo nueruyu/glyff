@@ -55,10 +55,22 @@ class SerializationError(GlyffError):
     pass
 
 
-class UnserializableArgumentError(SerializationError):
+class ArgumentCanonicalizationError(GlyffError):
     """
-    Raised when an argument to an engraved function cannot be deterministically
-    serialized for hashing.
+    Raised when an argument to an engraved function has no deterministic
+    canonical form, so the call cannot be given a stable identity.
+
+    A sibling of SerializationError, not a subclass: canonicalizing arguments for
+    identity and serializing values for storage fail for different reasons.
+    """
+
+    pass
+
+
+class InvalidExecutionError(GlyffError):
+    """
+    Raised when an Execution aggregate would violate one of its invariants —
+    constructed inconsistently, or rebuilt from a corrupt record.
     """
 
     pass

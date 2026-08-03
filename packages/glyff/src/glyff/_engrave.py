@@ -4,8 +4,9 @@ from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
 from ._executor import execute
-from ._models import ExecutionId
+from ._models import CanonicalArguments, ExecutionId
 from .exceptions import MissingTypeHintError, TypeHintResolutionError
+from .serialization._utils import encode_canonical
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -32,21 +33,26 @@ def _missing_required_type_hints(
     return missing
 
 
-async def _resolve_execution_id(
+async def _resolve_call_identity(
     ctx: Context,
     func: Callable[..., Any],
     sig: inspect.Signature,
     task_name: str,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-) -> ExecutionId:
-    """Builds the deterministic ExecutionId for a single call."""
+) -> tuple[ExecutionId, CanonicalArguments]:
+    """Return the execution id for one call and the canonical arguments it is keyed by."""
     parent_id = ctx.current_execution_id
-    args_hash = ctx.hasher.hash_args(func, sig, args, kwargs)
-    seq = await ctx.sequencer.next(parent_id, task_name, args_hash)
-    return ExecutionId(
-        parent_id=parent_id, name=task_name, sequence=seq, args_hash=args_hash
+    canonical = ctx.argument_canonicalizer.canonicalize(func, sig, args, kwargs)
+    encoded = CanonicalArguments(encode_canonical(canonical))
+    seq = await ctx.sequencer.next(parent_id, task_name, encoded.digest)
+    execution_id = ExecutionId(
+        parent_id=parent_id,
+        name=task_name,
+        sequence=seq,
+        arguments_digest=encoded.digest,
     )
+    return execution_id, encoded
 
 
 def engrave(func: Callable[P, R]) -> Callable[P, R]:
@@ -80,12 +86,13 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
     @functools.wraps(func)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         ctx = get_context()
-        execution_id = await _resolve_execution_id(
+        execution_id, canonical_arguments = await _resolve_call_identity(
             ctx, func, sig, task_name, args, kwargs
         )
         result = await execute(
             ctx=ctx,
             execution_id=execution_id,
+            canonical_arguments=canonical_arguments,
             func=func,
             args=args,
             kwargs=kwargs,

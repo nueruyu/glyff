@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import Any, Callable, Protocol
 
-from ._models import Execution, ExecutionId
+from ._models import CanonicalValue, Execution, ExecutionId
 
 
 class Transaction(ABC):
@@ -62,14 +62,20 @@ class Serializer(ABC):
         ...
 
 
-class ArgsHasher(ABC):
-    """An interface for creating a deterministic hash from function arguments."""
+class ArgumentCanonicalizer(ABC):
+    """An interface for normalizing a call's arguments into a canonical form.
+
+    The canonical form is what an execution is keyed by: it is encoded once, and
+    those bytes are both hashed into ``ExecutionId.arguments_digest`` and recorded on the
+    execution. Canonicalizing is not serializing — it is one-way and deliberately
+    lossy, keeping only what identity depends on.
+    """
 
     @abstractmethod
-    def hash_args(
+    def canonicalize(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
-    ) -> str:
-        """Creates a deterministic hash from a function's arguments."""
+    ) -> CanonicalValue:
+        """Normalizes a call's bound arguments into the JSON data model."""
         ...
 
 

@@ -8,6 +8,7 @@ from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
 
 def record(value: str) -> SQLiteExecutionRecord:
     return SQLiteExecutionRecord(
+        arguments="{}",
         status="completed",
         result=f'"{value}"',
         metadata="{}",

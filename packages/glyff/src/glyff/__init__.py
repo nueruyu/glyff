@@ -2,7 +2,7 @@ from ._context import MetadataAccessor, TransactionScope, get_context
 from ._engrave import engrave
 from ._event_system import Event, EventEmitter, EventHandler
 from ._interfaces import (
-    ArgsHasher,
+    ArgumentCanonicalizer,
     Backend,
     ExecutionRepository,
     Serializer,
@@ -10,6 +10,8 @@ from ._interfaces import (
     TransactionProvider,
 )
 from ._models import (
+    CanonicalValue,
+    CanonicalArguments,
     Execution,
     ExecutionId,
     ExecutionStatus,
@@ -24,13 +26,15 @@ __all__ = [
     "Event",
     "EventHandler",
     "EventEmitter",
-    "ArgsHasher",
+    "ArgumentCanonicalizer",
     "Backend",
     "Serializer",
     "Transaction",
     "TransactionProvider",
     "TransactionScope",
     "ExecutionRepository",
+    "CanonicalValue",
+    "CanonicalArguments",
     "Execution",
     "ExecutionId",
     "ExecutionStatus",

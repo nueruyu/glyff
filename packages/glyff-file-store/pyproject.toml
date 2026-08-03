@@ -1,11 +1,11 @@
 [project]
 name = "glyff-file-store"
-description = "File-based SessionStore implementation for glyff."
+description = "File-based execution backend for glyff."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
-    "glyff>=0.1.0",
+    "glyff>=0.14.0",
 ]
 dynamic = ["version"]
 classifiers = [

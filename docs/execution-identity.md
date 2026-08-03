@@ -13,8 +13,8 @@ An `ExecutionId` (`_models.py`) has four components:
 | --- | --- |
 | `parent_id` | The nearest engraved ancestor on the call stack, forming a chain up to the session root. |
 | `name` | The engraved function's name — explicit `name=`/`version=` when given, derived from the function otherwise. |
-| `args_hash` | The bound arguments, hashed by the session's `ArgsHasher`. |
-| `sequence` | An ordinal from an independent counter per `(parent_id, name, args_hash)` (`_sequencer.py`). |
+| `arguments_digest` | A digest over the canonical form of the bound arguments, produced by the session's `ArgumentCanonicalizer`. |
+| `sequence` | An ordinal from an independent counter per `(parent_id, name, arguments_digest)` (`_sequencer.py`). |
 
 Keys are **content-addressed, not positional**: the sequence counter is scoped to
 the exact `(parent, name, args)` identity, not to a session-wide step number.
@@ -63,7 +63,7 @@ async def reply(...) -> ...: ...         # stable across renames and moves
 
 The pair is canonicalized into the stored name (e.g. `"chat.reply@2"`); the key
 stays a `str`. Duplicate explicit names are rejected at decoration time. The
-resolved name is also what the args hasher sees, so a rename with a stable
+resolved name is also what the canonicalizer sees, so a rename with a stable
 `name=` invalidates nothing.
 
 `ExecutionId` also has a public canonical string encoding, stable across resumes,
@@ -76,31 +76,59 @@ for use as an idempotency key when
 > `ExecutionId.__str__` is a debug representation that must not be persisted
 > (`_models.py`).
 
-## Argument hashing and opaque values
+## Canonical arguments
 
-A value participates in `args_hash` by its *value* representation; a value the
-hasher cannot represent raises instead of being approximated. Types and named
-functions are identified by qualified name, and `functools.partial` decomposes
-into its function and bound arguments.
+Identity runs through a **canonical form**, not directly through a hash. The
+session's `ArgumentCanonicalizer` normalizes the bound arguments into the JSON
+data model; glyff encodes that once, and those bytes are both digested into
+`arguments_digest` and recorded on the execution. So for every recorded
+execution:
+
+```
+id.arguments_digest == execution.arguments.digest
+```
+
+`Execution.arguments` is a `CanonicalArguments`, distinct from the
+`SerializedValue` that carries results and metadata: only one of the two is a
+key's preimage.
+`Execution` enforces the invariant on construction, and stores keep the bytes
+verbatim — anything that re-encoded them would break the key. It is what lets a
+[migration](./migration.md#in-flight-sessions-across-code-changes) rewrite an
+argument and recompute the key from the record alone.
+
+Canonicalizing is **not** serializing. It is one-way and deliberately lossy,
+keeping only what identity depends on:
+
+| Value | Canonical form |
+| --- | --- |
+| `bytes` | hex string |
+| `set` / `frozenset` | list, ordered so the form is stable across processes |
+| `tuple` | list |
+| dataclass | only the fields it compares by — a `field(compare=False)` never distinguished two calls |
+| type, named function | qualified name |
+| `functools.partial` | its function and bound arguments |
+| mapping key | coerced to a string; two keys that would collide are rejected rather than collapsed |
+
+A value with no value representation raises rather than being approximated.
 
 For values that are deliberately opaque — a service object passed as `self`, a
-client handle — glyff owns the hashing contract, not the taxonomy of what counts
-as opaque in your application. `JsonArgsHasher(opaque_policy=...)` takes an
-`OpaquePolicy`, and `glyff.serialization` ships two:
+client handle — glyff owns the canonicalization contract, not the taxonomy of
+what counts as opaque in your application.
+`JsonArgumentCanonicalizer(opaque_policy=...)` takes an `OpaquePolicy`, and
+`glyff.serialization` ships two:
 
 | Policy | Behavior |
 | --- | --- |
-| `RaiseOnOpaque` (default) | Rejects the value with `UnserializableArgumentError`, so distinct instances never silently collide. |
-| `QualnameOpaque` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one hash. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
+| `RejectOpaque` (default) | Rejects the value with `ArgumentCanonicalizationError`, so distinct instances never silently collide. |
+| `OpaqueByTypeQualname` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
 
-A policy receives an `OpaqueContext` rather than the bare value, so the signature
-can grow without breaking implementations. Policy return values are namespaced
-before hashing, so a policy that returns `"pkg.Cls"` cannot hash-equal a plain
-string argument of the same text.
+Policy return values are namespaced, so a policy that returns `"pkg.Cls"` cannot
+collide with a plain string argument of the same text. The same classification governs what is *stored*, not just what
+is hashed — an opaque value the policy rejects never reaches the store.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard
 > composable policies (marker attribute, type list, predicate). Today anything
-> beyond `QualnameOpaque` means implementing `OpaquePolicy` yourself.
+> beyond `OpaqueByTypeQualname` means implementing `OpaquePolicy` yourself.
 
 ## Choosing engrave boundaries
 
@@ -111,12 +139,12 @@ compatibility you have to maintain.
 
 - **Boundary arguments must be explicit and deterministically derived** from
   session inputs or recorded results. Non-engraved code re-runs live on resume, so
-  a nondeterministic input (a timestamp, a random id) changes `args_hash` and
-  cache-misses a completed boundary.
+  a nondeterministic input (a timestamp, a random id) changes the
+  `arguments_digest` and cache-misses a completed boundary.
 - **Everything inside a boundary re-executes on resume**, so in-boundary code must
   be pure or idempotent. Engrave non-idempotent side effects and pause points
   individually, at the grain you need them recorded.
 - **Keep boundary arguments small and free of raw secrets** — pass an id or a
-  reference, not a blob or a credential. Argument values are also what a
-  [migration](./migration.md#in-flight-sessions-across-code-changes) reads back
-  ([#47](https://github.com/nueruyu/glyff/issues/47)).
+  reference, not a blob or a credential. Canonical argument values are recorded
+  with the execution and are what a
+  [migration](./migration.md#in-flight-sessions-across-code-changes) reads back.

@@ -13,7 +13,7 @@ A `Backend` (`_interfaces.py`) is a bundle of two objects:
 | `ExecutionRepository` | Aggregate persistence: `get`, `save`, `descendants_of`, `delete_many`. |
 | `TransactionProvider` | Owns transaction boundaries; `begin_transaction` returns a `Transaction` with `commit`/`rollback`. |
 
-The repository stores `Execution` aggregates whole — status, result, metadata —
+The repository stores `Execution` aggregates whole — args, status, result, metadata —
 and core assumes nothing about the medium underneath. Tables, files, and key
 prefixes are a backend's own business, which is why there is
 [no schema-customization interface](#non-goal-a-schema-customization-interface).
@@ -36,12 +36,10 @@ Implement the two objects and expose them as a bundle. Verify the implementation
 against the shared contract suite in `glyff.testing`: subclass the contract
 classes (`ExecutionBackendContract`, `DurableBackendContract`, and the
 text/binary-safety variants) and provide your backend factory. The shipped
-backends run the same suite. `glyff.testing` also exports the reference
-`PruningEventHandler` and the helpers `eid`, `value`, and `save_execution`.
-
-> **Planned** — [#36](https://github.com/nueruyu/glyff/issues/36) promotes the
-> suite from glyff's internal test tree to `glyff.testing`. Until then it lives
-> under `glyff.tests.contracts` and is not public.
+backends run the same suite. It also exports the reference `PruningEventHandler`
+and the helpers `save_execution`, `serialized_value`, and the pair
+`make_execution_id` / `canonical_arguments`, which build an execution that
+satisfies the `arguments_digest` invariant.
 
 ## Planned contract extensions
 

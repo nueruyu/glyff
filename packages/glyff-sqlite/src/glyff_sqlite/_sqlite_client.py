@@ -24,6 +24,7 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 @dataclass(frozen=True)
 class SQLiteExecutionRecord:
+    arguments: str
     status: str
     result: str | None
     metadata: str
@@ -146,6 +147,7 @@ class SQLiteClient:
                 f"""
                 CREATE TABLE IF NOT EXISTS "{self._table_name}" (
                     path TEXT PRIMARY KEY,
+                    arguments TEXT NOT NULL,
                     status TEXT NOT NULL,
                     result TEXT,
                     metadata TEXT NOT NULL
@@ -255,13 +257,20 @@ class SQLiteClient:
                 else:
                     connection.execute(
                         f"""INSERT INTO "{self._table_name}"
-                               (path, status, result, metadata)
-                           VALUES (?, ?, ?, ?)
+                               (path, arguments, status, result, metadata)
+                           VALUES (?, ?, ?, ?, ?)
                            ON CONFLICT(path) DO UPDATE SET
+                               arguments = excluded.arguments,
                                status = excluded.status,
                                result = excluded.result,
                                metadata = excluded.metadata""",
-                        (path, result.status, result.result, result.metadata),
+                        (
+                            path,
+                            result.arguments,
+                            result.status,
+                            result.result,
+                            result.metadata,
+                        ),
                     )
 
             connection.execute("COMMIT")
@@ -319,12 +328,15 @@ class SQLiteClient:
         self, connection: sqlite3.Connection, path: str
     ) -> SQLiteExecutionRecord | None:
         row = connection.execute(
-            f'SELECT status, result, metadata FROM "{self._table_name}" WHERE path = ?',
+            f'SELECT arguments, status, result, metadata FROM "{self._table_name}" '
+            "WHERE path = ?",
             (path,),
         ).fetchone()
         if row is None:
             return None
-        return SQLiteExecutionRecord(status=row[0], result=row[1], metadata=row[2])
+        return SQLiteExecutionRecord(
+            arguments=row[0], status=row[1], result=row[2], metadata=row[3]
+        )
 
     async def list_paths(self, prefix: str = "", *, staged: bool = True) -> set[str]:
         committed = await asyncio.to_thread(self._list_committed_paths_sync, prefix)

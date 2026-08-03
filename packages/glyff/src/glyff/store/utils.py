@@ -5,14 +5,14 @@ from .._models import ExecutionId
 
 def _format_frame(eid: ExecutionId) -> str:
     """Formats a single ExecutionId frame into a string component."""
-    return f"{eid.name}#{eid.sequence}:{eid.args_hash}"
+    return f"{eid.name}#{eid.sequence}:{eid.arguments_digest}"
 
 
 def _parse_frame_components(frame_str: str) -> tuple[str, int, str]:
     """Parses a string component back into the parts of an ExecutionId frame."""
     name, rest = frame_str.split("#", 1)
-    seq_str, args_hash = rest.split(":", 1)
-    return name, int(seq_str), args_hash
+    seq_str, arguments_digest = rest.split(":", 1)
+    return name, int(seq_str), arguments_digest
 
 
 def execution_id_to_path(eid: ExecutionId) -> str:
@@ -38,9 +38,12 @@ def path_to_execution_id(path: str) -> ExecutionId:
     parent: ExecutionId | None = None
     eid: ExecutionId | None = None
     for frame_str in path.split("/"):
-        name, sequence, args_hash = _parse_frame_components(frame_str)
+        name, sequence, arguments_digest = _parse_frame_components(frame_str)
         eid = ExecutionId(
-            parent_id=parent, name=name, sequence=sequence, args_hash=args_hash
+            parent_id=parent,
+            name=name,
+            sequence=sequence,
+            arguments_digest=arguments_digest,
         )
         parent = eid
     if eid is None:

@@ -2,14 +2,15 @@ import uuid
 
 import pytest
 
-from glyff import ArgsHasher, EventEmitter, ExecutionId, Serializer
+from glyff import ArgumentCanonicalizer, EventEmitter, ExecutionId, Serializer
 from glyff._context import Context
 from glyff._sequencer import Sequencer
 from glyff.serialization import (
-    JsonArgsHasher,
+    JsonArgumentCanonicalizer,
     JsonSerializer,
 )
 from glyff.store import MemoryBackend
+from glyff.testing import make_execution_id
 from glyff.store._memory_client import MemoryClient
 from glyff.tests.stubs.store import StubBackend
 from glyff.tests.types import BackendFactory
@@ -17,19 +18,12 @@ from glyff.tests.types import BackendFactory
 
 @pytest.fixture
 def base_execution_id() -> ExecutionId:
-    return ExecutionId(
-        parent_id=None, name="test_func", sequence=0, args_hash="abcde123"
-    )
+    return make_execution_id("test_func")
 
 
 @pytest.fixture
 def nested_execution_id(base_execution_id: ExecutionId) -> ExecutionId:
-    return ExecutionId(
-        parent_id=base_execution_id,
-        name="nested_func",
-        sequence=0,
-        args_hash="fghij456",
-    )
+    return make_execution_id("nested_func", parent=base_execution_id)
 
 
 @pytest.fixture
@@ -38,8 +32,8 @@ def serializer() -> Serializer:
 
 
 @pytest.fixture
-def hasher() -> ArgsHasher:
-    return JsonArgsHasher()
+def argument_canonicalizer() -> ArgumentCanonicalizer:
+    return JsonArgumentCanonicalizer()
 
 
 @pytest.fixture
@@ -58,13 +52,15 @@ def mock_backend() -> StubBackend:
 
 @pytest.fixture
 def test_context(
-    mock_backend: StubBackend, hasher: ArgsHasher, serializer: Serializer
+    mock_backend: StubBackend,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer: Serializer,
 ) -> Context:
     return Context(
         session_id=str(uuid.uuid4()),
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=EventEmitter([]),
     )

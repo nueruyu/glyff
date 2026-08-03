@@ -2,16 +2,16 @@ import inspect
 import json
 from typing import Any, Callable
 
-from .._interfaces import ArgsHasher, Serializer
-from ..exceptions import SerializationError, UnserializableArgumentError
+from .._interfaces import ArgumentCanonicalizer, Serializer
+from .._models import CanonicalValue
+from ..exceptions import ArgumentCanonicalizationError, SerializationError
 from .constants import DEFAULT_ENCODING
 from ._utils import (
     OpaquePolicy,
-    RaiseOnOpaque,
-    build_hashable_args,
-    hash_from_dict,
+    RejectOpaque,
+    bind_arguments,
     stable_json_dumps,
-    to_hashable,
+    to_canonical,
     to_serializable,
 )
 
@@ -20,12 +20,12 @@ class JsonSerializer(Serializer):
     """A serializer using only the standard `json` module."""
 
     def __init__(
-        self, indent: int | str | None = None, ensure_ascii: bool = True
+        self, indent: int | str | None = None, ensure_ascii: bool = False
     ) -> None:
         self._indent = indent
         self._ensure_ascii = ensure_ascii
 
-    def _to_jsonable(self, obj: Any) -> Any:
+    def json_default(self, obj: Any) -> Any:
         """json.dumps default hook. Override to support extra types."""
         return to_serializable(obj)
 
@@ -33,7 +33,7 @@ class JsonSerializer(Serializer):
         """Encodes a JSON-ready value to stable JSON bytes."""
         text = stable_json_dumps(
             value,
-            default=self._to_jsonable,
+            default=self.json_default,
             indent=self._indent,
             ensure_ascii=self._ensure_ascii,
         )
@@ -42,7 +42,7 @@ class JsonSerializer(Serializer):
     async def serialize(self, value: Any, type_hint: type) -> bytes:
         try:
             return self._encode(value)
-        except UnserializableArgumentError as e:
+        except TypeError as e:
             raise SerializationError(
                 f"Value of type {value.__class__.__name__} could not be serialized "
                 f"to JSON. Original error: {e}"
@@ -52,24 +52,31 @@ class JsonSerializer(Serializer):
         return json.loads(data.decode(DEFAULT_ENCODING))
 
 
-class JsonArgsHasher(ArgsHasher):
-    """An ArgsHasher using standard JSON serialization."""
+class JsonArgumentCanonicalizer(ArgumentCanonicalizer):
+    """An ArgumentCanonicalizer that normalizes into the JSON data model."""
 
     def __init__(self, opaque_policy: OpaquePolicy | None = None) -> None:
-        # How to hash values with no value representation. Defaults to raising, so
-        # distinct instances never silently collide on their class name. Compare to
-        # None explicitly: a custom policy may be a falsy object.
-        self._opaque_policy = (
-            RaiseOnOpaque() if opaque_policy is None else opaque_policy
-        )
+        # How to represent values with no value representation. Defaults to raising,
+        # so distinct instances never silently collide on their class name. Compare
+        # to None explicitly: a custom policy may be a falsy object.
+        self._opaque_policy = RejectOpaque() if opaque_policy is None else opaque_policy
 
-    def _to_jsonable(self, obj: Any) -> Any:
-        """json.dumps default hook. Override to support extra types."""
-        return to_hashable(obj, self._opaque_policy)
+    def canonicalize_value(self, obj: Any) -> CanonicalValue:
+        """Canonicalizes one value. Override to support extra types.
 
-    def hash_args(
+        Passing this as the walk's recursion keeps an override in effect at every
+        depth, not just for top-level arguments.
+        """
+        return to_canonical(obj, self._opaque_policy, self.canonicalize_value)
+
+    def canonicalize(
         self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
-    ) -> str:
-        func_name = getattr(func, "__qualname__", func.__name__)
-        args_dict = build_hashable_args(sig, args, kwargs)
-        return hash_from_dict(args_dict, func_name, default=self._to_jsonable)
+    ) -> CanonicalValue:
+        try:
+            return self.canonicalize_value(bind_arguments(sig, args, kwargs))
+        except ArgumentCanonicalizationError as e:
+            func_name = getattr(func, "__qualname__", func.__name__)
+            raise ArgumentCanonicalizationError(
+                f"Arguments to '{func_name}' could not be canonicalized. "
+                f"Ensure all arguments have a value representation. Original error: {e}"
+            ) from e

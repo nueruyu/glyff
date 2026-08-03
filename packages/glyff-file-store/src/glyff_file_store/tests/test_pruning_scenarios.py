@@ -6,7 +6,7 @@ import json
 from typing import cast
 
 import pytest
-from glyff import ArgsHasher, EventEmitter, Session, engrave
+from glyff import ArgumentCanonicalizer, EventEmitter, Session, engrave
 from glyff.serialization import JsonSerializer
 from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.testing import PruningEventHandler
@@ -68,14 +68,14 @@ async def pr_root() -> int:
 
 
 async def test_fresh_run_prunes_whole_subtree(
-    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, argument_canonicalizer: ArgumentCanonicalizer
 ):
     backend = JsonFileBackend(base_dir=tmp_path, session_id="prune-fresh")
     async with Session(
         id="prune-fresh",
         backend=backend,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=_pruning_emitter(backend),
     ):
         result = await pr_root()
@@ -89,14 +89,14 @@ async def test_fresh_run_prunes_whole_subtree(
 
 
 async def test_disabled_flag_retains_descendants(
-    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, argument_canonicalizer: ArgumentCanonicalizer
 ):
     backend = JsonFileBackend(base_dir=tmp_path, session_id="prune-off")
     async with Session(
         id="prune-off",
         backend=backend,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
     ):
         await pr_root()
 
@@ -106,7 +106,7 @@ async def test_disabled_flag_retains_descendants(
 
 
 async def test_replay_after_prune_is_correct(
-    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, argument_canonicalizer: ArgumentCanonicalizer
 ):
     sid = "prune-replay"
     backend = JsonFileBackend(base_dir=tmp_path, session_id=sid)
@@ -114,7 +114,7 @@ async def test_replay_after_prune_is_correct(
         id=sid,
         backend=backend,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=_pruning_emitter(backend),
     ):
         first = await pr_root()
@@ -125,7 +125,7 @@ async def test_replay_after_prune_is_correct(
         id=sid,
         backend=reopened,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=_pruning_emitter(reopened),
     ):
         second = await pr_root()
@@ -182,7 +182,7 @@ async def sc_root() -> str:
 
 
 async def test_nested_completion_prunes_mid_session(
-    tmp_path, serializer: JsonSerializer, hasher: ArgsHasher
+    tmp_path, serializer: JsonSerializer, argument_canonicalizer: ArgumentCanonicalizer
 ):
     global _sc_interrupt
     sid = "prune-interrupt"
@@ -194,7 +194,7 @@ async def test_nested_completion_prunes_mid_session(
             id=sid,
             backend=backend,
             serializer=serializer,
-            hasher=hasher,
+            argument_canonicalizer=argument_canonicalizer,
             event_emitter=_pruning_emitter(backend),
         ):
             await sc_root()
@@ -212,7 +212,7 @@ async def test_nested_completion_prunes_mid_session(
         id=sid,
         backend=reopened,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
         event_emitter=_pruning_emitter(reopened),
     ):
         result = await sc_root()

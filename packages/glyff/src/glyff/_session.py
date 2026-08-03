@@ -1,7 +1,7 @@
 from ._context import Context, reset_context, set_context
 from ._event_system import EventEmitter
 from ._interfaces import (
-    ArgsHasher,
+    ArgumentCanonicalizer,
     Backend,
     ExecutionRepository,
     Serializer,
@@ -24,12 +24,12 @@ class Session:
         *,
         backend: Backend,
         serializer: Serializer,
-        hasher: ArgsHasher,
+        argument_canonicalizer: ArgumentCanonicalizer,
         event_emitter: EventEmitter | None = None,
     ) -> None:
         self._id = id
         self._backend = backend
-        self._hasher = hasher
+        self._argument_canonicalizer = argument_canonicalizer
         self._serializer = serializer
         self._event_emitter = event_emitter or EventEmitter([])
         self._context: Context | None = None
@@ -56,7 +56,7 @@ class Session:
             backend=self._backend,
             serializer=self._serializer,
             sequencer=Sequencer(),
-            hasher=self._hasher,
+            argument_canonicalizer=self._argument_canonicalizer,
             event_emitter=self._event_emitter,
         )
         self._context_token = set_context(self._context)

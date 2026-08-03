@@ -1,11 +1,11 @@
 [project]
 name = "glyff-pydantic"
-description = "Pydantic-based Serializer and ArgsHasher for glyff."
+description = "Pydantic-based Serializer and ArgumentCanonicalizer for glyff."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
-    "glyff>=0.1.0",
+    "glyff>=0.14.0",
     "pydantic>=2.0",
 ]
 dynamic = ["version"]

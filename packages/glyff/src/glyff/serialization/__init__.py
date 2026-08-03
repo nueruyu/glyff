@@ -1,11 +1,10 @@
-from ._json import JsonArgsHasher, JsonSerializer
-from ._utils import OpaqueContext, OpaquePolicy, QualnameOpaque, RaiseOnOpaque
+from ._json import JsonArgumentCanonicalizer, JsonSerializer
+from ._utils import OpaquePolicy, OpaqueByTypeQualname, RejectOpaque
 
 __all__ = [
     "JsonSerializer",
-    "JsonArgsHasher",
+    "JsonArgumentCanonicalizer",
     "OpaquePolicy",
-    "OpaqueContext",
-    "RaiseOnOpaque",
-    "QualnameOpaque",
+    "RejectOpaque",
+    "OpaqueByTypeQualname",
 ]

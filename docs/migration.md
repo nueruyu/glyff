@@ -53,13 +53,20 @@ glyff does not auto-migrate a paused session onto new code. Instead:
   [pruning](./events.md#pruning-completed-subtrees). Nothing is added to the
   resume path.
 
+What makes such a script possible is that every execution records the
+[canonical form of its arguments](./execution-identity.md#canonical-arguments),
+byte-for-byte the preimage of its `arguments_digest`. Remapping an argument is
+therefore a transformation of recorded JSON, with no dead Python types to keep
+alive and no dependence on the canonicalizer that wrote the record.
+
 > **Planned** — [#41](https://github.com/nueruyu/glyff/issues/41) (generation
 > stamp and typed mismatch error; the store format stamp above has landed),
-> [#47](https://github.com/nueruyu/glyff/issues/47) (persisting arguments, which
-> is what such a script reads back), and
-> [#42](https://github.com/nueruyu/glyff/issues/42) (repository enumeration).
-> Until they land, resuming a session on changed code diverges silently — pin
-> paused sessions to the code that started them.
+> [#42](https://github.com/nueruyu/glyff/issues/42) (repository enumeration, so
+> a script can walk a session's records). The encoder and digest that recompute a
+> rewritten key ship with the runner; until then, reproducing glyff's canonical
+> encoding yourself is not a supported surface. Resuming a session on changed
+> code diverges silently in the meantime, so pin paused sessions to the code that
+> started them.
 
 ## Running without migration
 

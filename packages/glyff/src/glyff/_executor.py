@@ -1,13 +1,20 @@
 from typing import Any, Callable
 
 from ._context import Context
-from ._models import Execution, ExecutionId, ExecutionStatus, SerializedValue
+from ._models import (
+    CanonicalArguments,
+    Execution,
+    ExecutionId,
+    ExecutionStatus,
+    SerializedValue,
+)
 from .events import ExecutionCompleted, ExecutionFailed
 
 
 async def execute(
     ctx: Context,
     execution_id: ExecutionId,
+    canonical_arguments: CanonicalArguments,
     func: Callable[..., Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
@@ -28,13 +35,14 @@ async def execute(
 
     cached = await repository.get(execution_id)
     if cached is not None and cached.status == ExecutionStatus.COMPLETED:
+        # A completed execution always carries a result; the aggregate enforces it.
         assert cached.result is not None
         return await serializer.deserialize(cached.result.data, return_type)
 
     async with ctx.get_transaction_scope():
         await sequencer.reset_for_call(execution_id)
         if await repository.get(execution_id) is None:
-            await repository.save(Execution.start(execution_id))
+            await repository.save(Execution.start(execution_id, canonical_arguments))
 
     tracer.start(execution_id)
 

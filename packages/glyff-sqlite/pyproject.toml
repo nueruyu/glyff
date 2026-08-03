@@ -1,11 +1,11 @@
 [project]
 name = "glyff-sqlite"
-description = "SQLite-backed durable SessionStore for glyff."
+description = "SQLite-backed durable execution backend for glyff."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 dependencies = [
-    "glyff>=0.1.0",
+    "glyff>=0.14.0",
 ]
 dynamic = ["version"]
 classifiers = [

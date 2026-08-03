@@ -1,7 +1,33 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import TypeAlias
+
+from .exceptions import InvalidExecutionError
+
+# A value in the JSON data model. Canonicalizing a call's arguments produces one of
+# these, and a migration's argument conversion both receives and returns one.
+CanonicalValue: TypeAlias = (
+    "str | int | float | bool | None | list[CanonicalValue] | dict[str, CanonicalValue]"
+)
+
+
+@dataclass(frozen=True)
+class CanonicalArguments:
+    """Canonical argument bytes, the preimage of an execution's key.
+
+    Not a :class:`SerializedValue`: that carries application values through a
+    ``Serializer``, and only these derive an ``arguments_digest``. Stores must round-trip
+    them untouched — re-encoding would change the key.
+    """
+
+    data: bytes
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(self.data).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -14,7 +40,7 @@ class ExecutionId:
     parent_id: ExecutionId | None
     name: str
     sequence: int
-    args_hash: str
+    arguments_digest: str
 
     def __str__(self) -> str:
         """
@@ -45,7 +71,7 @@ class SerializedValue:
 
 @dataclass(frozen=True)
 class Metadata:
-    """Child entity/value object inside the Execution aggregate."""
+    """A named serialized entry owned by an Execution."""
 
     key: str
     value: SerializedValue
@@ -53,16 +79,34 @@ class Metadata:
 
 @dataclass
 class Execution:
-    """Aggregate Root for a single task execution."""
+    """A recorded task execution."""
 
     id: ExecutionId
     status: ExecutionStatus
+    arguments: CanonicalArguments
+    """The arguments this call was keyed by: ``id.arguments_digest == arguments.digest``."""
     result: SerializedValue | None = None
     metadata: dict[str, Metadata] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if self.id.arguments_digest != self.arguments.digest:
+            raise InvalidExecutionError(
+                f"Execution {self.id} does not match its recorded arguments: "
+                "arguments_digest must be the digest of arguments."
+            )
+        completed = self.status is ExecutionStatus.COMPLETED
+        if completed and self.result is None:
+            raise InvalidExecutionError(f"Completed execution {self.id} has no result.")
+        if not completed and self.result is not None:
+            raise InvalidExecutionError(
+                f"Execution {self.id} carries a result but is not completed."
+            )
+
     @classmethod
-    def start(cls, execution_id: ExecutionId) -> "Execution":
-        return cls(id=execution_id, status=ExecutionStatus.STARTED)
+    def start(
+        cls, execution_id: ExecutionId, arguments: CanonicalArguments
+    ) -> "Execution":
+        return cls(id=execution_id, status=ExecutionStatus.STARTED, arguments=arguments)
 
     def complete(self, result: SerializedValue) -> None:
         if self.status is ExecutionStatus.COMPLETED:

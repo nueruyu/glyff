@@ -43,8 +43,10 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 
 ## Storage model
 
-- One row per execution; `result` and `metadata` are JSON text columns, readable
-  in place with any SQLite client.
+- One row per execution; `args`, `result` and `metadata` are JSON text columns,
+  readable in place with any SQLite client.
+- `args` holds the canonical arguments verbatim — the row's key is their digest,
+  so the column is stored and returned byte-for-byte rather than re-encoded.
 - Per-execution metadata (see the
   [glyff README](https://pypi.org/project/glyff/)) commits atomically with the
   execution's `COMPLETED` status and result, and is removed with the execution's

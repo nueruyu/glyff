@@ -1,3 +1,3 @@
-from ._serialization import PydanticArgsHasher, PydanticSerializer
+from ._serialization import PydanticArgumentCanonicalizer, PydanticSerializer
 
-__all__ = ["PydanticSerializer", "PydanticArgsHasher"]
+__all__ = ["PydanticSerializer", "PydanticArgumentCanonicalizer"]

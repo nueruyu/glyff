@@ -43,7 +43,9 @@ The underlying `FileClient` is internal and not part of the public API.
 single pretty-printed JSON file (`executions.json`). The execution map is read
 from that file on access and rewritten atomically on every commit.
 Execution results and metadata are stored as embedded JSON values, so
-serializers used with this backend must produce JSON text.
+serializers used with this backend must produce JSON text. Canonical arguments
+are stored as a JSON *string* instead: the execution's key is the digest of
+those exact bytes, so they are kept verbatim rather than re-encoded.
 
 A `glyff_format.json` marker beside it records the store format version; a
 session written by an incompatible build is refused rather than misread.

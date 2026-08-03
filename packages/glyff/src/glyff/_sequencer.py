@@ -9,7 +9,7 @@ _SequenceKey = tuple[ExecutionId | None, str, str]
 class Sequencer:
     """
     Generates sequential integers for ExecutionIds in a concurrency-safe manner.
-    Each (parent_id, name, args_hash) tuple has its own independent sequence.
+    Each (parent_id, name, arguments_digest) tuple has its own independent sequence.
     """
 
     def __init__(self):
@@ -17,9 +17,11 @@ class Sequencer:
         self._counters: dict[_SequenceKey, int] = defaultdict(int)
         self._meta_lock = asyncio.Lock()
 
-    async def next(self, parent: ExecutionId | None, name: str, args_hash: str) -> int:
+    async def next(
+        self, parent: ExecutionId | None, name: str, arguments_digest: str
+    ) -> int:
         """Returns the next sequence number for the given content scope."""
-        key = (parent, name, args_hash)
+        key = (parent, name, arguments_digest)
 
         async with self._meta_lock:
             if key not in self._locks:

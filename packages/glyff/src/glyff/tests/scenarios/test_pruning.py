@@ -2,7 +2,7 @@
 
 import pytest
 
-from glyff import ArgsHasher, EventEmitter, engrave
+from glyff import ArgumentCanonicalizer, EventEmitter, engrave
 from glyff.store._memory import _key_to_path
 from glyff.testing import PruningEventHandler
 from glyff.tests.types import BackendFactory, make_session
@@ -48,13 +48,15 @@ def _pruning_emitter(backend) -> EventEmitter:
 
 
 async def test_descendant_records_are_gone_after_completion(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer,
 ):
     backend = backend_factory("mem-prune")
     async with make_session(
         "mem-prune",
         backend,
-        hasher,
+        argument_canonicalizer,
         serializer,
         event_emitter=_pruning_emitter(backend),
     ):
@@ -71,23 +73,27 @@ async def test_descendant_records_are_gone_after_completion(
 
 
 async def test_disabled_by_default_keeps_descendants(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer,
 ):
     backend = backend_factory("mem-noprune")
-    async with make_session("mem-noprune", backend, hasher, serializer):
+    async with make_session("mem-noprune", backend, argument_canonicalizer, serializer):
         await mp_root()
 
     assert any("/" in p for p in _committed_paths(backend))
 
 
 async def test_replay_after_prune_does_not_rerun(
-    backend_factory: BackendFactory, hasher: ArgsHasher, serializer
+    backend_factory: BackendFactory,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer,
 ):
     backend = backend_factory("mem-replay")
     async with make_session(
         "mem-replay",
         backend,
-        hasher,
+        argument_canonicalizer,
         serializer,
         event_emitter=_pruning_emitter(backend),
     ):
@@ -99,7 +105,7 @@ async def test_replay_after_prune_does_not_rerun(
     async with make_session(
         "mem-replay",
         backend,
-        hasher,
+        argument_canonicalizer,
         serializer,
         event_emitter=_pruning_emitter(backend),
     ):

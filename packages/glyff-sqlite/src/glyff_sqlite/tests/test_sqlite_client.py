@@ -1,13 +1,16 @@
 import json
 from pathlib import Path
 
-from glyff import Execution, ExecutionId, SerializedValue, TransactionScope
+from glyff import Execution, SerializedValue, TransactionScope
+from glyff.store.utils import execution_id_to_path
+from glyff.testing import canonical_arguments, make_execution_id
 from glyff_sqlite import SQLiteBackend
 from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
 
 
 def record(value: str) -> SQLiteExecutionRecord:
     return SQLiteExecutionRecord(
+        arguments="{}",
         status="completed",
         result=f'"{value}"',
         metadata="{}",
@@ -35,7 +38,13 @@ async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
 
     client = SQLiteClient(db)
     rows = await client.read_sql("PRAGMA table_info(glyff_executions)")
-    assert [row[1] for row in rows] == ["path", "status", "result", "metadata"]
+    assert [row[1] for row in rows] == [
+        "path",
+        "arguments",
+        "status",
+        "result",
+        "metadata",
+    ]
 
 
 async def test_sqlite_client_commit_is_atomic_across_execution_paths(tmp_path: Path):
@@ -71,13 +80,8 @@ async def test_sqlite_backend_stores_execution_columns_as_readable_json(
 ):
     db = tmp_path / "readable.sqlite3"
     backend = SQLiteBackend(db)
-    execution_id = ExecutionId(
-        parent_id=None,
-        name="task",
-        sequence=0,
-        args_hash="hash",
-    )
-    execution = Execution.start(execution_id)
+    execution_id = make_execution_id("task")
+    execution = Execution.start(execution_id, canonical_arguments())
     execution.complete(SerializedValue(b'{"answer":42}'))
     execution.set_metadata("trace", SerializedValue(b'{"step":1}'))
 
@@ -87,7 +91,7 @@ async def test_sqlite_backend_stores_execution_columns_as_readable_json(
     client = SQLiteClient(db)
     rows = await client.read_sql(
         "SELECT status, result, metadata FROM glyff_executions WHERE path = ?",
-        "task#0:hash",
+        execution_id_to_path(execution_id),
     )
 
     assert len(rows) == 1

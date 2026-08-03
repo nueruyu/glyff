@@ -39,12 +39,12 @@ suite rather than hand-writing store semantics tests.
 | Execution orchestration (cache check, transactions, event emission) | `packages/glyff/src/glyff/_executor.py` |
 | Session lifecycle and context | `packages/glyff/src/glyff/_session.py`, `_context.py` |
 | Events and handler dispatch | `packages/glyff/src/glyff/events.py`, `_event_system.py` |
-| The backend / serializer / hasher contracts | `packages/glyff/src/glyff/_interfaces.py` |
+| The backend / serializer / canonicalizer contracts | `packages/glyff/src/glyff/_interfaces.py` |
 | Built-in JSON hashing and serialization | `packages/glyff/src/glyff/serialization/` |
 | In-memory store | `packages/glyff/src/glyff/store/` |
 | File backend (debug) | `packages/glyff-file-store/` |
 | SQLite backend (production) | `packages/glyff-sqlite/` |
-| Pydantic serializer / hasher | `packages/glyff-pydantic/` |
+| Pydantic serializer / canonicalizer | `packages/glyff-pydantic/` |
 
 ## Conventions & guardrails
 
@@ -74,7 +74,7 @@ treat updating them as part of the change, not a follow-up. The mapping:
 | If you change… | Update… |
 | --- | --- |
 | The public API, exports, or quickstart-level usage | `README.md`, the package READMEs |
-| Name derivation, argument hashing, or sequencing | `docs/execution-identity.md` (it states guarantees with source references) |
+| Name derivation, argument canonicalization, or sequencing | `docs/execution-identity.md` (it states guarantees with source references) |
 | Event emission points or delivery semantics | `docs/events.md`, the events section of `README.md` |
 | The backend contract or a store's on-disk behavior | `docs/backends.md`, that backend's README |
 | Store formats, stamps, or version-mismatch behavior | `docs/migration.md`, the backend READMEs |

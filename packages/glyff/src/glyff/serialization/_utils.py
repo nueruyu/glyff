@@ -1,24 +1,19 @@
-"""Turn call arguments into stable JSON for hashing and serialization.
-
-Both paths encode dataclasses and JSON-native values by value. They differ on values
-with no value representation ("opaque" values): serialization raises, while hashing
-defers to a pluggable :class:`OpaquePolicy` (the default policy raises too).
-"""
+"""Canonical argument encoding and JSON serialization helpers."""
 
 import dataclasses
 import functools
-import hashlib
 import inspect
 import json
+import math
 from abc import ABC, abstractmethod
-from typing import Any, Callable
+from typing import Any, Callable, TypeAlias
 
-from ..exceptions import UnserializableArgumentError
+from .._models import CanonicalValue
+from ..exceptions import ArgumentCanonicalizationError
 from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
-# Namespaces an OpaquePolicy's return value so it cannot be confused with a native
-# encoding (a policy that returned the string "pkg.Cls" must not hash-equal a plain
-# "pkg.Cls" argument).
+# Namespaces a policy's output so an opaque value can never collide with a native
+# representation that happens to match it.
 _OPAQUE_TAG = "__glyff_opaque__"
 
 
@@ -26,62 +21,47 @@ def _qualified_name(obj: Any) -> str:
     return f"{obj.__module__}.{obj.__qualname__}"
 
 
-@dataclasses.dataclass(frozen=True)
-class OpaqueContext:
-    """The context handed to an :class:`OpaquePolicy` for a single opaque value.
-
-    Only ``value`` is populated today; the object exists so the policy signature can
-    gain fields (e.g. parameter name, function) without breaking implementations. See
-    the standard-policies follow-up for the planned additions.
-    """
-
-    value: Any
-
-
 class OpaquePolicy(ABC):
-    """Decides how a value with no value representation contributes to a hash.
-
-    glyff owns the hashing contract (encode by value, else defer here); it does not own
-    the taxonomy of what is opaque or how it is marked. Inject a policy to recognise
-    your own markers and turn each matched value into a hashable representation.
-    """
+    """Maps a value with no value representation to a canonical one."""
 
     @abstractmethod
-    def hash(self, ctx: OpaqueContext) -> Any:
-        """Return a JSON-encodable representation of ``ctx.value``, or raise to reject it."""
+    def represent(self, value: Any) -> Any:
+        """Return a JSON-encodable representation of ``value``, or raise to reject it."""
         ...
 
 
-class RaiseOnOpaque(OpaquePolicy):
+class RejectOpaque(OpaquePolicy):
     """Default policy: reject opaque values so distinct instances never silently collide."""
 
-    def hash(self, ctx: OpaqueContext) -> Any:
-        value = ctx.value
-        raise UnserializableArgumentError(
-            f"Cannot hash opaque value of type '{type(value).__name__}': it has no "
-            "value representation. Give it a serializable representation (e.g. a "
-            "dataclass or model), or pass an opaque policy to the hasher."
+    def represent(self, value: Any) -> Any:
+        raise ArgumentCanonicalizationError(
+            f"Cannot canonicalize opaque value of type '{type(value).__name__}': it "
+            "has no value representation. Give it a serializable representation "
+            "(e.g. a dataclass or model), or pass an opaque policy to the "
+            "canonicalizer."
         )
 
 
-class QualnameOpaque(OpaquePolicy):
+class OpaqueByTypeQualname(OpaquePolicy):
     """Opt-in policy: identify an opaque value by its class' qualified name.
 
-    Collapses every instance of a class to one hash. Safe only when the value is
-    stateless with respect to the result (e.g. a service holding injected
-    dependencies), since distinct instances hash identically.
+    Collapses every instance of a class to one representation. Safe only when the
+    value is stateless with respect to the result (e.g. a service holding injected
+    dependencies), since distinct instances then canonicalize identically.
     """
 
-    def hash(self, ctx: OpaqueContext) -> Any:
-        return _qualified_name(type(ctx.value))
+    def represent(self, value: Any) -> Any:
+        return _qualified_name(type(value))
 
 
 # Shared, stateless singleton used as the default wherever a policy is optional.
-_DEFAULT_OPAQUE_POLICY: OpaquePolicy = RaiseOnOpaque()
+_DEFAULT_OPAQUE_POLICY: OpaquePolicy = RejectOpaque()
+
+_Recurse: TypeAlias = Callable[[Any], "CanonicalValue"]
 
 
-def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
-    # Exclude fields the dataclass itself excludes from __hash__ (field(compare=False)).
+def _identity_fields(obj: Any) -> list[dataclasses.Field]:
+    # A field the dataclass excludes from equality never distinguished two calls.
     return [
         f
         for f in dataclasses.fields(obj)
@@ -89,44 +69,109 @@ def _hashed_fields(obj: Any) -> list[dataclasses.Field]:
     ]
 
 
-def _sorted_for_hash(
-    values: Any, policy: OpaquePolicy = _DEFAULT_OPAQUE_POLICY
-) -> list:
-    # set/frozenset only define a partial order (subset), so sorted() would silently
-    # keep incomparable elements in their (process-randomized) input order. Use the
-    # canonical-JSON key whenever an element is a set/frozenset; otherwise sort
-    # directly (fast) and fall back to that key for unorderable/mixed elements.
-    if not any(isinstance(v, (set, frozenset)) for v in values):
-        try:
-            return sorted(values)
-        except TypeError:
-            pass
-    key = functools.partial(to_hashable, policy=policy)
-    return sorted(values, key=lambda v: stable_json_dumps(v, default=key))
+def _canonical_key(key: Any) -> str:
+    # Stringify keys here rather than at encoding time, so the form stays stable
+    # across a JSON round trip. Always through the builtin, as json's own encoder
+    # does: a subclass' __str__ or __repr__ must not reach identity.
+    if isinstance(key, str):
+        return str.__str__(key)
+    if isinstance(key, bool):
+        return "true" if key else "false"
+    if key is None:
+        return "null"
+    if isinstance(key, float):
+        if math.isnan(key):
+            return "NaN"
+        if math.isinf(key):
+            return "Infinity" if key > 0 else "-Infinity"
+        return float.__repr__(key)
+    if isinstance(key, int):
+        return int.__repr__(key)
+    raise ArgumentCanonicalizationError(
+        f"Dictionary keys must be str, int, float, bool or None, "
+        f"not '{type(key).__name__}'."
+    )
 
 
-def to_hashable(obj: Any, policy: OpaquePolicy = _DEFAULT_OPAQUE_POLICY) -> Any:
-    """json.dumps default hook for hashing. Encodes by value, else defers to policy."""
+def _canonical_mapping(obj: dict, recurse: _Recurse) -> dict[str, CanonicalValue]:
+    canonical: dict[str, CanonicalValue] = {}
+    for key, value in obj.items():
+        name = _canonical_key(key)
+        if name in canonical:
+            raise ArgumentCanonicalizationError(
+                f"Two keys of this mapping canonicalize to {name!r}. Distinct "
+                "arguments must stay distinct, or the calls would collapse onto "
+                "one execution key."
+            )
+        canonical[name] = recurse(value)
+    return canonical
+
+
+def _canonicalize_set(values: Any, recurse: _Recurse) -> list:
+    # set/frozenset have no inherent order, so canonicalize the members first and
+    # then order them. Members are often unorderable among themselves (dicts from
+    # dataclasses, mixed types), so fall back to ordering by their encoded form.
+    members: list[Any] = [recurse(v) for v in values]
+    try:
+        return sorted(members)
+    except TypeError:
+        return sorted(members, key=encode_canonical)
+
+
+def to_canonical(
+    obj: Any,
+    policy: OpaquePolicy = _DEFAULT_OPAQUE_POLICY,
+    recurse: _Recurse | None = None,
+) -> CanonicalValue:
+    """Normalize one value into the JSON data model.
+
+    ``recurse`` handles nested values; it defaults to this function and exists so a
+    subclass canonicalizer stays in control of the whole walk (see
+    :class:`~glyff.serialization.JsonArgumentCanonicalizer`).
+
+    The mapping is deliberately one-way: what it drops is what identity never
+    depended on.
+    """
+    if recurse is None:
+        recurse = functools.partial(to_canonical, policy=policy)
+
+    if obj is None or isinstance(obj, (str, int, float)):
+        # bool is an int subclass, so it lands here too.
+        return obj
     if isinstance(obj, type):
         return _qualified_name(obj)
     if isinstance(obj, functools.partial):
-        # partials are callable but have no __qualname__; hash by their components.
+        # partials are callable but have no __qualname__; identify them by components.
         return {
-            "__partial__": to_hashable(obj.func, policy),
-            "args": obj.args,
-            "keywords": obj.keywords,
+            "__partial__": recurse(obj.func),
+            "args": [recurse(a) for a in obj.args],
+            "keywords": _canonical_mapping(obj.keywords, recurse),
         }
     if dataclasses.is_dataclass(obj):
-        return {f.name: getattr(obj, f.name) for f in _hashed_fields(obj)}
+        return {f.name: recurse(getattr(obj, f.name)) for f in _identity_fields(obj)}
+    if isinstance(obj, dict):
+        return _canonical_mapping(obj, recurse)
+    if isinstance(obj, (list, tuple)):
+        return [recurse(v) for v in obj]
     if isinstance(obj, (set, frozenset)):
-        return _sorted_for_hash(obj, policy)
+        return _canonicalize_set(obj, recurse)
     if isinstance(obj, (bytes, bytearray)):
         return obj.hex()
     if callable(obj) and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
-    # Tag the policy's output so an opaque value can never hash-collide with a native
-    # value that happens to share the policy's representation.
-    return {_OPAQUE_TAG: policy.hash(OpaqueContext(value=obj))}
+    return {_OPAQUE_TAG: recurse(policy.represent(obj))}
+
+
+def _reject(obj: Any) -> Any:
+    raise ArgumentCanonicalizationError(
+        f"Value of type '{type(obj).__name__}' is not in the JSON data model, so it "
+        "cannot be encoded. Canonicalize it first."
+    )
+
+
+def encode_canonical(value: CanonicalValue) -> bytes:
+    """The single encoder for argument identity. See :attr:`~glyff.Execution.arguments`."""
+    return stable_json_dumps(value, default=_reject).encode(DEFAULT_ENCODING)
 
 
 def to_serializable(obj: Any) -> Any:
@@ -144,50 +189,29 @@ def stable_json_dumps(
     data: Any,
     default: Callable[[Any], Any] | None = None,
     indent: int | str | None = None,
-    ensure_ascii: bool = True,
+    ensure_ascii: bool = False,
 ) -> str:
-    """Creates a stable JSON string from arbitrary data."""
-    try:
-        return json.dumps(
-            data,
-            indent=indent,
-            sort_keys=True,
-            ensure_ascii=ensure_ascii,
-            default=default or to_serializable,
-            separators=JSON_SEPARATORS if indent is None else None,
-        )
-    except TypeError as e:
-        raise UnserializableArgumentError(
-            "Value could not be serialized to JSON for hashing. "
-            f"Ensure all components are JSON-serializable. Original error: {e}"
-        ) from e
+    """Creates a stable JSON string from arbitrary data.
+
+    Raises ``TypeError`` for anything ``default`` cannot handle; each caller wraps
+    that in the error its own boundary means.
+    """
+    return json.dumps(
+        data,
+        indent=indent,
+        sort_keys=True,
+        ensure_ascii=ensure_ascii,
+        default=default or to_serializable,
+        separators=JSON_SEPARATORS if indent is None else None,
+    )
 
 
-def build_hashable_args(
-    sig: inspect.Signature, args: tuple, kwargs: dict
-) -> dict[str, Any]:
+def bind_arguments(sig: inspect.Signature, args: tuple, kwargs: dict) -> dict[str, Any]:
     """Binds arguments into a name->value dict, including *args/**kwargs.
 
     Variadic parameters appear as a tuple (var-positional) and dict (var-keyword),
-    both of which json serializes, so they contribute to the hash.
+    both of which canonicalize, so they contribute to identity.
     """
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
     return dict(bound.arguments)
-
-
-def hash_from_dict(
-    d: dict, func_name: str, default: Callable[[Any], Any] = to_hashable
-) -> str:
-    """Creates a stable SHA256 hash from a dictionary."""
-    try:
-        stable_repr = stable_json_dumps(d, default=default)
-    except UnserializableArgumentError as e:
-        raise UnserializableArgumentError(
-            f"Arguments to '{func_name}' could not be serialized to JSON. "
-            f"Ensure all arguments are JSON-serializable. Original error: {e}"
-        ) from e
-
-    hasher = hashlib.sha256()
-    hasher.update(stable_repr.encode(DEFAULT_ENCODING))
-    return hasher.hexdigest()

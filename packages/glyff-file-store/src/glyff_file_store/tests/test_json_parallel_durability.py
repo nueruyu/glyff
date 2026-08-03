@@ -6,7 +6,7 @@ on resume."""
 import asyncio
 
 import pytest
-from glyff import ArgsHasher, Session, engrave
+from glyff import ArgumentCanonicalizer, Session, engrave
 from glyff.serialization import JsonSerializer
 
 _ran: set[int] = set()
@@ -45,7 +45,9 @@ async def jp_root() -> int:
 
 
 async def test_json_parallel_children_durable_after_root_interrupt(
-    backend_factory, hasher: ArgsHasher, serializer: JsonSerializer
+    backend_factory,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer: JsonSerializer,
 ):
     global _interrupt_root
     sid = "json-parallel"
@@ -57,7 +59,7 @@ async def test_json_parallel_children_durable_after_root_interrupt(
             id=sid,
             backend=backend,
             serializer=serializer,
-            hasher=hasher,
+            argument_canonicalizer=argument_canonicalizer,
         ):
             await jp_root()
     assert _ran == set(range(_N))
@@ -70,7 +72,7 @@ async def test_json_parallel_children_durable_after_root_interrupt(
         id=sid,
         backend=backend,
         serializer=serializer,
-        hasher=hasher,
+        argument_canonicalizer=argument_canonicalizer,
     ):
         total = await jp_root()
 
