@@ -38,8 +38,8 @@ classes (`ExecutionBackendContract`, `DurableBackendContract`, and the
 text/binary-safety variants) and provide your backend factory. The shipped
 backends run the same suite. It also exports the reference `PruningEventHandler`
 and the helpers `save_execution`, `serialized_value`, and the pair
-`make_execution_id` / `encoded_args`, which build an execution that satisfies
-the `arguments_digest` invariant.
+`make_execution_id` / `canonical_arguments`, which build an execution that
+satisfies the `arguments_digest` invariant.
 
 ## Planned contract extensions
 

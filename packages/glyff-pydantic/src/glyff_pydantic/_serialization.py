@@ -76,7 +76,6 @@ _SCALARS = (
     datetime.time,
     datetime.timedelta,
     decimal.Decimal,
-    enum.Enum,
     ipaddress.IPv4Address,
     ipaddress.IPv4Network,
     ipaddress.IPv6Address,
@@ -93,6 +92,10 @@ class _PydanticScalarPolicy(OpaquePolicy):
         self._fallback = fallback
 
     def represent(self, value: Any) -> Any:
+        if isinstance(value, enum.Enum):
+            # Not in the allowlist: a member's value can be a container, and
+            # pydantic would walk it. Unwrap and let the shared walk take it.
+            return value.value
         if isinstance(value, _SCALARS):
             return to_jsonable_python(value)
         return self._fallback.represent(value)

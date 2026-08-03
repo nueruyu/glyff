@@ -8,7 +8,7 @@ from glyff.serialization import (
     JsonArgumentCanonicalizer,
     JsonSerializer,
     OpaquePolicy,
-    OpaqueByTypeName,
+    OpaqueByTypeQualname,
 )
 
 
@@ -153,7 +153,9 @@ def test_canonical_opaque_arg_raises_by_default(
 
 
 def test_canonical_opaque_arg_by_class_with_qualname_policy():
-    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    argument_canonicalizer = JsonArgumentCanonicalizer(
+        opaque_policy=OpaqueByTypeQualname()
+    )
 
     def func_with_obj(a: object):
         pass
@@ -305,7 +307,9 @@ def test_canonical_plain_self_raises_by_default(
 
 
 def test_canonical_plain_self_by_class_with_qualname_policy():
-    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    argument_canonicalizer = JsonArgumentCanonicalizer(
+        opaque_policy=OpaqueByTypeQualname()
+    )
     func = MyPlainClass.method
     sig = inspect.signature(func)
 
@@ -356,7 +360,9 @@ def test_canonical_dataclass_with_nested_plain_service():
     with pytest.raises(ArgumentCanonicalizationError):
         JsonArgumentCanonicalizer().canonicalize(func, sig, (a1, "hi"), {})
 
-    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    argument_canonicalizer = JsonArgumentCanonicalizer(
+        opaque_policy=OpaqueByTypeQualname()
+    )
     first = argument_canonicalizer.canonicalize(func, sig, (a1, "hi"), {})
     second = argument_canonicalizer.canonicalize(func, sig, (a2, "hi"), {})
     other = argument_canonicalizer.canonicalize(func, sig, (a3, "hi"), {})
@@ -391,10 +397,12 @@ def test_custom_opaque_policy_receives_the_value():
 def test_opaque_value_does_not_collide_with_native_representation():
     """An opaque value must not equal a native value sharing the policy's output.
 
-    OpaqueByTypeName renders MyPlainClass as its qualified name; a literal string equal
+    OpaqueByTypeQualname renders MyPlainClass as its qualified name; a literal string equal
     to that qualname must still hash differently, since the framework tags opaque output.
     """
-    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    argument_canonicalizer = JsonArgumentCanonicalizer(
+        opaque_policy=OpaqueByTypeQualname()
+    )
 
     def func(a: object):
         pass
@@ -450,7 +458,9 @@ def test_opaque_policy_applies_to_nested_dataclass_member():
     with pytest.raises(ArgumentCanonicalizationError):
         JsonArgumentCanonicalizer().canonicalize(func, sig, (Holder(Svc()),), {})
 
-    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    argument_canonicalizer = JsonArgumentCanonicalizer(
+        opaque_policy=OpaqueByTypeQualname()
+    )
     first = argument_canonicalizer.canonicalize(func, sig, (Holder(Svc()),), {})
     second = argument_canonicalizer.canonicalize(func, sig, (Holder(Svc()),), {})
     assert first == second
@@ -471,7 +481,9 @@ def test_opaque_policy_applies_to_set_members():
     with pytest.raises(ArgumentCanonicalizationError):
         JsonArgumentCanonicalizer().canonicalize(func, sig, (values,), {})
 
-    argument_canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeName())
+    argument_canonicalizer = JsonArgumentCanonicalizer(
+        opaque_policy=OpaqueByTypeQualname()
+    )
     assert argument_canonicalizer.canonicalize(func, sig, (values,), {}) is not None
 
 

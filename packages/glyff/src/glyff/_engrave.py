@@ -86,13 +86,13 @@ def engrave(func: Callable[P, R]) -> Callable[P, R]:
     @functools.wraps(func)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         ctx = get_context()
-        execution_id, encoded_args = await _resolve_call_identity(
+        execution_id, canonical_arguments = await _resolve_call_identity(
             ctx, func, sig, task_name, args, kwargs
         )
         result = await execute(
             ctx=ctx,
             execution_id=execution_id,
-            encoded_args=encoded_args,
+            canonical_arguments=canonical_arguments,
             func=func,
             args=args,
             kwargs=kwargs,

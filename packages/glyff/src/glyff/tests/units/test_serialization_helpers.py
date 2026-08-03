@@ -6,7 +6,7 @@ import pytest
 
 from glyff import CanonicalValue, CanonicalArguments
 from glyff.exceptions import ArgumentCanonicalizationError
-from glyff.serialization import OpaqueByTypeName
+from glyff.serialization import OpaqueByTypeQualname
 from glyff.serialization._utils import (
     _canonicalize_set,
     encode_canonical,
@@ -141,7 +141,7 @@ def test_canonical_tags_policy_output_so_it_cannot_collide():
     class Service:
         pass
 
-    tagged = canonical(Service(), policy=OpaqueByTypeName())
+    tagged = canonical(Service(), policy=OpaqueByTypeQualname())
     assert tagged != canonical(f"{__name__}.test_canonical_tags_policy_output.Service")
     assert list(tagged) == ["__glyff_opaque__"]  # type: ignore[arg-type]
 
@@ -150,7 +150,7 @@ def test_canonical_applies_the_policy_at_any_depth():
     class Service:
         pass
 
-    assert canonical({"a": [Service()]}, policy=OpaqueByTypeName()) == {
+    assert canonical({"a": [Service()]}, policy=OpaqueByTypeQualname()) == {
         "a": [{"__glyff_opaque__": f"{__name__}.{Service.__qualname__}"}]
     }
 

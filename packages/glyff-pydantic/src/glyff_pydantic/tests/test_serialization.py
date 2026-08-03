@@ -1,5 +1,6 @@
 import dataclasses
 import datetime
+import enum
 import inspect
 import uuid
 from typing import Any
@@ -165,7 +166,7 @@ def test_canonical_opaque_arg_raises_by_default(
 
 
 def test_canonical_opaque_arg_by_class_with_qualname_policy():
-    from glyff.serialization import OpaqueByTypeName
+    from glyff.serialization import OpaqueByTypeQualname
 
     class PlainA:
         pass
@@ -179,7 +180,7 @@ def test_canonical_opaque_arg_by_class_with_qualname_policy():
     sig = inspect.signature(func_with_obj)
 
     argument_canonicalizer = PydanticArgumentCanonicalizer(
-        opaque_policy=OpaqueByTypeName()
+        opaque_policy=OpaqueByTypeQualname()
     )
     first = argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainA(),), {})
     second = argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainA(),), {})
@@ -343,7 +344,7 @@ def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
     The model's serializable state differentiates calls while the opaque member is
     identified by its class instead of raising.
     """
-    from glyff.serialization import OpaqueByTypeName
+    from glyff.serialization import OpaqueByTypeQualname
 
     Agent, Tool = _agent_model_with_opaque_member()
     func = Agent.run
@@ -354,7 +355,7 @@ def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
     a3 = Agent(name="writer", tool=Tool(1))
 
     argument_canonicalizer = PydanticArgumentCanonicalizer(
-        opaque_policy=OpaqueByTypeName()
+        opaque_policy=OpaqueByTypeQualname()
     )
     first = argument_canonicalizer.canonicalize(func, sig, (a1, "hi"), {})
     second = argument_canonicalizer.canonicalize(func, sig, (a2, "hi"), {})
@@ -402,6 +403,38 @@ def test_scalars_pydantic_knows_are_represented_by_value(
             "ref": {"__glyff_opaque__": "00000000-0000-0000-0000-000000000000"},
         }
     }
+
+
+def test_mapping_valued_enums_keep_distinct_identity(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
+    # An Enum member's value can be a container, so it cannot go to pydantic as a
+    # scalar: that would stringify the mapping keys before the shared walk sees them.
+    class Colliding(enum.Enum):
+        VALUE = {1: "integer", "1": "string"}
+
+    def f(a: object):
+        pass
+
+    with pytest.raises(ArgumentCanonicalizationError, match="canonicalize to"):
+        argument_canonicalizer.canonicalize(
+            f, inspect.signature(f), (Colliding.VALUE,), {}
+        )
+
+
+def test_scalar_valued_enums_are_represented_by_value(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
+    class Colour(enum.Enum):
+        RED = "red"
+
+    def f(a: object):
+        pass
+
+    canonical = argument_canonicalizer.canonicalize(
+        f, inspect.signature(f), (Colour.RED,), {}
+    )
+    assert canonical == {"a": {"__glyff_opaque__": "red"}}
 
 
 def test_non_scalars_are_left_to_the_opaque_policy(

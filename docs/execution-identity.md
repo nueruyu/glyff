@@ -120,7 +120,7 @@ what counts as opaque in your application.
 | Policy | Behavior |
 | --- | --- |
 | `RejectOpaque` (default) | Rejects the value with `ArgumentCanonicalizationError`, so distinct instances never silently collide. |
-| `OpaqueByTypeName` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
+| `OpaqueByTypeQualname` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
 
 Policy return values are namespaced, so a policy that returns `"pkg.Cls"` cannot
 collide with a plain string argument of the same text. The same classification governs what is *stored*, not just what
@@ -128,7 +128,7 @@ is hashed — an opaque value the policy rejects never reaches the store.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard
 > composable policies (marker attribute, type list, predicate). Today anything
-> beyond `OpaqueByTypeName` means implementing `OpaquePolicy` yourself.
+> beyond `OpaqueByTypeQualname` means implementing `OpaquePolicy` yourself.
 
 ## Choosing engrave boundaries
 

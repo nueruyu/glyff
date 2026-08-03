@@ -2,32 +2,32 @@ import pytest
 
 from glyff import Execution, ExecutionStatus, SerializedValue
 from glyff.exceptions import InvalidExecutionError
-from glyff.testing import encoded_args, make_execution_id
+from glyff.testing import canonical_arguments, make_execution_id
 
 
 def test_start_creates_started_execution():
-    execution = Execution.start(make_execution_id("task"), encoded_args())
+    execution = Execution.start(make_execution_id("task"), canonical_arguments())
     assert execution.status is ExecutionStatus.STARTED
     assert execution.result is None
     assert execution.metadata == {}
 
 
 def test_complete_marks_execution_completed():
-    execution = Execution.start(make_execution_id("task"), encoded_args())
+    execution = Execution.start(make_execution_id("task"), canonical_arguments())
     execution.complete(SerializedValue(b"1"))
     assert execution.status is ExecutionStatus.COMPLETED
     assert execution.result == SerializedValue(b"1")
 
 
 def test_complete_terminal_execution_raises():
-    execution = Execution.start(make_execution_id("task"), encoded_args())
+    execution = Execution.start(make_execution_id("task"), canonical_arguments())
     execution.complete(SerializedValue(b"1"))
     with pytest.raises(ValueError):
         execution.complete(SerializedValue(b"2"))
 
 
 def test_set_metadata_keeps_metadata_inside_execution():
-    execution = Execution.start(make_execution_id("task"), encoded_args())
+    execution = Execution.start(make_execution_id("task"), canonical_arguments())
     execution.set_metadata("trace_id", SerializedValue(b'"abc"'))
     metadata = execution.get_metadata("trace_id")
     assert metadata is not None
@@ -38,7 +38,7 @@ def test_set_metadata_keeps_metadata_inside_execution():
 def test_execution_rejects_arguments_that_do_not_match_its_key():
     with pytest.raises(InvalidExecutionError, match="arguments_digest"):
         Execution.start(
-            make_execution_id("task", args={"a": 1}), encoded_args({"b": 2})
+            make_execution_id("task", arguments={"a": 1}), canonical_arguments({"b": 2})
         )
 
 
@@ -47,7 +47,7 @@ def test_completed_execution_must_carry_a_result():
         Execution(
             id=make_execution_id("task"),
             status=ExecutionStatus.COMPLETED,
-            arguments=encoded_args(),
+            arguments=canonical_arguments(),
         )
 
 
@@ -56,6 +56,6 @@ def test_uncompleted_execution_must_not_carry_a_result():
         Execution(
             id=make_execution_id("task"),
             status=ExecutionStatus.STARTED,
-            arguments=encoded_args(),
+            arguments=canonical_arguments(),
             result=SerializedValue(b"1"),
         )

@@ -42,7 +42,7 @@ class RejectOpaque(OpaquePolicy):
         )
 
 
-class OpaqueByTypeName(OpaquePolicy):
+class OpaqueByTypeQualname(OpaquePolicy):
     """Opt-in policy: identify an opaque value by its class' qualified name.
 
     Collapses every instance of a class to one representation. Safe only when the
@@ -170,7 +170,7 @@ def _reject(obj: Any) -> Any:
 
 
 def encode_canonical(value: CanonicalValue) -> bytes:
-    """The single encoder for argument identity. See :attr:`~glyff.Execution.args`."""
+    """The single encoder for argument identity. See :attr:`~glyff.Execution.arguments`."""
     return stable_json_dumps(value, default=_reject).encode(DEFAULT_ENCODING)
 
 

@@ -86,7 +86,7 @@ def _json_bytes(value: object) -> bytes:
 
 def _pack_arguments(arguments: CanonicalArguments) -> str:
     # An opaque string, not an embedded JSON value: preserve the exact digest
-    # preimage (see Execution.args).
+    # preimage (see Execution.arguments).
     try:
         return arguments.data.decode(DEFAULT_ENCODING)
     except UnicodeDecodeError as exc:
