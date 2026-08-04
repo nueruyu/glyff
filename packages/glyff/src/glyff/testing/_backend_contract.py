@@ -5,6 +5,7 @@ Re-exported from :mod:`glyff.testing`, the public entry point.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Protocol
@@ -31,7 +32,8 @@ from glyff.serialization._utils import encode_canonical
 class BackendHandle(Protocol):
     repository: ExecutionRepository
     transaction_provider: TransactionProvider
-    app_version: AppVersionStore | None
+    session_id: str | None
+    app_version_store: AppVersionStore | None
 
 
 BackendFactory = Callable[[str], BackendHandle]
@@ -92,9 +94,17 @@ class ExecutionBackendContract:
         assert isinstance(backend.transaction_provider, TransactionProvider)
         assert not hasattr(backend.repository, "serializer")
         # None is a valid answer: a store too ephemeral to outlive its code.
-        assert backend.app_version is None or isinstance(
-            backend.app_version, AppVersionStore
+        assert backend.app_version_store is None or isinstance(
+            backend.app_version_store, AppVersionStore
         )
+
+    async def test_backend_names_the_session_its_records_belong_to(
+        self, backend_factory: BackendFactory
+    ):
+        # A store the session cannot identify is one a mistyped session id can
+        # silently write into.
+        backend = backend_factory("named-session")
+        assert backend.session_id in (None, "named-session")
 
     async def test_get_missing_returns_none(self, backend_factory: BackendFactory):
         backend = backend_factory("missing")
@@ -657,7 +667,7 @@ class AppVersionContract:
     """For a backend that records the application version behind its records.
 
     A backend whose store cannot outlive the code that wrote it exposes
-    ``app_version = None`` and does not run this contract.
+    ``app_version_store = None`` and does not run this contract.
     """
 
     pytestmark = pytest.mark.asyncio
@@ -668,8 +678,8 @@ class AppVersionContract:
 
     @staticmethod
     def _versions(backend: BackendHandle) -> AppVersionStore:
-        assert backend.app_version is not None
-        return backend.app_version
+        assert backend.app_version_store is not None
+        return backend.app_version_store
 
     async def test_fresh_store_records_no_version(
         self, backend_factory: BackendFactory
@@ -684,6 +694,43 @@ class AppVersionContract:
             await self._versions(backend).write("v1")
 
         assert await self._versions(backend).read() == "v1"
+
+    async def test_claim_takes_an_unclaimed_store(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("version-claim")
+        store = self._versions(backend)
+
+        assert await store.claim("v1") == "v1"
+        assert await store.read() == "v1"
+
+    async def test_claim_yields_to_the_incumbent(self, backend_factory: BackendFactory):
+        backend = backend_factory("version-claim-taken")
+        store = self._versions(backend)
+        await store.claim("v1")
+
+        assert await store.claim("v2") == "v1"
+        assert await store.read() == "v1"
+
+    async def test_concurrent_claims_agree_on_one_winner(
+        self, backend_factory: BackendFactory
+    ):
+        # Read-then-write would let both find the store unclaimed and both start,
+        # mixing two generations of records under whichever committed last.
+        backend = backend_factory("version-claim-race")
+        store = self._versions(backend)
+
+        outcomes = await asyncio.gather(*(store.claim(f"v{n}") for n in range(8)))
+
+        recorded = await store.read()
+        assert set(outcomes) == {recorded}
+
+    async def test_claim_does_not_need_a_transaction(
+        self, backend_factory: BackendFactory
+    ):
+        # It is its own transaction: the check and the write cannot be split.
+        backend = backend_factory("version-claim-no-tx")
+        assert await self._versions(backend).claim("v1") == "v1"
 
     async def test_write_requires_active_transaction(
         self, backend_factory: BackendFactory

@@ -4,7 +4,7 @@ import asyncio
 import contextvars
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -51,6 +51,9 @@ class _Update:
 _StagedOp = _Write | _Delete | _Update
 
 _VALID_SYNCHRONOUS_VALUES = {"OFF", "NORMAL", "FULL", "EXTRA"}
+
+# Rows per fetch while streaming a range scan.
+_READ_BATCH_SIZE = 256
 
 
 def _prefix_upper_bound(prefix: str) -> str:
@@ -384,51 +387,89 @@ class SQLiteClient:
             arguments=row[0], status=row[1], result=row[2], metadata=row[3]
         )
 
-    async def read_many(
+    async def iter_records(
         self, prefix: str = "", *, staged: bool = True
-    ) -> dict[str, SQLiteExecutionRecord]:
-        """Every record whose path starts with ``prefix``, keyed by path."""
-        records = await asyncio.to_thread(self._read_committed_range_sync, prefix)
+    ) -> AsyncIterator[tuple[str, SQLiteExecutionRecord]]:
+        """Every record whose path starts with ``prefix``, in path order.
 
-        if staged:
-            staging = self._current.get()
-            if staging is not None:
-                # The range scan already carries every committed record under the
-                # prefix, so overlaying the staged ops needs no further reads.
-                for path, ops in staging.ops.items():
-                    if not path.startswith(prefix):
-                        continue
-                    final = self._apply_ops(records.get(path), ops)
-                    if final is None:
-                        records.pop(path, None)
-                    else:
-                        records[path] = final
+        Committed rows are pulled a batch at a time rather than materialized, so
+        a sweep over a large table costs bounded memory. Staged ops are already
+        bounded by the open transaction, so those are held and merged in.
 
-        return records
+        The merge needs one order for both sides: SQLite's BINARY collation
+        compares UTF-8 bytes and Python compares code points, which agree,
+        because UTF-8 preserves code point order.
+        """
+        overlay = self._staged_overlay(prefix) if staged else {}
+        staged_paths = sorted(overlay)
+        next_staged = 0
 
-    def _read_committed_range_sync(
-        self, prefix: str
-    ) -> dict[str, SQLiteExecutionRecord]:
-        columns = f'SELECT path, arguments, status, result, metadata FROM "{self._table_name}"'
-        connection = self._connect()
+        connection = await asyncio.to_thread(self._connect)
         try:
-            if prefix:
-                # A range over the primary key, not substr(): the latter is not
-                # sargable and scans the whole table.
-                rows = connection.execute(
-                    f"{columns} WHERE path >= ? AND path < ?",
-                    (prefix, _prefix_upper_bound(prefix)),
-                ).fetchall()
-            else:
-                rows = connection.execute(columns).fetchall()
-            return {
-                row[0]: SQLiteExecutionRecord(
-                    arguments=row[1], status=row[2], result=row[3], metadata=row[4]
-                )
-                for row in rows
-            }
+            cursor = await asyncio.to_thread(self._select_range, connection, prefix)
+            while True:
+                rows = await asyncio.to_thread(cursor.fetchmany, _READ_BATCH_SIZE)
+                if not rows:
+                    break
+                for row in rows:
+                    path = row[0]
+                    while (
+                        next_staged < len(staged_paths)
+                        and staged_paths[next_staged] < path
+                    ):
+                        # Staged but not committed, and it sorts before this row.
+                        pending = staged_paths[next_staged]
+                        next_staged += 1
+                        record = self._apply_ops(None, overlay[pending])
+                        if record is not None:
+                            yield pending, record
+
+                    committed = SQLiteExecutionRecord(
+                        arguments=row[1], status=row[2], result=row[3], metadata=row[4]
+                    )
+                    if (
+                        next_staged < len(staged_paths)
+                        and staged_paths[next_staged] == path
+                    ):
+                        next_staged += 1
+                        final = self._apply_ops(committed, overlay[path])
+                        if final is None:
+                            continue
+                        committed = final
+                    yield path, committed
         finally:
             connection.close()
+
+        for path in staged_paths[next_staged:]:
+            record = self._apply_ops(None, overlay[path])
+            if record is not None:
+                yield path, record
+
+    def _staged_overlay(self, prefix: str) -> dict[str, list[_StagedOp]]:
+        staging = self._current.get()
+        if staging is None:
+            return {}
+        return {
+            path: ops for path, ops in staging.ops.items() if path.startswith(prefix)
+        }
+
+    def _select_range(
+        self, connection: sqlite3.Connection, prefix: str
+    ) -> sqlite3.Cursor:
+        columns = (
+            "SELECT path, arguments, status, result, metadata "
+            f'FROM "{self._table_name}"'
+        )
+        if not prefix:
+            return connection.execute(f"{columns} ORDER BY path")
+        # A range over the primary key, not substr(): the latter is not sargable
+        # and scans the whole table.
+        return connection.execute(
+            f"{columns} WHERE path >= ? AND path < ? ORDER BY path",
+            (prefix, _prefix_upper_bound(prefix)),
+        )
+
+    # -- Application version ---------------------------------------------------
 
     async def read_app_version(self, *, staged: bool = True) -> str | None:
         if staged:
@@ -440,10 +481,48 @@ class SQLiteClient:
     def _read_committed_app_version_sync(self) -> str | None:
         connection = self._connect()
         try:
-            row = connection.execute(
-                f'SELECT app_version FROM "{self._meta_table_name}" WHERE id = 1'
-            ).fetchone()
-            return None if row is None else row[0]
+            return self._select_app_version(connection)
+        finally:
+            connection.close()
+
+    def _select_app_version(self, connection: sqlite3.Connection) -> str | None:
+        row = connection.execute(
+            f'SELECT app_version FROM "{self._meta_table_name}" WHERE id = 1'
+        ).fetchone()
+        return None if row is None else row[0]
+
+    async def claim_app_version(self, app_version: str) -> str:
+        """Records ``app_version`` if the row carries none; returns the winner."""
+        async with self._write_lock:
+            return await asyncio.to_thread(self._claim_app_version_sync, app_version)
+
+    def _claim_app_version_sync(self, app_version: str) -> str:
+        connection = self._connect()
+        in_transaction = False
+        try:
+            # One BEGIN IMMEDIATE around the read and the write: a concurrent
+            # claim either waits for this commit and then reads the winner, or
+            # takes the write lock first and makes this one read its version.
+            connection.execute("BEGIN IMMEDIATE")
+            in_transaction = True
+            recorded = self._select_app_version(connection)
+            if recorded is None:
+                connection.execute(
+                    f'UPDATE "{self._meta_table_name}" SET app_version = ? '
+                    "WHERE id = 1",
+                    (app_version,),
+                )
+                recorded = app_version
+            connection.execute("COMMIT")
+            in_transaction = False
+            return recorded
+        except BaseException:
+            if in_transaction:
+                try:
+                    connection.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+            raise
         finally:
             connection.close()
 

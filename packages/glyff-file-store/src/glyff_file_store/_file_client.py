@@ -148,6 +148,25 @@ class FileClient:
         except FileNotFoundError:
             return None
 
+    async def update_committed(self, path: str | Path, fn: FileUpdate) -> bytes | None:
+        """Applies ``fn`` to the committed file and writes the result back.
+
+        Outside any transaction, under the same lock as commit, so a caller that
+        must read and write in one step is not interleaved with a directory swap.
+        """
+        rel = str(path)
+        async with self._lock:
+            return await asyncio.to_thread(self._update_committed_sync, rel, fn)
+
+    def _update_committed_sync(self, path: str, fn: FileUpdate) -> bytes | None:
+        current = self._read_committed_sync(path)
+        updated = fn(current)
+        if updated is not None and updated != current:
+            target = self.resolve(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(updated)
+        return updated
+
     async def list_keys(self, prefix: str = "", *, staged: bool = True) -> set[str]:
         base = await asyncio.to_thread(self._list_committed_keys_sync, prefix)
 

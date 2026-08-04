@@ -189,5 +189,6 @@ class MemoryBackend:
             client
         )
         # Nothing here outlives the process that wrote it, so there is no
-        # generation to record.
-        self.app_version: AppVersionStore | None = None
+        # session to claim and no generation to record.
+        self.session_id: str | None = None
+        self.app_version_store: AppVersionStore | None = None

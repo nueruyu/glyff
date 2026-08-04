@@ -38,6 +38,14 @@ def _encode_marker(marker: dict[str, Any]) -> bytes:
     return json.dumps(marker, sort_keys=True).encode(DEFAULT_ENCODING)
 
 
+def _decode_marker(raw: bytes | None) -> dict[str, Any]:
+    return json.loads(raw.decode(DEFAULT_ENCODING)) if raw else {}
+
+
+def _read_app_version(raw: bytes | None) -> str | None:
+    return _decode_marker(raw).get(_APP_VERSION_KEY)
+
+
 def _initialize_format_sync(client: FileClient) -> None:
     # No marker means a session glyff has never stamped, which it adopts as current.
     marker = client.resolve(_FORMAT_FILE)
@@ -146,13 +154,25 @@ class FileAppVersionStore(AppVersionStore):
 
     async def read(self) -> str | None:
         raw = await self._client.read(_FORMAT_FILE, staged=True)
-        if raw is None:
-            return None
-        return json.loads(raw.decode(DEFAULT_ENCODING)).get(_APP_VERSION_KEY)
+        return _read_app_version(raw)
+
+    async def claim(self, app_version: str) -> str:
+        def fn(data: bytes | None) -> bytes | None:
+            marker = _decode_marker(data)
+            marker.setdefault(_APP_VERSION_KEY, app_version)
+            return _encode_marker(marker)
+
+        # Read and write in one step, under the lock a commit also takes, so two
+        # sessions cannot both find the marker unclaimed.
+        claimed = _read_app_version(
+            await self._client.update_committed(_FORMAT_FILE, fn)
+        )
+        assert claimed is not None
+        return claimed
 
     async def write(self, app_version: str) -> None:
         def fn(data: bytes | None) -> bytes | None:
-            marker = json.loads(data.decode(DEFAULT_ENCODING)) if data else {}
+            marker = _decode_marker(data)
             marker[_APP_VERSION_KEY] = app_version
             return _encode_marker(marker)
 
@@ -184,4 +204,5 @@ class JsonFileBackend:
         _initialize_format_sync(client)
         self.repository: ExecutionRepository = FileExecutionRepository(client)
         self.transaction_provider: TransactionProvider = FileTransactionProvider(client)
-        self.app_version: AppVersionStore | None = FileAppVersionStore(client)
+        self.session_id: str | None = session_id
+        self.app_version_store: AppVersionStore | None = FileAppVersionStore(client)

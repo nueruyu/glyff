@@ -89,7 +89,8 @@ class StubBackend:
         self.transaction_provider = StubTransactionProvider(
             self._record, MemoryTransactionProvider(client)
         )
-        self.app_version: AppVersionStore | None = None
+        self.session_id: str | None = None
+        self.app_version_store: AppVersionStore | None = None
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append(Call(name, args, kwargs))

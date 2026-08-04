@@ -6,24 +6,30 @@ and what is being added.
 
 ## The contract
 
-A `Backend` (`_interfaces.py`) is a bundle of three pieces:
+A `Backend` (`_interfaces.py`) is a bundle of four pieces:
 
 | Piece | Role |
 | --- | --- |
 | `ExecutionRepository` | Aggregate persistence: `get`, `save`, `executions`, `delete_many`. |
 | `TransactionProvider` | Owns transaction boundaries; `begin_transaction` returns a `Transaction` with `commit`/`rollback`. |
-| `AppVersionStore \| None` | The application version behind the store's records, or `None` for a store too ephemeral to outlive the code that wrote it. |
+| `session_id: str \| None` | The session whose records the store holds, or `None` if it is not scoped to one. |
+| `app_version_store: AppVersionStore \| None` | The application version behind those records, or `None` for a store too ephemeral to outlive the code that wrote it. |
 
 `executions(*, status=None, under=None)` yields whole aggregates, each after its
 own ancestors, including records staged in the caller's open transaction. It
 returns `Execution`s rather than ids because its consumers — reconciliation
 sweeps, [pruning](./events.md#pruning-completed-subtrees), and
 [migration](./migration.md) — need arguments and results, and because the path
-encoding an id is rebuilt from is a backend's internal business.
+encoding an id is rebuilt from is a backend's internal business. It is an async
+iterator so a backend that can stream does: the SQLite one pulls its range scan
+a batch of rows at a time rather than materializing the table.
 
-The version store is written through the same staging as the records, so a
-migration's rewrites and the version it rewrote them to commit together. glyff
-only records that version and refuses a mismatch; what it means is the
+`AppVersionStore` has two writes, and they are not interchangeable. `claim` is
+one atomic step and its own transaction — reading and then writing would let two
+sessions declaring different versions both find the store unclaimed and both
+start. `write` is unconditional and staged into the caller's transaction, which
+is what lets a migration re-stamp in the same commit as the records it rewrote.
+glyff only records the version and refuses a mismatch; what it means is the
 application's (see [migration](./migration.md)).
 
 The repository stores `Execution` aggregates whole — args, status, result, metadata —
@@ -58,10 +64,17 @@ which build an execution that satisfies the `arguments_digest` invariant.
 ## Session scope
 
 A backend instance covers one session — a file store directory, one set of
-SQLite tables — so nothing in the contract takes a session argument. The SQLite
-backend enforces it: execution paths carry no session component, so opening the
-same tables under a different `session_id` raises `StoreSessionMismatchError`
-rather than interleaving two histories.
+SQLite tables — so no method on the contract takes a session argument. The store
+is named where it is constructed and the `Session` where it is opened, so both
+ends are checked against `Backend.session_id`:
+
+- `Session.__aenter__` refuses a backend built for a different session, which is
+  otherwise invisible: the records would simply land in another session's
+  history.
+- The SQLite backend additionally refuses to *reopen* tables claimed by another
+  session, since execution paths carry no session component.
+
+Both raise `StoreSessionMismatchError`.
 
 ## Planned contract extensions
 

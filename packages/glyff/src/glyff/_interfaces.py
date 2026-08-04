@@ -74,8 +74,26 @@ class AppVersionStore(ABC):
         ...
 
     @abstractmethod
+    async def claim(self, app_version: str) -> str:
+        """Records ``app_version`` if the store carries none, and returns the
+        version it carries afterwards — the caller's if it took the store, the
+        incumbent's if it did not.
+
+        One atomic step, and its own transaction. Reading and then writing would
+        let two sessions declaring different versions both find the store
+        unclaimed and both start, mixing two generations of records under
+        whichever version committed last.
+        """
+        ...
+
+    @abstractmethod
     async def write(self, app_version: str) -> None:
-        """Stages the version into the caller's open transaction."""
+        """Replaces the recorded version, staged into the caller's transaction.
+
+        Unconditional, unlike :meth:`claim`: a migration has already read the
+        version it is moving away from, and re-stamps in the same transaction as
+        the records it rewrote.
+        """
         ...
 
 
@@ -120,6 +138,17 @@ class Backend(Protocol):
     def transaction_provider(self) -> TransactionProvider: ...
 
     @property
-    def app_version(self) -> AppVersionStore | None:
+    def session_id(self) -> str | None:
+        """The session whose records this store holds.
+
+        A durable store is claimed by one session and named independently of the
+        :class:`~glyff.Session` that opens it, so it declares its claim here and
+        the session refuses to run against another's records. ``None`` for a
+        store that is not scoped to a session.
+        """
+        ...
+
+    @property
+    def app_version_store(self) -> AppVersionStore | None:
         """``None`` for a store too ephemeral to outlive the code that wrote it."""
         ...

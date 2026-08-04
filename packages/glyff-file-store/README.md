@@ -17,7 +17,7 @@ For the durable production backend, see
 pip install glyff-file-store
 ```
 
-This package depends on `glyff>=0.1.0`.
+This package depends on `glyff>=0.14.0`.
 
 ## Public API
 

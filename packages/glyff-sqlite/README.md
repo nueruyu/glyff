@@ -20,7 +20,7 @@ application.
 pip install glyff-sqlite
 ```
 
-This package depends on `glyff>=0.1.0` (no additional runtime dependencies —
+This package depends on `glyff>=0.14.0` (no additional runtime dependencies —
 `sqlite3` is part of the standard library).
 
 ## Usage
@@ -49,10 +49,11 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 
 ## Storage model
 
-- One row per execution; `args`, `result` and `metadata` are JSON text columns,
-  readable in place with any SQLite client.
-- `args` holds the canonical arguments verbatim — the row's key is their digest,
-  so the column is stored and returned byte-for-byte rather than re-encoded.
+- One row per execution; `arguments`, `result` and `metadata` are JSON text
+  columns, readable in place with any SQLite client.
+- `arguments` holds the canonical arguments verbatim — the row's key is their
+  digest, so the column is stored and returned byte-for-byte rather than
+  re-encoded.
 - A single `<prefix>_meta` row carries the store's format version, the session
   that claimed the tables, and the application version its records were written
   under.
@@ -63,6 +64,8 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 
 ## Transaction model
 
+- Enumeration streams the range scan a batch of rows at a time, so a sweep over
+  a large table costs bounded memory.
 - Writes are staged in-memory per transaction and flushed on commit.
 - Nested transactions (child scopes) commit independently of their parent.
 - `BEGIN IMMEDIATE` prevents writer contention; WAL mode keeps reads fast.
@@ -72,8 +75,8 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 
 - **Store migrations** — nothing yet converts a store from one format version to
   the next ([#41](https://github.com/nueruyu/glyff/issues/41)).
-- **External transaction enlistment and enumeration**
-  ([#42](https://github.com/nueruyu/glyff/issues/42)).
+- **External transaction enlistment** — running inside an application's own
+  connection ([#42](https://github.com/nueruyu/glyff/issues/42)).
 
 ## Status
 

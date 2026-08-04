@@ -77,11 +77,10 @@ class SQLiteExecutionRepository(ExecutionRepository):
         under: ExecutionId | None = None,
     ) -> AsyncIterator[Execution]:
         prefix = execution_id_to_path(under) + "/" if under is not None else ""
-        records = await self._client.read_many(prefix, staged=True)
-        # Filtered here rather than in SQL: a staged record can differ in status
-        # from the committed row a WHERE clause would have judged it by.
-        for path in sorted(records):
-            execution = _to_execution(path_to_execution_id(path), records[path])
+        # Status is filtered here rather than in SQL: a staged record can differ
+        # in status from the committed row a WHERE clause would have judged it by.
+        async for path, record in self._client.iter_records(prefix, staged=True):
+            execution = _to_execution(path_to_execution_id(path), record)
             if status in (None, execution.status):
                 yield execution
 
@@ -102,6 +101,9 @@ class SQLiteAppVersionStore(AppVersionStore):
 
     async def read(self) -> str | None:
         return await self._client.read_app_version(staged=True)
+
+    async def claim(self, app_version: str) -> str:
+        return await self._client.claim_app_version(app_version)
 
     async def write(self, app_version: str) -> None:
         self._client.stage_app_version(app_version)
@@ -158,4 +160,5 @@ class SQLiteBackend:
         self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(
             client
         )
-        self.app_version: AppVersionStore | None = SQLiteAppVersionStore(client)
+        self.session_id: str | None = session_id
+        self.app_version_store: AppVersionStore | None = SQLiteAppVersionStore(client)

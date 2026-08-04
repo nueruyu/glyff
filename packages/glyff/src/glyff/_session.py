@@ -1,4 +1,4 @@
-from ._context import Context, TransactionScope, reset_context, set_context
+from ._context import Context, reset_context, set_context
 from ._event_system import EventEmitter
 from ._interfaces import (
     ArgumentCanonicalizer,
@@ -8,7 +8,7 @@ from ._interfaces import (
     TransactionProvider,
 )
 from ._sequencer import Sequencer
-from .exceptions import AppVersionMismatchError
+from .exceptions import AppVersionMismatchError, StoreSessionMismatchError
 
 
 class Session:
@@ -60,21 +60,36 @@ class Session:
         """Returns the TransactionProvider used by this Session."""
         return self._backend.transaction_provider
 
+    def _check_store_scope(self) -> None:
+        """Refuses a store claimed by a different session.
+
+        The store is named where it is constructed and this session is named
+        here, so the two can disagree. Nothing downstream would notice: the
+        records would simply be written into another session's history.
+        """
+        claimed = self._backend.session_id
+        if claimed is not None and claimed != self._id:
+            raise StoreSessionMismatchError(
+                f"This backend holds session {claimed!r}, but it was given to "
+                f"session {self._id!r}. Build the backend for the session that "
+                "uses it."
+            )
+
     async def _claim_app_version(self) -> None:
         """Records this session's generation, or refuses to resume another's.
 
         Checked on entry rather than at the first write: an engraved call is far
-        from the mistake it would report, and concurrent branches would race to
-        write the first stamp.
+        from the mistake it would report.
         """
-        versions = self._backend.app_version
-        if versions is None:
+        version_store = self._backend.app_version_store
+        if version_store is None:
             return
 
-        recorded = await versions.read()
         declared = self._app_version
-
         if declared is None:
+            # Nothing to claim, but a store that already carries a version still
+            # holds records that belong to it.
+            recorded = await version_store.read()
             if recorded is not None:
                 raise AppVersionMismatchError(
                     f"Session {self._id!r} was written under app_version "
@@ -83,9 +98,8 @@ class Session:
                 )
             return
 
-        if recorded == declared:
-            return
-        if recorded is not None:
+        recorded = await version_store.claim(declared)
+        if recorded != declared:
             raise AppVersionMismatchError(
                 f"Session {self._id!r} was written under app_version "
                 f"{recorded!r}, but this process runs {declared!r}. Migrate the "
@@ -93,12 +107,8 @@ class Session:
                 "a new one."
             )
 
-        # Unrecorded, including a session started before the application
-        # declared a version at all: adopt the one it declares now.
-        async with TransactionScope(self._backend.transaction_provider):
-            await versions.write(declared)
-
     async def __aenter__(self) -> "Session":
+        self._check_store_scope()
         await self._claim_app_version()
         self._context = Context(
             session_id=self._id,
