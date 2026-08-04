@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 FileUpdate = Callable[[bytes | None], bytes | None]
 
-# Files are staged under the session that owns them, so one transaction can span
-# sessions and each session directory is still swapped as a unit.
+# Files are staged under the session that owns them, so one store can hold many
+# sessions without their paths colliding.
 FileKey = tuple[str, str]
 
 
@@ -49,7 +49,7 @@ _LOCK_FILE = ".glyff.lock"
 _PERMISSION_RETRY_DELAYS = (0.01, 0.025, 0.05, 0.1, 0.2)
 
 
-def _replace_atomically(target: Path, data: bytes) -> None:
+def replace_atomically(target: Path, data: bytes) -> None:
     """Writes ``data`` to ``target`` so a crash leaves the old bytes, not half of
     the new ones."""
     handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=_TEMP_PREFIX)
@@ -68,13 +68,26 @@ def _replace_atomically(target: Path, data: bytes) -> None:
 
 
 class _FileStagingBuffer:
-    __slots__ = ("ops",)
+    __slots__ = ("ops", "session_id")
 
     def __init__(self) -> None:
         self.ops: dict[FileKey, list[_FileOp]] = {}
+        self.session_id: str | None = None
+
+    def enlist(self, session_id: str) -> None:
+        if self.session_id is None:
+            self.session_id = session_id
+        elif self.session_id != session_id:
+            raise RuntimeError(
+                "A file store transaction covers one session: this one already "
+                f"holds writes for {self.session_id!r} and cannot also take "
+                f"{session_id!r}. A commit swaps each session directory into "
+                "place on its own, so spanning two would not be atomic."
+            )
 
     def clear(self) -> None:
         self.ops.clear()
+        self.session_id = None
 
 
 class FileClient:
@@ -82,9 +95,12 @@ class FileClient:
 
     Each transaction stages write/delete/update operations per ``(session,
     path)``. On commit, staged operations are applied to the latest committed
-    content and flushed to disk by swapping each touched session directory into
-    place. A transaction spanning two sessions is therefore two swaps: atomic
-    per session, not across them.
+    content and flushed to disk by swapping the session directory into place.
+
+    One transaction covers one session, and a second is refused: the unit of
+    atomicity here is a directory swap, and two of them are two commits however
+    they are ordered. A ``Session`` only ever touches its own records, so this
+    constrains nothing glyff does.
 
     Staging is per-transaction via ContextVar, so nested transactions each
     have their own isolated staging buffer.
@@ -102,15 +118,16 @@ class FileClient:
         self._lock_path = self._base_path / _LOCK_FILE
         self._lock = asyncio.Lock()
         self._file_lock = AsyncFileLock(self._lock_path)
-        with self._exclusive_sync():
+        with self.exclusive_sync():
             self._recover_crashed_commits_sync()
         self._current: contextvars.ContextVar[_FileStagingBuffer | None] = (
             contextvars.ContextVar("file_client_staging", default=None)
         )
 
     @contextmanager
-    def _exclusive_sync(self) -> Iterator[None]:
-        """Store-wide exclusion for the synchronous paths (open and recovery)."""
+    def exclusive_sync(self) -> Iterator[None]:
+        """Store-wide exclusion for the synchronous paths, which run before any
+        transaction exists: opening the store and recovering a crashed commit."""
         with FileLock(self._lock_path):
             yield
 
@@ -171,16 +188,18 @@ class FileClient:
     # -- Staging API ----------------------------------------------------------
 
     def stage_write(self, key: FileKey, data: bytes) -> None:
-        staging = self._require_staging()
-        staging.ops.setdefault(key, []).append(_Write(data))
+        self._stage(key, _Write(data))
 
     def stage_delete(self, key: FileKey) -> None:
-        staging = self._require_staging()
-        staging.ops.setdefault(key, []).append(_Delete())
+        self._stage(key, _Delete())
 
     def stage_update(self, key: FileKey, fn: FileUpdate) -> None:
+        self._stage(key, _Update(fn))
+
+    def _stage(self, key: FileKey, op: _FileOp) -> None:
         staging = self._require_staging()
-        staging.ops.setdefault(key, []).append(_Update(fn))
+        staging.enlist(key[0])
+        staging.ops.setdefault(key, []).append(op)
 
     async def clear_staged(self) -> None:
         self._require_staging().clear()
@@ -188,7 +207,12 @@ class FileClient:
     # -- Read -----------------------------------------------------------------
 
     async def read(self, key: FileKey, *, staged: bool = True) -> bytes | None:
-        data = await asyncio.to_thread(self._read_committed_sync, key)
+        # Under the lock: a swap renames the session directory away and back, so
+        # an unguarded read can fall into the gap and report a recorded
+        # execution as missing. Only the committed snapshot needs guarding —
+        # staged ops belong to the caller's own transaction.
+        async with self.exclusive():
+            data = await asyncio.to_thread(self._read_committed_sync, key)
 
         if staged:
             staging = self._current.get()
@@ -218,7 +242,7 @@ class FileClient:
         if updated is not None and updated != current:
             target = self.resolve(key)
             target.parent.mkdir(parents=True, exist_ok=True)
-            _replace_atomically(target, updated)
+            replace_atomically(target, updated)
         return updated
 
     @staticmethod
@@ -243,32 +267,30 @@ class FileClient:
         if not staging.ops:
             return
 
+        session_id = staging.session_id
+        assert session_id is not None  # a non-empty buffer has been enlisted
+
         async with self.exclusive():
-            # Resolved per session, because each session directory is swapped
-            # into place on its own.
-            writes: dict[str, dict[str, bytes]] = {}
-            deletes: dict[str, set[str]] = {}
+            resolved_writes: dict[str, bytes] = {}
+            resolved_deletes: set[str] = set()
 
             for key, ops in staging.ops.items():
-                session_id, path = key
+                path = key[1]
                 final = self._apply_ops(self._read_committed_sync(key), ops)
 
-                session_writes = writes.setdefault(session_id, {})
-                session_deletes = deletes.setdefault(session_id, set())
                 if final is None:
-                    session_deletes.add(path)
-                    session_writes.pop(path, None)
+                    resolved_deletes.add(path)
+                    resolved_writes.pop(path, None)
                 else:
-                    session_writes[path] = final
-                    session_deletes.discard(path)
+                    resolved_writes[path] = final
+                    resolved_deletes.discard(path)
 
-            for session_id in writes:
-                await asyncio.to_thread(
-                    self._commit_to_disk_sync,
-                    session_id,
-                    writes[session_id],
-                    deletes[session_id],
-                )
+            await asyncio.to_thread(
+                self._commit_to_disk_sync,
+                session_id,
+                resolved_writes,
+                resolved_deletes,
+            )
 
             staging.clear()
 

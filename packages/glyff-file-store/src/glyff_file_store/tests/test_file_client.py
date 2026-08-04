@@ -1,4 +1,6 @@
+import asyncio
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -505,3 +507,56 @@ async def test_file_client_parent_metadata_not_committed_by_child_transaction(
 
     assert await client.read(KEY("metadata/parent.json")) is None
     assert await client.read(KEY("metadata/parent.json"), staged=False) is None
+
+
+async def test_a_reader_never_observes_the_gap_in_a_directory_swap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # A swap renames the session directory away and back. Between the two, the
+    # directory does not exist, and an unguarded read turns that into None —
+    # which core reads as "never executed" and would replay.
+    writer = FileClient(base_dir=tmp_path)
+    t, _ = writer.begin_staging()
+    writer.stage_write(KEY("k.txt"), b"recorded")
+    await writer.commit_staged()
+    writer.end_staging(t)
+
+    reader = FileClient(base_dir=tmp_path)
+    swapped_away = threading.Event()
+    resume = threading.Event()
+    original_rename = os.rename
+
+    def pausing_rename(source: str | Path, target: str | Path):
+        original_rename(source, target)
+        if Path(target).name.startswith(_BACKUP_PREFIX):
+            swapped_away.set()
+            resume.wait(10)
+
+    monkeypatch.setattr(os, "rename", pausing_rename)
+
+    t2, _ = writer.begin_staging()
+    writer.stage_write(KEY("k.txt"), b"replaced")
+    commit = asyncio.create_task(writer.commit_staged())
+    await asyncio.to_thread(swapped_away.wait, 10)
+
+    read = asyncio.create_task(reader.read(KEY("k.txt")))
+    await asyncio.sleep(0.05)  # long enough for an unguarded read to land
+    resume.set()
+
+    assert await read == b"replaced"
+    await commit
+    writer.end_staging(t2)
+
+
+async def test_a_transaction_covering_a_second_session_is_refused(
+    client: FileClient,
+):
+    # Two sessions would be two directory swaps, so the store refuses the second
+    # rather than committing half of a transaction.
+    t, _ = client.begin_staging()
+    client.stage_write(("orders", "executions.json"), b"{}")
+
+    with pytest.raises(RuntimeError, match="covers one session"):
+        client.stage_write(("refunds", "executions.json"), b"{}")
+
+    client.end_staging(t)

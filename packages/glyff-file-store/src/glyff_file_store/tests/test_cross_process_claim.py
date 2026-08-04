@@ -1,7 +1,7 @@
-"""The claim holds across a real process boundary, not just across tasks.
+"""Store state holds across a real process boundary, not just across tasks.
 
-The in-process lock cannot see another interpreter, so this is the only test
-that exercises what the lock file is actually for.
+The in-process lock cannot see another interpreter, so these are the only tests
+that exercise what the lock file is actually for.
 """
 
 import json
@@ -9,6 +9,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+from glyff_file_store._store import FORMAT_VERSION
 
 # Interpreter startup alone staggers the children far more than a claim takes,
 # so they announce themselves and then wait on a barrier: without it they would
@@ -35,33 +37,71 @@ _PROCESSES = 8
 _VERSIONS = [f"v{index}" for index in range(_PROCESSES)]
 
 
-def test_processes_racing_one_store_agree_on_one_winner(tmp_path: Path):
-    base_dir = tmp_path / "store"
-    signals = tmp_path / "signals"
-    signals.mkdir()
-
+def _race(
+    script: str, base_dir: Path, signals: Path, arguments: list[str]
+) -> list[subprocess.Popen[str]]:
     running = [
         subprocess.Popen(
-            [sys.executable, "-c", _CLAIMER, str(base_dir), version, str(signals)],
+            [sys.executable, "-c", script, str(base_dir), argument, str(signals)],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
         )
-        for version in _VERSIONS
+        for argument in arguments
     ]
 
     deadline = time.monotonic() + 60
-    while len(list(signals.glob("ready-*"))) < _PROCESSES:
+    while len(list(signals.glob("ready-*"))) < len(arguments):
         assert time.monotonic() < deadline, "children did not all start"
         time.sleep(0.01)
     (signals / "go").write_text("")
+    return running
 
+
+def _collect(running: list[subprocess.Popen[str]]) -> list:
     outcomes = []
     for process in running:
         stdout, stderr = process.communicate(timeout=60)
         assert process.returncode == 0, stderr
         outcomes.append(json.loads(stdout))
+    return outcomes
+
+
+def test_processes_racing_one_store_agree_on_one_winner(tmp_path: Path):
+    base_dir = tmp_path / "store"
+    signals = tmp_path / "signals"
+    signals.mkdir()
+
+    outcomes = _collect(_race(_CLAIMER, base_dir, signals, _VERSIONS))
 
     assert len(outcomes) == _PROCESSES
     assert set(outcomes) <= set(_VERSIONS)
     assert len(set(outcomes)) == 1
+
+
+_OPENER = """
+import json, sys, time
+from pathlib import Path
+from glyff_file_store import JsonFileBackend
+
+base_dir, name, signals = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+(signals / f"ready-{name}").write_text("")
+while not (signals / "go").exists():
+    time.sleep(0.001)
+JsonFileBackend(base_dir=base_dir)
+print(json.dumps("opened"))
+"""
+
+
+def test_processes_opening_one_store_leave_a_readable_format_marker(tmp_path: Path):
+    # Stamping the format version is a check-and-write like claiming is, and the
+    # marker it writes has to survive being raced for.
+    base_dir = tmp_path / "store"
+    signals = tmp_path / "signals"
+    signals.mkdir()
+
+    running = _race(_OPENER, base_dir, signals, [str(n) for n in range(_PROCESSES)])
+    assert _collect(running) == ["opened"] * _PROCESSES
+
+    marker = json.loads((base_dir / "glyff_format.json").read_text())
+    assert marker == {"format_version": FORMAT_VERSION}

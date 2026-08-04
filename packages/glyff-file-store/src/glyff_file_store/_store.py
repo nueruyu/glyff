@@ -19,7 +19,7 @@ from glyff.serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
-from ._file_client import FileClient
+from ._file_client import FileClient, replace_atomically
 from ._transaction import _ClientTransaction
 
 _EXECUTIONS_FILE = "executions.json"
@@ -48,6 +48,13 @@ def _read_app_version(raw: bytes | None) -> str | None:
 
 
 def _initialize_format_sync(client: FileClient) -> None:
+    # Reading the stamp and writing one is a check-and-write, so it runs under
+    # the same lock as everything else that replaces committed state.
+    with client.exclusive_sync():
+        _stamp_or_check_format_sync(client)
+
+
+def _stamp_or_check_format_sync(client: FileClient) -> None:
     # No marker means a store glyff has never stamped, which it adopts as current.
     marker = client.resolve_store_file(_FORMAT_FILE)
     try:
@@ -56,7 +63,9 @@ def _initialize_format_sync(client: FileClient) -> None:
         raw = None
 
     if raw is None:
-        marker.write_bytes(_encode_marker({_FORMAT_VERSION_KEY: FORMAT_VERSION}))
+        replace_atomically(
+            marker, _encode_marker({_FORMAT_VERSION_KEY: FORMAT_VERSION})
+        )
         return
 
     stored = json.loads(raw.decode(DEFAULT_ENCODING)).get(_FORMAT_VERSION_KEY)

@@ -77,6 +77,11 @@ there is no second place a session can be named and nothing to reconcile.
 A `SessionId` is a name rather than a path, and rejects anything that could
 reach outside the store it is given to.
 
+A transaction covers one session. SQLite could commit more, but a backend is
+free to hold to the narrower rule and the file store does, since its unit of
+atomicity is a directory swap. `Session` never spans sessions, so this
+constrains only code driving a repository directly.
+
 ## Planned contract extensions
 
 > **Planned** — **external transaction enlistment**

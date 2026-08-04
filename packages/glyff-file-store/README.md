@@ -53,16 +53,23 @@ A `glyff_format.json` marker beside the session directories records the store's
 than misread. Each session directory carries a `session.json` with the
 `app_version` its records were written under.
 
-A commit swaps each touched session directory into place on its own, so it is
-atomic per session rather than across a whole `base_dir`.
+A commit swaps one session directory into place. A transaction that writes to a
+second session raises `RuntimeError` rather than committing as two swaps: the
+unit of atomicity here is the swap, and a `Session` only ever touches its own
+records.
 
 ## Concurrency
 
-Everything that replaces committed state — commits, version claims, format
-stamping, and recovery from a crashed commit — is serialized by a `.glyff.lock`
+Every access to committed state — commits, version claims, format stamping,
+recovery from a crashed commit, *and reads* — is serialized by a `.glyff.lock`
 file beside the session directories, so processes sharing a `base_dir` do not
 race. An in-process `asyncio.Lock` sits inside it, because the file lock is
 re-entrant per handle and so does not serialize tasks holding the same one.
+
+Reads are held under the lock because a swap renames the session directory away
+before renaming the replacement in: a read landing between the two would find
+nothing and report a recorded execution as missing, which core reads as "never
+ran".
 
 `session.json` is replaced atomically (write a temporary in the same directory,
 `fsync`, then `os.replace`), so a crash mid-write leaves the previous version
