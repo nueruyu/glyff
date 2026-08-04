@@ -18,11 +18,13 @@ def make_session(
     argument_canonicalizer: ArgumentCanonicalizer,
     serializer: Serializer,
     event_emitter: EventEmitter | None = None,
+    app_version: str = "test",
 ) -> Session:
     return Session(
         id=SessionId(session_id) if isinstance(session_id, str) else session_id,
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version=app_version,
         event_emitter=event_emitter,
     )

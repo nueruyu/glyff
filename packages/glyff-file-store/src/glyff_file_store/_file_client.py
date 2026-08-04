@@ -2,192 +2,164 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
 import logging
 import os
-import shutil
-import string
 import tempfile
 import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from filelock import AsyncFileLock, FileLock
+from glyff.exceptions import StoreFormatVersionError
+from glyff.serialization.constants import DEFAULT_ENCODING
 
 logger = logging.getLogger(__name__)
 
-FileUpdate = Callable[[bytes | None], bytes | None]
+# One session's records, keyed by execution path.
+Executions = dict[str, dict[str, Any]]
+SessionUpdate = Callable[[Executions], Executions]
 
-# Files are staged under the session that owns them, so one store can hold many
-# sessions without their paths colliding.
-FileKey = tuple[str, str]
-
-
-@dataclass(frozen=True)
-class _Write:
-    data: bytes
-
-
-@dataclass(frozen=True)
-class _Delete:
-    pass
-
-
-@dataclass(frozen=True)
-class _Update:
-    fn: FileUpdate
-
-
-_FileOp = _Write | _Delete | _Update
-
-# All start with a dot, which a SessionId cannot, so a session directory can
-# never be mistaken for the store's own bookkeeping.
-_BACKUP_PREFIX = ".bak-"
-_TEMP_PREFIX = ".commit-"
+_STORE_FILE = "glyff.json"
 _LOCK_FILE = ".glyff.lock"
+_TEMP_PREFIX = ".glyff-write-"
+
+_FORMAT_VERSION_KEY = "format_version"
+_SESSIONS_KEY = "sessions"
+_APP_VERSION_KEY = "app_version"
+_EXECUTIONS_KEY = "executions"
+
+# Windows refuses to replace a file another handle has open; the reader releases
+# it in microseconds, so a short retry is enough.
 _PERMISSION_RETRY_DELAYS = (0.01, 0.025, 0.05, 0.1, 0.2)
 
 
-# Everything else is escaped, including '.', so an encoded name can never be a
-# path segment, reach outside base_dir, or collide with the dot-prefixed names
-# the store keeps for itself.
-_UNESCAPED = frozenset(string.ascii_letters + string.digits + "-_")
-
-
-def encode_session_dir(session_id: str) -> str:
-    """The one directory name a session's records live under.
-
-    Percent-escaped rather than validated: a session id is whatever the
-    application calls its session, and turning that into a safe file name is
-    this store's job, not the caller's.
-    """
-    return "".join(
-        character
-        if character in _UNESCAPED
-        else "".join(f"%{byte:02X}" for byte in character.encode("utf-8"))
-        for character in session_id
-    )
-
-
-def replace_atomically(target: Path, data: bytes) -> None:
-    """Writes ``data`` to ``target`` so a crash leaves the old bytes, not half of
-    the new ones."""
-    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=_TEMP_PREFIX)
-    try:
-        with os.fdopen(handle, "wb") as file:
-            file.write(data)
-            file.flush()
-            os.fsync(file.fileno())
-        os.replace(temp_name, target)
-    except BaseException:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-        raise
+def _apply(executions: Executions, updates: list[SessionUpdate]) -> Executions:
+    for update in updates:
+        executions = update(executions)
+    return executions
 
 
 class _FileStagingBuffer:
-    __slots__ = ("ops", "session_id")
+    __slots__ = ("updates",)
 
     def __init__(self) -> None:
-        self.ops: dict[FileKey, list[_FileOp]] = {}
-        self.session_id: str | None = None
-
-    def enlist(self, session_id: str) -> None:
-        if self.session_id is None:
-            self.session_id = session_id
-        elif self.session_id != session_id:
-            raise RuntimeError(
-                "A file store transaction covers one session: this one already "
-                f"holds writes for {self.session_id!r} and cannot also take "
-                f"{session_id!r}. A commit swaps each session directory into "
-                "place on its own, so spanning two would not be atomic."
-            )
+        self.updates: dict[str, list[SessionUpdate]] = {}
 
     def clear(self) -> None:
-        self.ops.clear()
-        self.session_id = None
+        self.updates.clear()
 
 
 class FileClient:
-    """A file-based transactional key/value store, one directory per session.
+    """One pretty-printed JSON document holding every session in a store.
 
-    Each transaction stages write/delete/update operations per ``(session,
-    path)``. On commit, staged operations are applied to the latest committed
-    content and flushed to disk by swapping the session directory into place.
+    A transaction stages updates per session. Committing applies all of them to
+    the document as it is on disk and replaces the file in one step, so a commit
+    is all-or-nothing however many sessions it touched.
 
-    One transaction covers one session, and a second is refused: the unit of
-    atomicity here is a directory swap, and two of them are two commits however
-    they are ordered. A ``Session`` only ever touches its own records, so this
-    constrains nothing glyff does.
-
-    Staging is per-transaction via ContextVar, so nested transactions each
-    have their own isolated staging buffer.
-
-    Everything that mutates or replaces store state runs under two locks: an
-    ``asyncio.Lock`` for the tasks of one process, and a lock file beside the
-    session directories for the processes sharing the store. Both are needed —
-    the file lock is re-entrant per handle, so it does not serialize coroutines
-    holding the same one.
+    Writers and claims hold a lock file beside the document, because each is a
+    read-modify-write and atomic replacement alone would still lose updates.
+    Readers hold nothing: a replace is atomic, so a read sees either the whole
+    old document or the whole new one.
     """
 
-    def __init__(self, base_dir: str | Path):
+    def __init__(self, base_dir: str | Path, *, format_version: int) -> None:
         self._base_path = Path(base_dir)
         self._base_path.mkdir(parents=True, exist_ok=True)
+        self._path = self._base_path / _STORE_FILE
         self._lock_path = self._base_path / _LOCK_FILE
+        self._format_version = format_version
         self._lock = asyncio.Lock()
         self._file_lock = AsyncFileLock(self._lock_path)
-        with self.exclusive_sync():
-            self._recover_crashed_commits_sync()
         self._current: contextvars.ContextVar[_FileStagingBuffer | None] = (
             contextvars.ContextVar("file_client_staging", default=None)
         )
+        with self._exclusive_sync():
+            self._initialize_sync()
+
+    # -- Locking ---------------------------------------------------------------
 
     @contextmanager
-    def exclusive_sync(self) -> Iterator[None]:
-        """Store-wide exclusion for the synchronous paths, which run before any
-        transaction exists: opening the store and recovering a crashed commit."""
+    def _exclusive_sync(self) -> Iterator[None]:
         with FileLock(self._lock_path):
             yield
 
     @asynccontextmanager
     async def exclusive(self) -> AsyncIterator[None]:
-        """Store-wide exclusion for anything that replaces committed state."""
+        """Store-wide exclusion for a read-modify-write.
+
+        Two locks: the file lock keeps other processes out, and the
+        ``asyncio.Lock`` keeps this process's own tasks out, because a file lock
+        is re-entrant per handle and so does not serialize coroutines sharing
+        one.
+        """
         async with self._lock:
             async with self._file_lock:
                 yield
 
-    def _recover_crashed_commits_sync(self) -> None:
-        for child in list(self._base_path.iterdir()):
-            if child.name.startswith(_BACKUP_PREFIX) and child.is_dir():
-                restored = child.with_name(child.name[len(_BACKUP_PREFIX) :])
-                if restored.exists():
-                    self._remove_path_if_exists_sync(child, ignore_errors=True)
-                else:
-                    self._rename_path_sync(child, restored)
-            elif child.name.startswith(_TEMP_PREFIX):
-                self._remove_path_if_exists_sync(child, ignore_errors=True)
-            elif child.is_dir():
-                # A crash between writing a replacement and renaming it leaves a
-                # temporary inside the session directory it belongs to.
-                for leftover in child.glob(_TEMP_PREFIX + "*"):
-                    self._remove_path_if_exists_sync(leftover, ignore_errors=True)
+    # -- The document ----------------------------------------------------------
 
-    def resolve(self, key: FileKey) -> Path:
-        session_id, path = key
-        return self.session_path(session_id) / path
+    def _initialize_sync(self) -> None:
+        # A crash can only strand a temporary: the document itself is replaced
+        # whole, never written in place.
+        for leftover in self._base_path.glob(_TEMP_PREFIX + "*"):
+            leftover.unlink(missing_ok=True)
 
-    def resolve_store_file(self, name: str) -> Path:
-        """A file belonging to the store itself rather than to a session."""
-        return self._base_path / name
+        document = self._read_document_sync()
+        stored = document.get(_FORMAT_VERSION_KEY)
+        if stored is None:
+            self._write_document_sync(
+                {_FORMAT_VERSION_KEY: self._format_version, _SESSIONS_KEY: {}}
+            )
+        elif stored != self._format_version:
+            raise StoreFormatVersionError(
+                f"File store at {self._base_path} has format version {stored!r}, "
+                f"but this build of glyff writes version {self._format_version}. "
+                "Refusing to open it."
+            )
 
-    def session_path(self, session_id: str) -> Path:
-        return self._base_path / encode_session_dir(session_id)
+    def _read_document_sync(self) -> dict[str, Any]:
+        try:
+            raw = self._path.read_bytes()
+        except FileNotFoundError:
+            return {}
+        return json.loads(raw.decode(DEFAULT_ENCODING))
 
-    # -- Staging context management -------------------------------------------
+    def _write_document_sync(self, document: dict[str, Any]) -> None:
+        data = json.dumps(
+            document, indent=2, sort_keys=True, ensure_ascii=False
+        ).encode(DEFAULT_ENCODING)
+
+        handle, temp_name = tempfile.mkstemp(dir=self._base_path, prefix=_TEMP_PREFIX)
+        try:
+            with os.fdopen(handle, "wb") as file:
+                file.write(data)
+                file.flush()
+                os.fsync(file.fileno())
+            self._replace_sync(temp_name, self._path)
+        except BaseException:
+            Path(temp_name).unlink(missing_ok=True)
+            raise
+
+    def _replace_sync(self, source: str, target: Path) -> None:
+        for delay in (*_PERMISSION_RETRY_DELAYS, None):
+            try:
+                os.replace(source, target)
+                return
+            except PermissionError:
+                if delay is None:
+                    raise
+                logger.debug("Retrying store replacement after PermissionError.")
+                time.sleep(delay)
+
+    @staticmethod
+    def _session_executions(document: dict[str, Any], session_id: str) -> Executions:
+        sessions = document.get(_SESSIONS_KEY, {})
+        return sessions.get(session_id, {}).get(_EXECUTIONS_KEY, {})
+
+    # -- Staging ---------------------------------------------------------------
 
     def begin_staging(self) -> tuple[contextvars.Token, _FileStagingBuffer]:
         staging = _FileStagingBuffer()
@@ -207,213 +179,65 @@ class FileClient:
         if self._current.get() is not expected:
             raise RuntimeError("Transaction closed out of order.")
 
-    # -- Staging API ----------------------------------------------------------
-
-    def stage_write(self, key: FileKey, data: bytes) -> None:
-        self._stage(key, _Write(data))
-
-    def stage_delete(self, key: FileKey) -> None:
-        self._stage(key, _Delete())
-
-    def stage_update(self, key: FileKey, fn: FileUpdate) -> None:
-        self._stage(key, _Update(fn))
-
-    def _stage(self, key: FileKey, op: _FileOp) -> None:
+    def stage_executions(self, session_id: str, update: SessionUpdate) -> None:
+        """Stages a change to one session's records in the open transaction."""
         staging = self._require_staging()
-        staging.enlist(key[0])
-        staging.ops.setdefault(key, []).append(op)
+        staging.updates.setdefault(session_id, []).append(update)
 
     async def clear_staged(self) -> None:
         self._require_staging().clear()
 
-    # -- Read -----------------------------------------------------------------
+    # -- Read / commit ---------------------------------------------------------
 
-    async def read(self, key: FileKey, *, staged: bool = True) -> bytes | None:
-        # Under the lock: a swap renames the session directory away and back, so
-        # an unguarded read can fall into the gap and report a recorded
-        # execution as missing. Only the committed snapshot needs guarding —
-        # staged ops belong to the caller's own transaction.
-        async with self.exclusive():
-            data = await asyncio.to_thread(self._read_committed_sync, key)
+    async def read_executions(
+        self, session_id: str, *, staged: bool = True
+    ) -> Executions:
+        document = await asyncio.to_thread(self._read_document_sync)
+        executions = self._session_executions(document, session_id)
 
         if staged:
             staging = self._current.get()
             if staging is not None:
-                data = self._apply_ops(data, staging.ops.get(key, []))
+                executions = _apply(executions, staging.updates.get(session_id, []))
 
-        return data
-
-    def _read_committed_sync(self, key: FileKey) -> bytes | None:
-        try:
-            return self.resolve(key).read_bytes()
-        except FileNotFoundError:
-            return None
-
-    async def update_committed(self, key: FileKey, fn: FileUpdate) -> bytes | None:
-        """Applies ``fn`` to the committed file and writes the result back.
-
-        Outside any transaction, under the same lock as commit, so a caller that
-        must read and write in one step is not interleaved with a directory swap.
-        """
-        async with self.exclusive():
-            return await asyncio.to_thread(self._update_committed_sync, key, fn)
-
-    def _update_committed_sync(self, key: FileKey, fn: FileUpdate) -> bytes | None:
-        current = self._read_committed_sync(key)
-        updated = fn(current)
-        if updated is not None and updated != current:
-            target = self.resolve(key)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            replace_atomically(target, updated)
-        return updated
-
-    @staticmethod
-    def _apply_ops(data: bytes | None, ops: list[_FileOp]) -> bytes | None:
-        current = data
-        for op in ops:
-            if isinstance(op, _Write):
-                current = op.data
-            elif isinstance(op, _Delete):
-                current = None
-            elif isinstance(op, _Update):
-                current = op.fn(current)
-            else:
-                raise TypeError(f"Unknown file op: {op!r}")
-        return current
-
-    # -- Commit ---------------------------------------------------------------
+        return executions
 
     async def commit_staged(self) -> None:
         staging = self._require_staging()
 
-        if not staging.ops:
+        if not staging.updates:
             return
-
-        session_id = staging.session_id
-        assert session_id is not None  # a non-empty buffer has been enlisted
 
         async with self.exclusive():
-            resolved_writes: dict[str, bytes] = {}
-            resolved_deletes: set[str] = set()
+            await asyncio.to_thread(self._commit_sync, dict(staging.updates))
 
-            for key, ops in staging.ops.items():
-                path = key[1]
-                final = self._apply_ops(self._read_committed_sync(key), ops)
+        staging.clear()
 
-                if final is None:
-                    resolved_deletes.add(path)
-                    resolved_writes.pop(path, None)
-                else:
-                    resolved_writes[path] = final
-                    resolved_deletes.discard(path)
+    def _commit_sync(self, staged: dict[str, list[SessionUpdate]]) -> None:
+        document = self._read_document_sync()
+        sessions = document.setdefault(_SESSIONS_KEY, {})
+        for session_id, updates in staged.items():
+            session = sessions.setdefault(session_id, {})
+            session[_EXECUTIONS_KEY] = _apply(session.get(_EXECUTIONS_KEY, {}), updates)
+        self._write_document_sync(document)
 
-            await asyncio.to_thread(
-                self._commit_to_disk_sync,
-                session_id,
-                resolved_writes,
-                resolved_deletes,
+    # -- Application version ---------------------------------------------------
+
+    async def claim_session(self, session_id: str, app_version: str) -> str:
+        async with self.exclusive():
+            return await asyncio.to_thread(
+                self._claim_session_sync, session_id, app_version
             )
 
-            staging.clear()
+    def _claim_session_sync(self, session_id: str, app_version: str) -> str:
+        document = self._read_document_sync()
+        sessions = document.setdefault(_SESSIONS_KEY, {})
+        session = sessions.setdefault(session_id, {})
 
-    # -- Disk helpers ---------------------------------------------------------
+        recorded = session.get(_APP_VERSION_KEY)
+        if recorded is not None:
+            return recorded
 
-    def _commit_to_disk_sync(
-        self,
-        session_id: str,
-        resolved_writes: dict[str, bytes],
-        staged_deletes: set[str],
-    ) -> None:
-        session_path = self.session_path(session_id)
-        self._base_path.mkdir(parents=True, exist_ok=True)
-        temp_dir = Path(tempfile.mkdtemp(dir=self._base_path, prefix=_TEMP_PREFIX))
-        try:
-            self._populate_temp_dir_sync(
-                session_path, temp_dir, resolved_writes, staged_deletes
-            )
-            self._swap_temp_into_place_sync(session_path, temp_dir)
-        except Exception:
-            self._remove_path_if_exists_sync(temp_dir, ignore_errors=True)
-            raise
-
-    def _populate_temp_dir_sync(
-        self,
-        session_path: Path,
-        temp_dir: Path,
-        resolved_writes: dict[str, bytes],
-        staged_deletes: set[str],
-    ) -> None:
-        if session_path.exists():
-            shutil.copytree(session_path, temp_dir, dirs_exist_ok=True)
-
-        for rel_path in staged_deletes:
-            target = temp_dir / rel_path
-            if target.is_symlink() or target.is_file():
-                target.unlink()
-
-        for rel_path, content in resolved_writes.items():
-            target = temp_dir / rel_path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content)
-
-    def _swap_temp_into_place_sync(self, session_path: Path, temp_dir: Path) -> None:
-        backup = session_path.with_name(_BACKUP_PREFIX + session_path.name)
-        if backup.exists():
-            self._remove_path_if_exists_sync(backup)
-
-        if session_path.exists():
-            self._rename_path_sync(session_path, backup)
-
-        try:
-            self._rename_path_sync(temp_dir, session_path)
-        except BaseException:
-            if backup.exists() and not session_path.exists():
-                self._rename_path_sync(backup, session_path)
-            raise
-
-        if backup.exists():
-            self._remove_path_if_exists_sync(backup, ignore_errors=True)
-
-    def _remove_path_if_exists_sync(
-        self, path: Path, *, ignore_errors: bool = False
-    ) -> None:
-        try:
-            if not path.exists():
-                return
-            if path.is_dir():
-                self._retry_permission_error_sync(
-                    lambda: shutil.rmtree(path),
-                    f"remove directory {path}",
-                )
-            else:
-                self._retry_permission_error_sync(
-                    path.unlink,
-                    f"remove file {path}",
-                )
-        except FileNotFoundError:
-            return
-        except OSError as e:
-            if not ignore_errors:
-                raise
-            logger.warning("Could not remove %s: %s", path, e)
-
-    def _rename_path_sync(self, source: Path, target: Path) -> None:
-        self._retry_permission_error_sync(
-            lambda: os.rename(source, target),
-            f"rename {source} to {target}",
-        )
-
-    def _retry_permission_error_sync(
-        self, operation: Callable[[], Any], description: str
-    ) -> Any:
-        for delay in (*_PERMISSION_RETRY_DELAYS, None):
-            try:
-                return operation()
-            except PermissionError:
-                if delay is None:
-                    raise
-                logger.debug(
-                    "Retrying file store operation after PermissionError: %s",
-                    description,
-                )
-                time.sleep(delay)
+        session[_APP_VERSION_KEY] = app_version
+        self._write_document_sync(document)
+        return app_version

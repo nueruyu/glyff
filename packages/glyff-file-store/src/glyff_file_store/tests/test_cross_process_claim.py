@@ -10,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 
+from glyff_file_store._file_client import _STORE_FILE
 from glyff_file_store._store import FORMAT_VERSION
 
 # Interpreter startup alone staggers the children far more than a claim takes,
@@ -93,7 +94,7 @@ print(json.dumps("opened"))
 """
 
 
-def test_processes_opening_one_store_leave_a_readable_format_marker(tmp_path: Path):
+def test_processes_opening_one_store_leave_a_readable_document(tmp_path: Path):
     # Stamping the format version is a check-and-write like claiming is, and the
     # marker it writes has to survive being raced for.
     base_dir = tmp_path / "store"
@@ -103,5 +104,5 @@ def test_processes_opening_one_store_leave_a_readable_format_marker(tmp_path: Pa
     running = _race(_OPENER, base_dir, signals, [str(n) for n in range(_PROCESSES)])
     assert _collect(running) == ["opened"] * _PROCESSES
 
-    marker = json.loads((base_dir / "glyff_format.json").read_text())
-    assert marker == {"format_version": FORMAT_VERSION}
+    document = json.loads((base_dir / _STORE_FILE).read_text())
+    assert document["format_version"] == FORMAT_VERSION

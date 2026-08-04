@@ -182,17 +182,11 @@ class MemoryBackend:
         self.transaction_provider: TransactionProvider = MemoryTransactionProvider(
             client
         )
-        self._app_versions: dict[str, str | None] = {}
+        self._app_versions: dict[str, str] = {}
         self._claim_lock = asyncio.Lock()
 
-    async def claim_session(
-        self, session_id: SessionId, app_version: str | None
-    ) -> str | None:
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         # Nothing here outlives the process, so the claim only has to hold for
         # as long as the records do.
         async with self._claim_lock:
-            recorded = self._app_versions.get(session_id.value)
-            if recorded is None and app_version is not None:
-                self._app_versions[session_id.value] = app_version
-                return app_version
-            return recorded
+            return self._app_versions.setdefault(session_id.value, app_version)

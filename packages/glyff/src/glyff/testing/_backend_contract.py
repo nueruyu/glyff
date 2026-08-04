@@ -33,9 +33,7 @@ class BackendHandle(Protocol):
     repository: ExecutionRepository
     transaction_provider: TransactionProvider
 
-    async def claim_session(
-        self, session_id: SessionId, app_version: str | None
-    ) -> str | None: ...
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str: ...
 
 
 BackendFactory = Callable[[str], BackendHandle]
@@ -731,19 +729,12 @@ class AppVersionContract:
     def backend_factory(self) -> BackendFactory:
         raise NotImplementedError
 
-    async def test_fresh_session_records_no_version(
-        self, backend_factory: BackendFactory
-    ):
-        backend = backend_factory("version-fresh")
-        assert await backend.claim_session(SESSION, None) is None
-
     async def test_claim_takes_an_unclaimed_session(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("version-claim")
 
         assert await backend.claim_session(SESSION, "v1") == "v1"
-        assert await backend.claim_session(SESSION, None) == "v1"
 
     async def test_claim_yields_to_the_incumbent(self, backend_factory: BackendFactory):
         backend = backend_factory("version-claim-taken")
@@ -768,9 +759,9 @@ class AppVersionContract:
         )
 
         recorded = await backend_factory("version-claim-race").claim_session(
-            SESSION, None
+            SESSION, "v-later"
         )
-        assert recorded is not None
+        assert recorded != "v-later"
         assert set(outcomes) == {recorded}
 
     async def test_sessions_are_claimed_independently(
@@ -780,7 +771,7 @@ class AppVersionContract:
 
         assert await backend.claim_session(SESSION, "v1") == "v1"
         assert await backend.claim_session(OTHER_SESSION, "v2") == "v2"
-        assert await backend.claim_session(SESSION, None) == "v1"
+        assert await backend.claim_session(SESSION, "v3") == "v1"
 
     async def test_claim_does_not_need_a_transaction(
         self, backend_factory: BackendFactory

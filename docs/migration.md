@@ -46,16 +46,15 @@ on top.
 
 glyff does not auto-migrate a paused session onto new code. Instead:
 
-- **A session records an application-supplied generation marker.** Pass
-  `Session(app_version=...)`, and entering a session whose records were written
-  under a different value raises `AppVersionMismatchError` instead of replaying
-  them against code that may no longer mean the same thing. The claim is one
-  atomic step, so two processes declaring different versions cannot both find
-  the session unclaimed and both start. The value is opaque
-  to glyff, which only records it and compares it; what counts as a new
-  generation is yours to decide. Leave it unset to opt out — but once a session
-  has recorded one, dropping the declaration is refused too, so opting out is
-  not something a deleted argument does quietly.
+- **Every session records an application-supplied generation marker.**
+  `Session(app_version=...)` is required, and entering a session whose records
+  were written under a different value raises `AppVersionMismatchError` instead
+  of replaying them against code that may no longer mean the same thing. The
+  claim is one atomic step, so two processes declaring different versions cannot
+  both find the session unclaimed and both start. The value is opaque to glyff,
+  which only records it and compares it; what counts as a new generation is
+  yours to decide. There is no way to opt out, and so no unversioned records to
+  reason about later.
 - **Sessions you decide to carry across** are handled by a forward, offline
   batch that reads records through `ExecutionRepository.executions`, remaps
   them, and writes them back. Nothing is added to the resume path.

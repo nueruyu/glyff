@@ -5,15 +5,17 @@ from glyff import ArgumentCanonicalizer, Serializer, Session, SessionId
 from glyff.exceptions import AppVersionMismatchError
 from glyff.store import MemoryBackend
 
+SESSION = SessionId("session")
+
 
 def _session(
     backend: MemoryBackend,
     serializer: Serializer,
     argument_canonicalizer: ArgumentCanonicalizer,
-    app_version: str | None = None,
+    app_version: str,
 ) -> Session:
     return Session(
-        id=SessionId("session"),
+        id=SESSION,
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
@@ -21,7 +23,7 @@ def _session(
     )
 
 
-async def test_unclaimed_session_adopts_the_declared_version(
+async def test_an_unclaimed_session_takes_the_declared_version(
     serializer, argument_canonicalizer
 ):
     backend = MemoryBackend()
@@ -29,7 +31,7 @@ async def test_unclaimed_session_adopts_the_declared_version(
     async with _session(backend, serializer, argument_canonicalizer, "v1"):
         pass
 
-    assert await backend.claim_session(SessionId("session"), None) == "v1"
+    assert await backend.claim_session(SESSION, "v2") == "v1"
 
 
 async def test_reentering_under_the_recorded_version_is_accepted(
@@ -43,7 +45,7 @@ async def test_reentering_under_the_recorded_version_is_accepted(
         pass
 
 
-async def test_different_version_is_refused(serializer, argument_canonicalizer):
+async def test_a_different_version_is_refused(serializer, argument_canonicalizer):
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer, "v1"):
         pass
@@ -51,27 +53,6 @@ async def test_different_version_is_refused(serializer, argument_canonicalizer):
     with pytest.raises(AppVersionMismatchError, match="'v1'.*'v2'"):
         async with _session(backend, serializer, argument_canonicalizer, "v2"):
             pass
-
-
-async def test_dropping_the_declaration_is_refused(serializer, argument_canonicalizer):
-    # The records still belong to a generation, so silently opting out of the
-    # check would resume them under whatever code is running now.
-    backend = MemoryBackend()
-    async with _session(backend, serializer, argument_canonicalizer, "v1"):
-        pass
-
-    with pytest.raises(AppVersionMismatchError, match="declares none"):
-        async with _session(backend, serializer, argument_canonicalizer):
-            pass
-
-
-async def test_undeclared_version_records_nothing(serializer, argument_canonicalizer):
-    backend = MemoryBackend()
-
-    async with _session(backend, serializer, argument_canonicalizer):
-        pass
-
-    assert await backend.claim_session(SessionId("session"), None) is None
 
 
 async def test_sessions_in_one_backend_carry_their_own_versions(
@@ -89,8 +70,8 @@ async def test_sessions_in_one_backend_carry_their_own_versions(
         ):
             pass
 
-    assert await backend.claim_session(SessionId("orders"), None) == "v1"
-    assert await backend.claim_session(SessionId("refunds"), None) == "v2"
+    assert await backend.claim_session(SessionId("orders"), "other") == "v1"
+    assert await backend.claim_session(SessionId("refunds"), "other") == "v2"
 
 
 def test_an_empty_session_id_is_refused():

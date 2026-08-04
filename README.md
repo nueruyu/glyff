@@ -37,10 +37,11 @@ async def main(session_id: str, answer: str | None = None):
     backend = glyff_file_store.JsonFileBackend(base_dir=".sessions")
 
     session = glyff.Session(
-        id=session_id,
+        id=glyff.SessionId(session_id),
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=PydanticArgumentCanonicalizer(),
+        app_version="1",
     )
 
     try:

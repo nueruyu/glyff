@@ -62,6 +62,7 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
             backend=backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,
+            app_version="test",
         ):
             await sqp_root()
     assert _ran == set(range(_N))
@@ -76,6 +77,7 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         total = await sqp_root()
 

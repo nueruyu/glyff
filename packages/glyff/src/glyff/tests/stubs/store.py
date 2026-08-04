@@ -100,9 +100,7 @@ class StubBackend:
             self._record, MemoryTransactionProvider(client)
         )
 
-    async def claim_session(
-        self, session_id: SessionId, app_version: str | None
-    ) -> str | None:
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         self._record("claim_session", session_id, app_version)
         return await self._backend.claim_session(session_id, app_version)
 

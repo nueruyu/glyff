@@ -57,6 +57,7 @@ session = Session(
     backend=backend,
     serializer=serializer,
     argument_canonicalizer=argument_canonicalizer,
+    app_version=app_version,
     event_emitter=EventEmitter([PruneDescendants(backend.repository)]),
 )
 ```

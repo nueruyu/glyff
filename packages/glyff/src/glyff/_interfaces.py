@@ -116,12 +116,10 @@ class Backend(Protocol):
     @property
     def transaction_provider(self) -> TransactionProvider: ...
 
-    async def claim_session(
-        self, session_id: SessionId, app_version: str | None
-    ) -> str | None:
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         """Records ``app_version`` for a session that carries none, and returns
         the version it carries afterwards — the caller's if it took the session,
-        the incumbent's if it did not. ``None`` declares nothing and only reads.
+        the incumbent's if it did not.
 
         One atomic step. Reading and then writing would let two processes
         declaring different versions both find the session unclaimed and both

@@ -179,7 +179,7 @@ class SQLiteClient:
                 f"""
                 CREATE TABLE IF NOT EXISTS "{self._sessions_table_name}" (
                     session_id TEXT PRIMARY KEY,
-                    app_version TEXT
+                    app_version TEXT NOT NULL
                 )
                 """
             )
@@ -467,41 +467,33 @@ class SQLiteClient:
 
     # -- Application version ---------------------------------------------------
 
-    async def claim_session(
-        self, session_id: str, app_version: str | None
-    ) -> str | None:
+    async def claim_session(self, session_id: str, app_version: str) -> str:
         """Records ``app_version`` for a session that carries none; returns the winner."""
         async with self._write_lock:
             return await asyncio.to_thread(
                 self._claim_session_sync, session_id, app_version
             )
 
-    def _claim_session_sync(
-        self, session_id: str, app_version: str | None
-    ) -> str | None:
+    def _claim_session_sync(self, session_id: str, app_version: str) -> str:
         connection = self._connect()
         in_transaction = False
         try:
-            # One BEGIN IMMEDIATE around the read and the write: a concurrent
+            # One BEGIN IMMEDIATE around the insert and the read: a concurrent
             # claim either waits for this commit and then reads the winner, or
             # takes the write lock first and makes this one read its version.
             connection.execute("BEGIN IMMEDIATE")
             in_transaction = True
-            row = connection.execute(
+            connection.execute(
+                f'INSERT INTO "{self._sessions_table_name}" '
+                "(session_id, app_version) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO NOTHING",
+                (session_id, app_version),
+            )
+            recorded = connection.execute(
                 f'SELECT app_version FROM "{self._sessions_table_name}" '
                 "WHERE session_id = ?",
                 (session_id,),
-            ).fetchone()
-            recorded = None if row is None else row[0]
-            if recorded is None:
-                connection.execute(
-                    f'INSERT INTO "{self._sessions_table_name}" '
-                    "(session_id, app_version) VALUES (?, ?) "
-                    "ON CONFLICT(session_id) DO UPDATE SET app_version = "
-                    "excluded.app_version",
-                    (session_id, app_version),
-                )
-                recorded = app_version
+            ).fetchone()[0]
             connection.execute("COMMIT")
             in_transaction = False
             return recorded

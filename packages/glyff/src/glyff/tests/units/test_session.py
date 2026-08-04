@@ -15,6 +15,7 @@ async def test_session_enter_sets_current_context(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ) as session:
         ctx = get_context()
 
@@ -37,6 +38,7 @@ async def test_session_exit_resets_current_context(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         assert get_context().session_id == SessionId("session")
 
@@ -55,6 +57,7 @@ async def test_session_exit_restores_previous_context(
         backend=outer_backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         outer_ctx = get_context()
 
@@ -63,6 +66,7 @@ async def test_session_exit_restores_previous_context(
             backend=inner_backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,
+            app_version="test",
         ):
             inner_ctx = get_context()
             assert inner_ctx is not outer_ctx

@@ -32,11 +32,15 @@ a batch of rows at a time rather than materializing the table.
 across *processes*: two workers starting the same paused session is the shape of
 the hazard. Reading the version and then writing it would let both find the
 session unclaimed and both start, mixing two generations of records. SQLite gets
-this from `BEGIN IMMEDIATE`; the file store takes a lock file beside its session
-directories. It returns the version the session carries afterwards — the
-caller's if it took the session, the incumbent's if it did not — and `Session`
-decides what a difference means (see [migration](./migration.md)). glyff only
-records the value; what it means is the application's.
+this from `BEGIN IMMEDIATE`; the file store from a lock file beside its
+document. It returns the version the session carries afterwards — the caller's
+if it took the session, the incumbent's if it did not — and `Session` decides
+what a difference means (see [migration](./migration.md)). glyff only records the
+value; what it means is the application's.
+
+A session is either unclaimed or carries one concrete version. There is no
+unversioned state, so nothing downstream has to reason about what a record
+without a generation means.
 
 The repository stores `Execution` aggregates whole — args, status, result, metadata —
 and core assumes nothing about the medium underneath. Tables, files, and key
@@ -70,19 +74,16 @@ that satisfies the `arguments_digest` invariant.
 ## Session scope
 
 One store holds any number of sessions: the SQLite backend keys records by
-`(session_id, path)`, the file store gives each session a directory under
-`base_dir`. Backends are constructed over the store, never over a session, so
+`(session_id, path)`, the file store nests them under the session id in one JSON
+document. Backends are constructed over the store, never over a session, so
 there is no second place a session can be named and nothing to reconcile.
 
-A `SessionId` is any non-empty string. What a store can safely put in a key, a
-column or a directory name is that store's problem: SQLite binds it as a column
-value, and the file store percent-escapes it into one directory name. Core does
-not narrow what an application may call its sessions.
+A `SessionId` is any non-empty string. What a store can safely put in a key or a
+column is that store's problem, and core does not narrow what an application may
+call its sessions.
 
-A transaction covers one session. SQLite could commit more, but a backend is
-free to hold to the narrower rule and the file store does, since its unit of
-atomicity is a directory swap. `Session` never spans sessions, so this
-constrains only code driving a repository directly.
+Transactions are not session-scoped: one may stage changes for any number of
+sessions, and both shipped stores commit all of them together.
 
 ## Planned contract extensions
 

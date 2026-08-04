@@ -60,6 +60,7 @@ async def test_json_parallel_children_durable_after_root_interrupt(
             backend=backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,
+            app_version="test",
         ):
             await jp_root()
     assert _ran == set(range(_N))
@@ -73,6 +74,7 @@ async def test_json_parallel_children_durable_after_root_interrupt(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         total = await jp_root()
 

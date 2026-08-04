@@ -150,7 +150,5 @@ class SQLiteBackend:
             client
         )
 
-    async def claim_session(
-        self, session_id: SessionId, app_version: str | None
-    ) -> str | None:
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         return await self._client.claim_session(session_id.value, app_version)

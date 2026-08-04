@@ -22,9 +22,8 @@ class Session:
     ``app_version`` marks the generation of code the session's records belong
     to. Entering a session whose records were written under a different one
     raises :class:`~glyff.exceptions.AppVersionMismatchError` instead of
-    replaying them against code that may no longer mean the same thing. Leave it
-    unset to opt out — but once a session carries one, dropping the declaration
-    is refused too.
+    replaying them against code that may no longer mean the same thing. Every
+    session carries one: there is no unversioned state to reason about later.
     """
 
     def __init__(
@@ -34,7 +33,7 @@ class Session:
         backend: Backend,
         serializer: Serializer,
         argument_canonicalizer: ArgumentCanonicalizer,
-        app_version: str | None = None,
+        app_version: str,
         event_emitter: EventEmitter | None = None,
     ) -> None:
         self._id = id
@@ -68,20 +67,13 @@ class Session:
         from the mistake it would report.
         """
         recorded = await self._backend.claim_session(self._id, self._app_version)
-        if recorded == self._app_version:
-            return
-
-        if self._app_version is None:
+        if recorded != self._app_version:
             raise AppVersionMismatchError(
                 f"Session {self._id} was written under app_version "
-                f"{recorded!r}, but this process declares none. Opting out of "
-                "the check is not something a deleted argument does."
+                f"{recorded!r}, but this process runs {self._app_version!r}. "
+                "Migrate the session forward, pin it to the code that started "
+                "it, or start a new one."
             )
-        raise AppVersionMismatchError(
-            f"Session {self._id} was written under app_version {recorded!r}, "
-            f"but this process runs {self._app_version!r}. Migrate the session "
-            "forward, pin it to the code that started it, or start a new one."
-        )
 
     async def __aenter__(self) -> "Session":
         await self._claim_app_version()
