@@ -28,13 +28,15 @@ encoding an id is rebuilt from is a backend's internal business. It is an async
 iterator so a backend that can stream does: the SQLite one pulls its range scan
 a batch of rows at a time rather than materializing the table.
 
-`claim_session` is one atomic step and its own transaction. Reading the version
-and then writing it would let two processes declaring different versions both
-find the session unclaimed and both start, mixing two generations of records.
-It returns the version the session carries afterwards — the caller's if it took
-the session, the incumbent's if it did not — and `Session` decides what a
-difference means (see [migration](./migration.md)). glyff only records the
-value; what it means is the application's.
+`claim_session` is one atomic step and its own transaction, and it has to hold
+across *processes*: two workers starting the same paused session is the shape of
+the hazard. Reading the version and then writing it would let both find the
+session unclaimed and both start, mixing two generations of records. SQLite gets
+this from `BEGIN IMMEDIATE`; the file store takes a lock file beside its session
+directories. It returns the version the session carries afterwards — the
+caller's if it took the session, the incumbent's if it did not — and `Session`
+decides what a difference means (see [migration](./migration.md)). glyff only
+records the value; what it means is the application's.
 
 The repository stores `Execution` aggregates whole — args, status, result, metadata —
 and core assumes nothing about the medium underneath. Tables, files, and key

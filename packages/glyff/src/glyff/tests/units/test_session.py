@@ -11,7 +11,7 @@ async def test_session_enter_sets_current_context(
     backend = MemoryBackend()
 
     async with Session(
-        id="session",
+        id=SessionId("session"),
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
@@ -33,7 +33,7 @@ async def test_session_exit_resets_current_context(
     backend = MemoryBackend()
 
     async with Session(
-        id="session",
+        id=SessionId("session"),
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
@@ -51,7 +51,7 @@ async def test_session_exit_restores_previous_context(
     inner_backend = MemoryBackend()
 
     async with Session(
-        id="outer",
+        id=SessionId("outer"),
         backend=outer_backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
@@ -59,7 +59,7 @@ async def test_session_exit_restores_previous_context(
         outer_ctx = get_context()
 
         async with Session(
-            id="inner",
+            id=SessionId("inner"),
             backend=inner_backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,

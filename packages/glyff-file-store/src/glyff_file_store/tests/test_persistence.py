@@ -1,4 +1,4 @@
-from glyff import ArgumentCanonicalizer, Session, engrave
+from glyff import ArgumentCanonicalizer, Session, SessionId, engrave
 from glyff.serialization import JsonSerializer
 
 from glyff_file_store import JsonFileBackend
@@ -18,7 +18,7 @@ async def test_completed_record_replays_across_instances(
     """A completed entry persisted by one store instance must be replayed by
     a fresh instance reading the same on-disk file."""
     _json_runs.clear()
-    session_id = "json-replay"
+    session_id = SessionId("json-replay")
 
     backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(
@@ -59,7 +59,7 @@ async def test_multiple_completed_records_replay_across_instances(
     """Multiple completed entries with non-trivial payloads must each be
     replayable from a fresh store reading the same on-disk file."""
     _multi_runs.clear()
-    session_id = "json-multi"
+    session_id = SessionId("json-multi")
 
     backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(

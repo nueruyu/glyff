@@ -754,15 +754,24 @@ class AppVersionContract:
     async def test_concurrent_claims_agree_on_one_winner(
         self, backend_factory: BackendFactory
     ):
-        # Read-then-write would let both find the session unclaimed and both
-        # start, mixing two generations of records under whichever wrote last.
-        backend = backend_factory("version-claim-race")
+        # Raced through independent handles on one store, because that is the
+        # shape of the hazard: two workers starting the same paused session.
+        # Read-then-write would let both find it unclaimed and both start,
+        # mixing two generations of records under whichever wrote last.
+        backends = [backend_factory("version-claim-race") for _ in range(8)]
 
         outcomes = await asyncio.gather(
-            *(backend.claim_session(SESSION, f"v{n}") for n in range(8))
+            *(
+                backend.claim_session(SESSION, f"v{index}")
+                for index, backend in enumerate(backends)
+            )
         )
 
-        assert set(outcomes) == {await backend.claim_session(SESSION, None)}
+        recorded = await backend_factory("version-claim-race").claim_session(
+            SESSION, None
+        )
+        assert recorded is not None
+        assert set(outcomes) == {recorded}
 
     async def test_sessions_are_claimed_independently(
         self, backend_factory: BackendFactory

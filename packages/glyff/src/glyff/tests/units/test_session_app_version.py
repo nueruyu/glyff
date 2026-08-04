@@ -13,7 +13,7 @@ def _session(
     app_version: str | None = None,
 ) -> Session:
     return Session(
-        id="session",
+        id=SessionId("session"),
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
@@ -81,7 +81,7 @@ async def test_sessions_in_one_backend_carry_their_own_versions(
 
     for session_id, app_version in (("orders", "v1"), ("refunds", "v2")):
         async with Session(
-            id=session_id,
+            id=SessionId(session_id),
             backend=backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,

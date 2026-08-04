@@ -6,7 +6,7 @@ import json
 from typing import cast
 
 import pytest
-from glyff import ArgumentCanonicalizer, EventEmitter, Session, engrave
+from glyff import ArgumentCanonicalizer, EventEmitter, Session, SessionId, engrave
 from glyff.serialization import JsonSerializer
 from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.testing import PruningEventHandler
@@ -72,7 +72,7 @@ async def pr_root() -> int:
 async def test_fresh_run_prunes_whole_subtree(
     tmp_path, serializer: JsonSerializer, argument_canonicalizer: ArgumentCanonicalizer
 ):
-    sid = "prune-fresh"
+    sid = SessionId("prune-fresh")
     backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=sid,
@@ -86,15 +86,15 @@ async def test_fresh_run_prunes_whole_subtree(
     assert result == (0 + 1) + (10 + 11)
     assert set(_runs) == {"root", "mid0", "mid10", "leaf0", "leaf1", "leaf10", "leaf11"}
 
-    execution_map = await _read_execution_map(backend, sid)
+    execution_map = await _read_execution_map(backend, sid.value)
     assert all("/" not in eid for eid in execution_map)
-    assert set(await _leaf_names(backend, sid)) == {"pr_root"}
+    assert set(await _leaf_names(backend, sid.value)) == {"pr_root"}
 
 
 async def test_disabled_flag_retains_descendants(
     tmp_path, serializer: JsonSerializer, argument_canonicalizer: ArgumentCanonicalizer
 ):
-    sid = "prune-off"
+    sid = SessionId("prune-off")
     backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=sid,
@@ -104,15 +104,15 @@ async def test_disabled_flag_retains_descendants(
     ):
         await pr_root()
 
-    execution_map = await _read_execution_map(backend, sid)
+    execution_map = await _read_execution_map(backend, sid.value)
     assert any("/" in eid for eid in execution_map)
-    assert "pr_leaf" in await _leaf_names(backend, sid)
+    assert "pr_leaf" in await _leaf_names(backend, sid.value)
 
 
 async def test_replay_after_prune_is_correct(
     tmp_path, serializer: JsonSerializer, argument_canonicalizer: ArgumentCanonicalizer
 ):
-    sid = "prune-replay"
+    sid = SessionId("prune-replay")
     backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=sid,
@@ -189,7 +189,7 @@ async def test_nested_completion_prunes_mid_session(
     tmp_path, serializer: JsonSerializer, argument_canonicalizer: ArgumentCanonicalizer
 ):
     global _sc_interrupt
-    sid = "prune-interrupt"
+    sid = SessionId("prune-interrupt")
 
     _sc_interrupt = True
     backend = JsonFileBackend(base_dir=tmp_path)
@@ -203,7 +203,7 @@ async def test_nested_completion_prunes_mid_session(
         ):
             await sc_root()
 
-    names = await _leaf_names(backend, sid)
+    names = await _leaf_names(backend, sid.value)
     assert "sc_root" in names
     assert "sc_child_a" in names
     assert "sc_child_b" in names
@@ -226,6 +226,6 @@ async def test_nested_completion_prunes_mid_session(
     assert "grand" not in _sc_runs
     assert _sc_runs == ["child_b_start", "child_b_end"]
 
-    execution_map = await _read_execution_map(reopened, sid)
+    execution_map = await _read_execution_map(reopened, sid.value)
     assert all("/" not in eid for eid in execution_map)
-    assert set(await _leaf_names(reopened, sid)) == {"sc_root"}
+    assert set(await _leaf_names(reopened, sid.value)) == {"sc_root"}

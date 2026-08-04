@@ -17,6 +17,11 @@ def KEY(path: str) -> tuple[str, str]:
     return (SESSION, path)
 
 
+def _session_dirs(base_dir: Path) -> list[str]:
+    """Session directories only: the store keeps its own files dot-prefixed."""
+    return sorted(p.name for p in base_dir.iterdir() if not p.name.startswith("."))
+
+
 def _write_committed(client: FileClient, path: str, data: bytes) -> None:
     target = client.resolve(KEY(path))
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -193,7 +198,7 @@ async def test_commit_leaves_no_orphan_temp_directories(
     await client.commit_staged()
     client.end_staging(t)
 
-    assert [s.name for s in tmp_path.iterdir()] == [SESSION]
+    assert _session_dirs(tmp_path) == [SESSION]
 
 
 async def test_commit_retries_transient_permission_error_while_swapping_temp(
@@ -243,8 +248,7 @@ async def test_failed_commit_leaves_no_orphan_temp_directories(
         await client.commit_staged()
     client.end_staging(t)
 
-    siblings = [s.name for s in tmp_path.iterdir()]
-    assert all(not name.startswith(_TEMP_PREFIX) for name in siblings)
+    assert _session_dirs(tmp_path) == []
     assert not (tmp_path / (_BACKUP_PREFIX + SESSION)).exists()
 
 
@@ -312,8 +316,7 @@ async def test_recovery_cleans_orphan_temp_directories(tmp_path: Path):
 
     FileClient(base_dir=tmp_path)
 
-    siblings = {s.name for s in tmp_path.iterdir()}
-    assert siblings == {session_id}
+    assert _session_dirs(tmp_path) == [session_id]
 
 
 async def test_stage_write_after_stage_delete_writes(client: FileClient):

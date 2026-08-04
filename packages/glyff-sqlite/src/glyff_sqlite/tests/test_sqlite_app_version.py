@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from glyff import Session
+from glyff import Session, SessionId
 from glyff.exceptions import AppVersionMismatchError
 
 from glyff_sqlite import SQLiteBackend
@@ -15,7 +15,7 @@ async def _enter(
 ) -> None:
     backend = SQLiteBackend(db)
     async with Session(
-        id="orders",
+        id=SessionId("orders"),
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,

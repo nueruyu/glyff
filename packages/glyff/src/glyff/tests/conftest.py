@@ -42,8 +42,12 @@ def argument_canonicalizer() -> ArgumentCanonicalizer:
 
 @pytest.fixture
 def backend_factory() -> BackendFactory:
+    # The contract's factory reopens a store by name, which for an in-process
+    # store means handing back the same one.
+    stores: dict[str, MemoryBackend] = {}
+
     def factory(store: str) -> MemoryBackend:
-        return MemoryBackend()
+        return stores.setdefault(store, MemoryBackend())
 
     return factory
 

@@ -17,7 +17,7 @@ For the durable production backend, see
 pip install glyff-file-store
 ```
 
-This package depends on `glyff>=0.14.0`.
+This package depends on `glyff>=0.14.0` and `filelock>=3.15`.
 
 ## Public API
 
@@ -55,6 +55,18 @@ than misread. Each session directory carries a `session.json` with the
 
 A commit swaps each touched session directory into place on its own, so it is
 atomic per session rather than across a whole `base_dir`.
+
+## Concurrency
+
+Everything that replaces committed state — commits, version claims, format
+stamping, and recovery from a crashed commit — is serialized by a `.glyff.lock`
+file beside the session directories, so processes sharing a `base_dir` do not
+race. An in-process `asyncio.Lock` sits inside it, because the file lock is
+re-entrant per handle and so does not serialize tasks holding the same one.
+
+`session.json` is replaced atomically (write a temporary in the same directory,
+`fsync`, then `os.replace`), so a crash mid-write leaves the previous version
+rather than half of the new one.
 
 This format is intended for debugging and manual inspection, not as the durable
 or high-throughput backend.

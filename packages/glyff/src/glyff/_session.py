@@ -29,7 +29,7 @@ class Session:
 
     def __init__(
         self,
-        id: str | SessionId,
+        id: SessionId,
         *,
         backend: Backend,
         serializer: Serializer,
@@ -37,7 +37,7 @@ class Session:
         app_version: str | None = None,
         event_emitter: EventEmitter | None = None,
     ) -> None:
-        self._id = id if isinstance(id, SessionId) else SessionId(id)
+        self._id = id
         self._backend = backend
         self._argument_canonicalizer = argument_canonicalizer
         self._serializer = serializer

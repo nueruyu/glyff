@@ -7,10 +7,13 @@ import os
 import shutil
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
+
+from filelock import AsyncFileLock, FileLock
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +41,30 @@ class _Update:
 
 _FileOp = _Write | _Delete | _Update
 
-# Both start with a dot, which a SessionId cannot, so recovery can tell its own
-# leftovers from a session directory by name alone.
+# All start with a dot, which a SessionId cannot, so a session directory can
+# never be mistaken for the store's own bookkeeping.
 _BACKUP_PREFIX = ".bak-"
 _TEMP_PREFIX = ".commit-"
+_LOCK_FILE = ".glyff.lock"
 _PERMISSION_RETRY_DELAYS = (0.01, 0.025, 0.05, 0.1, 0.2)
+
+
+def _replace_atomically(target: Path, data: bytes) -> None:
+    """Writes ``data`` to ``target`` so a crash leaves the old bytes, not half of
+    the new ones."""
+    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=_TEMP_PREFIX)
+    try:
+        with os.fdopen(handle, "wb") as file:
+            file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_name, target)
+    except BaseException:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 class _FileStagingBuffer:
@@ -66,24 +88,42 @@ class FileClient:
 
     Staging is per-transaction via ContextVar, so nested transactions each
     have their own isolated staging buffer.
+
+    Everything that mutates or replaces store state runs under two locks: an
+    ``asyncio.Lock`` for the tasks of one process, and a lock file beside the
+    session directories for the processes sharing the store. Both are needed —
+    the file lock is re-entrant per handle, so it does not serialize coroutines
+    holding the same one.
     """
 
     def __init__(self, base_dir: str | Path):
         self._base_path = Path(base_dir)
-        self._recover_crashed_commits_sync()
         self._base_path.mkdir(parents=True, exist_ok=True)
+        self._lock_path = self._base_path / _LOCK_FILE
+        self._lock = asyncio.Lock()
+        self._file_lock = AsyncFileLock(self._lock_path)
+        with self._exclusive_sync():
+            self._recover_crashed_commits_sync()
         self._current: contextvars.ContextVar[_FileStagingBuffer | None] = (
             contextvars.ContextVar("file_client_staging", default=None)
         )
-        self._lock = asyncio.Lock()
+
+    @contextmanager
+    def _exclusive_sync(self) -> Iterator[None]:
+        """Store-wide exclusion for the synchronous paths (open and recovery)."""
+        with FileLock(self._lock_path):
+            yield
+
+    @asynccontextmanager
+    async def exclusive(self) -> AsyncIterator[None]:
+        """Store-wide exclusion for anything that replaces committed state."""
+        async with self._lock:
+            async with self._file_lock:
+                yield
 
     def _recover_crashed_commits_sync(self) -> None:
-        if not self._base_path.exists():
-            return
         for child in list(self._base_path.iterdir()):
-            if not child.is_dir():
-                continue
-            if child.name.startswith(_BACKUP_PREFIX):
+            if child.name.startswith(_BACKUP_PREFIX) and child.is_dir():
                 restored = child.with_name(child.name[len(_BACKUP_PREFIX) :])
                 if restored.exists():
                     self._remove_path_if_exists_sync(child, ignore_errors=True)
@@ -91,6 +131,11 @@ class FileClient:
                     self._rename_path_sync(child, restored)
             elif child.name.startswith(_TEMP_PREFIX):
                 self._remove_path_if_exists_sync(child, ignore_errors=True)
+            elif child.is_dir():
+                # A crash between writing a replacement and renaming it leaves a
+                # temporary inside the session directory it belongs to.
+                for leftover in child.glob(_TEMP_PREFIX + "*"):
+                    self._remove_path_if_exists_sync(leftover, ignore_errors=True)
 
     def resolve(self, key: FileKey) -> Path:
         session_id, path = key
@@ -164,7 +209,7 @@ class FileClient:
         Outside any transaction, under the same lock as commit, so a caller that
         must read and write in one step is not interleaved with a directory swap.
         """
-        async with self._lock:
+        async with self.exclusive():
             return await asyncio.to_thread(self._update_committed_sync, key, fn)
 
     def _update_committed_sync(self, key: FileKey, fn: FileUpdate) -> bytes | None:
@@ -173,7 +218,7 @@ class FileClient:
         if updated is not None and updated != current:
             target = self.resolve(key)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(updated)
+            _replace_atomically(target, updated)
         return updated
 
     @staticmethod
@@ -198,7 +243,7 @@ class FileClient:
         if not staging.ops:
             return
 
-        async with self._lock:
+        async with self.exclusive():
             # Resolved per session, because each session directory is swapped
             # into place on its own.
             writes: dict[str, dict[str, bytes]] = {}

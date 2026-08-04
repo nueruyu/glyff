@@ -7,7 +7,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from glyff import ArgumentCanonicalizer, Session, engrave
+from glyff import ArgumentCanonicalizer, Session, SessionId, engrave
 from glyff.serialization import JsonSerializer
 from glyff_sqlite import SQLiteBackend
 
@@ -58,7 +58,7 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
     with pytest.raises(RootInterrupted):
         backend = SQLiteBackend(db)
         async with Session(
-            id="sqlite-parallel",
+            id=SessionId("sqlite-parallel"),
             backend=backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,
@@ -72,7 +72,7 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
     _interrupt_root = False
     backend = SQLiteBackend(db)
     async with Session(
-        id="sqlite-parallel",
+        id=SessionId("sqlite-parallel"),
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,

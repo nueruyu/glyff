@@ -6,20 +6,21 @@ from glyff import (
     EventEmitter,
     Serializer,
     Session,
+    SessionId,
 )
 
 BackendFactory = Callable[[str], Backend]
 
 
 def make_session(
-    session_id: str,
+    session_id: str | SessionId,
     backend: Backend,
     argument_canonicalizer: ArgumentCanonicalizer,
     serializer: Serializer,
     event_emitter: EventEmitter | None = None,
 ) -> Session:
     return Session(
-        id=session_id,
+        id=SessionId(session_id) if isinstance(session_id, str) else session_id,
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
