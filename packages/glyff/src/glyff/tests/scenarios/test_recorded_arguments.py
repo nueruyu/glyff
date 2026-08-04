@@ -2,7 +2,13 @@ import hashlib
 import inspect
 import json
 
-from glyff import ArgumentCanonicalizer, CanonicalArguments, ExecutionId, engrave
+from glyff import (
+    ArgumentCanonicalizer,
+    CanonicalArguments,
+    ExecutionId,
+    SessionId,
+    engrave,
+)
 from glyff.serialization._utils import encode_canonical
 from glyff.tests.types import BackendFactory, make_session
 
@@ -39,7 +45,7 @@ async def test_recorded_args_are_the_digest_preimage(
         await greet("world")
 
     execution = await backend.repository.get(
-        _expected_id(argument_canonicalizer, "world")
+        SessionId("recorded-args"), _expected_id(argument_canonicalizer, "world")
     )
     assert execution is not None
     assert (
@@ -62,7 +68,7 @@ async def test_recorded_args_keep_non_ascii_readable(
         await greet("世界")
 
     execution = await backend.repository.get(
-        _expected_id(argument_canonicalizer, "世界")
+        SessionId("recorded-args-unicode"), _expected_id(argument_canonicalizer, "世界")
     )
     assert execution is not None
     assert (

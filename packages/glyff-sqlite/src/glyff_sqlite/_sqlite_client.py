@@ -9,15 +9,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from glyff.exceptions import StoreFormatVersionError, StoreSessionMismatchError
+from glyff.exceptions import StoreFormatVersionError
 
 # Bump when the stored schema changes.
 FORMAT_VERSION = 1
 
-# The store's two tables are derived from one prefix, so the version lives in a
+# The store's tables are derived from one prefix, so the version lives in a
 # table glyff owns rather than the database-wide PRAGMA user_version.
 _DEFAULT_TABLE_PREFIX = "glyff"
 _EXECUTIONS_SUFFIX = "_executions"
+_SESSIONS_SUFFIX = "_sessions"
 _META_SUFFIX = "_meta"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -31,6 +32,10 @@ class SQLiteExecutionRecord:
 
 
 SQLiteUpdate = Callable[[SQLiteExecutionRecord | None], SQLiteExecutionRecord | None]
+
+# Rows are staged under the session that owns them, so one transaction can span
+# sessions without their paths colliding.
+SQLiteKey = tuple[str, str]
 
 
 @dataclass(frozen=True)
@@ -66,19 +71,13 @@ def _prefix_upper_bound(prefix: str) -> str:
 
 
 class _SQLiteStagingBuffer:
-    __slots__ = ("ops", "app_version")
+    __slots__ = ("ops",)
 
     def __init__(self) -> None:
-        self.ops: dict[str, list[_StagedOp]] = {}
-        self.app_version: str | None = None
+        self.ops: dict[SQLiteKey, list[_StagedOp]] = {}
 
     def clear(self) -> None:
         self.ops.clear()
-        self.app_version = None
-
-    @property
-    def empty(self) -> bool:
-        return not self.ops and self.app_version is None
 
 
 class SQLiteClient:
@@ -87,19 +86,15 @@ class SQLiteClient:
     Each execution is identified by its path and stored in the
     ``<table_prefix>_executions`` table (default prefix ``glyff``). Operations
     are staged per transaction and committed atomically. A sibling
-    ``<table_prefix>_meta`` table holds one row: the format version, the session
-    that claimed the tables, and the application version its records were
-    written under.
-
-    Execution paths carry no session component, so the tables hold exactly one
-    session and refuse any other.
+    ``<table_prefix>_sessions`` table records the application version behind each
+    session's records, and ``<table_prefix>_meta`` holds the store's own format
+    version in a single row.
     """
 
     def __init__(
         self,
         database_path: str | Path,
         *,
-        session_id: str,
         busy_timeout_ms: int = 30_000,
         synchronous: str = "FULL",
         table_prefix: str = _DEFAULT_TABLE_PREFIX,
@@ -132,10 +127,10 @@ class SQLiteClient:
             )
 
         self._database_path = Path(database_path)
-        self._session_id = session_id
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
         self._table_name = table_prefix + _EXECUTIONS_SUFFIX
+        self._sessions_table_name = table_prefix + _SESSIONS_SUFFIX
         self._meta_table_name = table_prefix + _META_SUFFIX
         self._write_lock = asyncio.Lock()
         self._current: contextvars.ContextVar[_SQLiteStagingBuffer | None] = (
@@ -170,11 +165,21 @@ class SQLiteClient:
             connection.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS "{self._table_name}" (
-                    path TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    path TEXT NOT NULL,
                     arguments TEXT NOT NULL,
                     status TEXT NOT NULL,
                     result TEXT,
-                    metadata TEXT NOT NULL
+                    metadata TEXT NOT NULL,
+                    PRIMARY KEY (session_id, path)
+                )
+                """
+            )
+            connection.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS "{self._sessions_table_name}" (
+                    session_id TEXT PRIMARY KEY,
+                    app_version TEXT
                 )
                 """
             )
@@ -192,23 +197,20 @@ class SQLiteClient:
 
     def _stamp_or_check_meta(self, connection: sqlite3.Connection) -> None:
         # No row means a store glyff has never stamped, which it adopts as current.
-        # The CHECK keeps the row unique, so the reads below cannot be ambiguous.
+        # The CHECK keeps the row unique, so the read below cannot be ambiguous.
         connection.execute(
             f'CREATE TABLE IF NOT EXISTS "{self._meta_table_name}" ('
             "id INTEGER PRIMARY KEY CHECK (id = 1), "
-            "format_version INTEGER NOT NULL, "
-            "session_id TEXT NOT NULL, "
-            "app_version TEXT)"
+            "format_version INTEGER NOT NULL)"
         )
         row = connection.execute(
-            f'SELECT format_version, session_id FROM "{self._meta_table_name}" '
-            "WHERE id = 1"
+            f'SELECT format_version FROM "{self._meta_table_name}" WHERE id = 1'
         ).fetchone()
         if row is None:
             connection.execute(
-                f'INSERT INTO "{self._meta_table_name}" '
-                "(id, format_version, session_id) VALUES (1, ?, ?)",
-                (FORMAT_VERSION, self._session_id),
+                f'INSERT INTO "{self._meta_table_name}" (id, format_version) '
+                "VALUES (1, ?)",
+                (FORMAT_VERSION,),
             )
             return
 
@@ -218,13 +220,6 @@ class SQLiteClient:
                 f"{self._database_path} has format version {row[0]}, but this "
                 f"build of glyff writes version {FORMAT_VERSION}. "
                 "Refusing to open it."
-            )
-        if row[1] != self._session_id:
-            raise StoreSessionMismatchError(
-                f"SQLite store table {self._table_name!r} at "
-                f"{self._database_path} holds session {row[1]!r}, but this "
-                f"backend opens it for session {self._session_id!r}. Give each "
-                "session its own database or table prefix."
             )
 
     # -- Staging lifecycle -----------------------------------------------------
@@ -249,20 +244,17 @@ class SQLiteClient:
 
     # -- Staging API -----------------------------------------------------------
 
-    def stage_write(self, path: str, value: SQLiteExecutionRecord) -> None:
+    def stage_write(self, key: SQLiteKey, value: SQLiteExecutionRecord) -> None:
         staging = self._require_staging()
-        staging.ops.setdefault(path, []).append(_Write(value))
+        staging.ops.setdefault(key, []).append(_Write(value))
 
-    def stage_delete(self, path: str) -> None:
+    def stage_delete(self, key: SQLiteKey) -> None:
         staging = self._require_staging()
-        staging.ops.setdefault(path, []).append(_Delete())
+        staging.ops.setdefault(key, []).append(_Delete())
 
-    def stage_update(self, path: str, fn: SQLiteUpdate) -> None:
+    def stage_update(self, key: SQLiteKey, fn: SQLiteUpdate) -> None:
         staging = self._require_staging()
-        staging.ops.setdefault(path, []).append(_Update(fn))
-
-    def stage_app_version(self, app_version: str) -> None:
-        self._require_staging().app_version = app_version
+        staging.ops.setdefault(key, []).append(_Update(fn))
 
     async def clear_staged(self) -> None:
         self._require_staging().clear()
@@ -272,7 +264,7 @@ class SQLiteClient:
     async def commit_staged(self) -> None:
         staging = self._require_staging()
 
-        if staging.empty:
+        if not staging.ops:
             return
 
         async with self._write_lock:
@@ -287,26 +279,29 @@ class SQLiteClient:
             connection.execute("BEGIN IMMEDIATE")
             in_transaction = True
 
-            for path, ops in staging.ops.items():
-                current = self._read_value_sync(connection, path)
+            for key, ops in staging.ops.items():
+                session_id, path = key
+                current = self._read_value_sync(connection, key)
                 result = self._apply_ops(current, ops)
 
                 if result is None:
                     connection.execute(
-                        f'DELETE FROM "{self._table_name}" WHERE path = ?',
-                        (path,),
+                        f'DELETE FROM "{self._table_name}" '
+                        "WHERE session_id = ? AND path = ?",
+                        (session_id, path),
                     )
                 else:
                     connection.execute(
                         f"""INSERT INTO "{self._table_name}"
-                               (path, arguments, status, result, metadata)
-                           VALUES (?, ?, ?, ?, ?)
-                           ON CONFLICT(path) DO UPDATE SET
+                               (session_id, path, arguments, status, result, metadata)
+                           VALUES (?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(session_id, path) DO UPDATE SET
                                arguments = excluded.arguments,
                                status = excluded.status,
                                result = excluded.result,
                                metadata = excluded.metadata""",
                         (
+                            session_id,
                             path,
                             result.arguments,
                             result.status,
@@ -314,13 +309,6 @@ class SQLiteClient:
                             result.metadata,
                         ),
                     )
-
-            if staging.app_version is not None:
-                connection.execute(
-                    f'UPDATE "{self._meta_table_name}" SET app_version = ? '
-                    "WHERE id = 1",
-                    (staging.app_version,),
-                )
 
             connection.execute("COMMIT")
             in_transaction = False
@@ -353,33 +341,33 @@ class SQLiteClient:
     # -- Read ------------------------------------------------------------------
 
     async def read(
-        self, path: str, *, staged: bool = True
+        self, key: SQLiteKey, *, staged: bool = True
     ) -> SQLiteExecutionRecord | None:
-        committed = await asyncio.to_thread(self._read_committed_sync, path)
+        committed = await asyncio.to_thread(self._read_committed_sync, key)
 
         if staged:
             staging = self._current.get()
             if staging is not None:
-                ops = staging.ops.get(path)
+                ops = staging.ops.get(key)
                 if ops:
                     committed = self._apply_ops(committed, ops)
 
         return committed
 
-    def _read_committed_sync(self, path: str) -> SQLiteExecutionRecord | None:
+    def _read_committed_sync(self, key: SQLiteKey) -> SQLiteExecutionRecord | None:
         connection = self._connect()
         try:
-            return self._read_value_sync(connection, path)
+            return self._read_value_sync(connection, key)
         finally:
             connection.close()
 
     def _read_value_sync(
-        self, connection: sqlite3.Connection, path: str
+        self, connection: sqlite3.Connection, key: SQLiteKey
     ) -> SQLiteExecutionRecord | None:
         row = connection.execute(
             f'SELECT arguments, status, result, metadata FROM "{self._table_name}" '
-            "WHERE path = ?",
-            (path,),
+            "WHERE session_id = ? AND path = ?",
+            key,
         ).fetchone()
         if row is None:
             return None
@@ -388,9 +376,9 @@ class SQLiteClient:
         )
 
     async def iter_records(
-        self, prefix: str = "", *, staged: bool = True
+        self, session_id: str, prefix: str = "", *, staged: bool = True
     ) -> AsyncIterator[tuple[str, SQLiteExecutionRecord]]:
-        """Every record whose path starts with ``prefix``, in path order.
+        """The session's records whose path starts with ``prefix``, in path order.
 
         Committed rows are pulled a batch at a time rather than materialized, so
         a sweep over a large table costs bounded memory. Staged ops are already
@@ -400,13 +388,15 @@ class SQLiteClient:
         compares UTF-8 bytes and Python compares code points, which agree,
         because UTF-8 preserves code point order.
         """
-        overlay = self._staged_overlay(prefix) if staged else {}
+        overlay = self._staged_overlay(session_id, prefix) if staged else {}
         staged_paths = sorted(overlay)
         next_staged = 0
 
         connection = await asyncio.to_thread(self._connect)
         try:
-            cursor = await asyncio.to_thread(self._select_range, connection, prefix)
+            cursor = await asyncio.to_thread(
+                self._select_range, connection, session_id, prefix
+            )
             while True:
                 rows = await asyncio.to_thread(cursor.fetchmany, _READ_BATCH_SIZE)
                 if not rows:
@@ -445,58 +435,50 @@ class SQLiteClient:
             if record is not None:
                 yield path, record
 
-    def _staged_overlay(self, prefix: str) -> dict[str, list[_StagedOp]]:
+    def _staged_overlay(
+        self, session_id: str, prefix: str
+    ) -> dict[str, list[_StagedOp]]:
         staging = self._current.get()
         if staging is None:
             return {}
         return {
-            path: ops for path, ops in staging.ops.items() if path.startswith(prefix)
+            path: ops
+            for (session, path), ops in staging.ops.items()
+            if session == session_id and path.startswith(prefix)
         }
 
     def _select_range(
-        self, connection: sqlite3.Connection, prefix: str
+        self, connection: sqlite3.Connection, session_id: str, prefix: str
     ) -> sqlite3.Cursor:
         columns = (
             "SELECT path, arguments, status, result, metadata "
             f'FROM "{self._table_name}"'
         )
         if not prefix:
-            return connection.execute(f"{columns} ORDER BY path")
+            return connection.execute(
+                f"{columns} WHERE session_id = ? ORDER BY path", (session_id,)
+            )
         # A range over the primary key, not substr(): the latter is not sargable
         # and scans the whole table.
         return connection.execute(
-            f"{columns} WHERE path >= ? AND path < ? ORDER BY path",
-            (prefix, _prefix_upper_bound(prefix)),
+            f"{columns} WHERE session_id = ? AND path >= ? AND path < ? ORDER BY path",
+            (session_id, prefix, _prefix_upper_bound(prefix)),
         )
 
     # -- Application version ---------------------------------------------------
 
-    async def read_app_version(self, *, staged: bool = True) -> str | None:
-        if staged:
-            staging = self._current.get()
-            if staging is not None and staging.app_version is not None:
-                return staging.app_version
-        return await asyncio.to_thread(self._read_committed_app_version_sync)
-
-    def _read_committed_app_version_sync(self) -> str | None:
-        connection = self._connect()
-        try:
-            return self._select_app_version(connection)
-        finally:
-            connection.close()
-
-    def _select_app_version(self, connection: sqlite3.Connection) -> str | None:
-        row = connection.execute(
-            f'SELECT app_version FROM "{self._meta_table_name}" WHERE id = 1'
-        ).fetchone()
-        return None if row is None else row[0]
-
-    async def claim_app_version(self, app_version: str) -> str:
-        """Records ``app_version`` if the row carries none; returns the winner."""
+    async def claim_session(
+        self, session_id: str, app_version: str | None
+    ) -> str | None:
+        """Records ``app_version`` for a session that carries none; returns the winner."""
         async with self._write_lock:
-            return await asyncio.to_thread(self._claim_app_version_sync, app_version)
+            return await asyncio.to_thread(
+                self._claim_session_sync, session_id, app_version
+            )
 
-    def _claim_app_version_sync(self, app_version: str) -> str:
+    def _claim_session_sync(
+        self, session_id: str, app_version: str | None
+    ) -> str | None:
         connection = self._connect()
         in_transaction = False
         try:
@@ -505,12 +487,19 @@ class SQLiteClient:
             # takes the write lock first and makes this one read its version.
             connection.execute("BEGIN IMMEDIATE")
             in_transaction = True
-            recorded = self._select_app_version(connection)
+            row = connection.execute(
+                f'SELECT app_version FROM "{self._sessions_table_name}" '
+                "WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            recorded = None if row is None else row[0]
             if recorded is None:
                 connection.execute(
-                    f'UPDATE "{self._meta_table_name}" SET app_version = ? '
-                    "WHERE id = 1",
-                    (app_version,),
+                    f'INSERT INTO "{self._sessions_table_name}" '
+                    "(session_id, app_version) VALUES (?, ?) "
+                    "ON CONFLICT(session_id) DO UPDATE SET app_version = "
+                    "excluded.app_version",
+                    (session_id, app_version),
                 )
                 recorded = app_version
             connection.execute("COMMIT")

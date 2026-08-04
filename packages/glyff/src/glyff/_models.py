@@ -31,6 +31,37 @@ class CanonicalArguments:
 
 
 @dataclass(frozen=True)
+class SessionId:
+    """The name a session's records are stored under.
+
+    A name, not a path: backends use it to scope keys, table rows and
+    directories, so it must not be able to reach outside the store it is given
+    to, or to collide with the bookkeeping a store keeps beside its sessions.
+    """
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not self.value:
+            raise ValueError("A session id cannot be empty.")
+        if self.value.startswith("."):
+            # Stores reserve leading dots for their own files and for the
+            # temporaries a crashed commit leaves behind.
+            raise ValueError(f"A session id cannot start with '.'; got {self.value!r}.")
+        if self.value != self.value.strip() or any(
+            character in self.value for character in ("/", "\\", ":")
+        ):
+            raise ValueError(
+                "A session id names a session, so it cannot contain '/', "
+                "'\\\\' or ':', or lead or trail whitespace; got "
+                f"{self.value!r}."
+            )
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
 class ExecutionId:
     """
     A unique, deterministic identifier for a task call.

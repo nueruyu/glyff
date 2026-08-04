@@ -8,6 +8,10 @@ from typing import Any
 
 MemoryUpdate = Callable[[Any | None], Any | None]
 
+# Records are keyed by their parts rather than a joined string, so a session id
+# can hold any character without colliding with the separator.
+MemoryKey = tuple[str, ...]
+
 
 @dataclass(frozen=True)
 class _Write:
@@ -31,7 +35,7 @@ class _StagingBuffer:
     __slots__ = ("ops",)
 
     def __init__(self) -> None:
-        self.ops: dict[str, list[_StagedOp]] = {}
+        self.ops: dict[MemoryKey, list[_StagedOp]] = {}
 
     def clear(self) -> None:
         self.ops.clear()
@@ -41,14 +45,14 @@ class MemoryClient:
     """A low-level in-memory data store with per-transaction staging."""
 
     def __init__(self):
-        self._data: dict[str, Any] = {}
+        self._data: dict[MemoryKey, Any] = {}
         self._current: contextvars.ContextVar[_StagingBuffer | None] = (
             contextvars.ContextVar("memory_client_staging", default=None)
         )
         self._lock = asyncio.Lock()
 
     @property
-    def data(self) -> dict[str, Any]:
+    def data(self) -> dict[MemoryKey, Any]:
         return self._data
 
     def _apply_ops(self, initial: Any | None, ops: list[_StagedOp]) -> Any | None:
@@ -82,7 +86,7 @@ class MemoryClient:
         if self._current.get() is not expected:
             raise RuntimeError("Transaction closed out of order.")
 
-    def all_keys(self) -> set[str]:
+    def all_keys(self) -> set[MemoryKey]:
         buffer = self._current.get()
         if buffer is None:
             return set(self._data.keys())
@@ -111,21 +115,21 @@ class MemoryClient:
                     self._data[key] = result
         buffer.clear()
 
-    async def read(self, key: str, *, staged: bool = True) -> Any | None:
+    async def read(self, key: MemoryKey, *, staged: bool = True) -> Any | None:
         async with self._lock:
             buffer = self._current.get()
             if staged and buffer is not None and key in buffer.ops:
                 return self._apply_ops(self._data.get(key), buffer.ops[key])
             return self._data.get(key)
 
-    def stage_write(self, key: str, value: Any) -> None:
+    def stage_write(self, key: MemoryKey, value: Any) -> None:
         buffer = self._require_staging()
         buffer.ops.setdefault(key, []).append(_Write(value))
 
-    def stage_delete(self, key: str) -> None:
+    def stage_delete(self, key: MemoryKey) -> None:
         buffer = self._require_staging()
         buffer.ops.setdefault(key, []).append(_Delete())
 
-    def stage_update(self, key: str, fn: MemoryUpdate) -> None:
+    def stage_update(self, key: MemoryKey, fn: MemoryUpdate) -> None:
         buffer = self._require_staging()
         buffer.ops.setdefault(key, []).append(_Update(fn))

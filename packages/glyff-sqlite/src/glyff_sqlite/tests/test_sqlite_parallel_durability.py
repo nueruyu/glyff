@@ -56,7 +56,7 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
 
     _interrupt_root = True
     with pytest.raises(RootInterrupted):
-        backend = SQLiteBackend(db, session_id="sqlite-parallel")
+        backend = SQLiteBackend(db)
         async with Session(
             id="sqlite-parallel",
             backend=backend,
@@ -70,7 +70,7 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
     # boundaries, then resume: no child body should re-execute.
     _ran.clear()
     _interrupt_root = False
-    backend = SQLiteBackend(db, session_id="sqlite-parallel")
+    backend = SQLiteBackend(db)
     async with Session(
         id="sqlite-parallel",
         backend=backend,

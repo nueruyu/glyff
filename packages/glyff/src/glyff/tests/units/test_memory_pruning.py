@@ -1,20 +1,24 @@
 from typing import cast
 
-from glyff import Execution, ExecutionStatus, SerializedValue
+from glyff import Execution, ExecutionStatus, SerializedValue, SessionId
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff._context import TransactionScope
 from glyff.store import MemoryBackend, MemoryExecutionRepository
 from glyff.store._memory import _make_key
 from glyff.store.utils import execution_id_to_path
 
+SESSION = SessionId("test")
+
 
 async def _save(backend: MemoryBackend, execution: Execution) -> None:
     async with TransactionScope(backend.transaction_provider):
-        await backend.repository.save(execution)
+        await backend.repository.save(SESSION, execution)
 
 
 async def _ids_under(backend: MemoryBackend, execution_id) -> set:
-    return {e.id async for e in backend.repository.executions(under=execution_id)}
+    return {
+        e.id async for e in backend.repository.executions(SESSION, under=execution_id)
+    }
 
 
 async def test_executions_under_returns_strict_transitive_descendants(serializer):
@@ -41,9 +45,9 @@ async def test_delete_many_removes_execution_parts(serializer):
     await _save(backend, execution)
 
     async with TransactionScope(backend.transaction_provider):
-        await backend.repository.delete_many([execution_id])
+        await backend.repository.delete_many(SESSION, [execution_id])
 
-    assert await backend.repository.get(execution_id) is None
+    assert await backend.repository.get(SESSION, execution_id) is None
 
 
 async def test_executions_ignore_metadata_only_orphans(serializer):
@@ -52,7 +56,7 @@ async def test_executions_ignore_metadata_only_orphans(serializer):
     child = make_execution_id("child", parent=root)
     path = execution_id_to_path(child)
     repository = cast(MemoryExecutionRepository, backend.repository)
-    repository._client.data[_make_key(path, "metadata")] = {"k": b'"v"'}
+    repository._client.data[_make_key(SESSION, path, "metadata")] = {"k": b'"v"'}
 
     assert await _ids_under(backend, root) == set()
 
@@ -71,9 +75,9 @@ async def test_delete_one_descendant_preserves_siblings(serializer):
         await _save(backend, execution)
 
     async with TransactionScope(backend.transaction_provider):
-        await backend.repository.delete_many([leaf1])
+        await backend.repository.delete_many(SESSION, [leaf1])
 
-    assert await backend.repository.get(leaf1) is None
-    leaf2_record = await backend.repository.get(leaf2)
+    assert await backend.repository.get(SESSION, leaf1) is None
+    leaf2_record = await backend.repository.get(SESSION, leaf2)
     assert leaf2_record is not None
     assert leaf2_record.status is ExecutionStatus.COMPLETED

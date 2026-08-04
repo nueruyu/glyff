@@ -2,7 +2,6 @@ from ._context import MetadataAccessor, TransactionScope, get_context
 from ._engrave import engrave
 from ._event_system import Event, EventEmitter, EventHandler
 from ._interfaces import (
-    AppVersionStore,
     ArgumentCanonicalizer,
     Backend,
     ExecutionRepository,
@@ -18,6 +17,7 @@ from ._models import (
     ExecutionStatus,
     Metadata,
     SerializedValue,
+    SessionId,
 )
 from ._session import Session
 
@@ -27,7 +27,6 @@ __all__ = [
     "Event",
     "EventHandler",
     "EventEmitter",
-    "AppVersionStore",
     "ArgumentCanonicalizer",
     "Backend",
     "Serializer",
@@ -43,5 +42,6 @@ __all__ = [
     "Metadata",
     "MetadataAccessor",
     "SerializedValue",
+    "SessionId",
     "get_context",
 ]

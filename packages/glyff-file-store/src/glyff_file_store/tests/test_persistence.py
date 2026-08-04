@@ -20,7 +20,7 @@ async def test_completed_record_replays_across_instances(
     _json_runs.clear()
     session_id = "json-replay"
 
-    backend = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=session_id,
         backend=backend,
@@ -32,7 +32,7 @@ async def test_completed_record_replays_across_instances(
     assert _json_runs == [7]
 
     _json_runs.clear()
-    reopened = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    reopened = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=session_id,
         backend=reopened,
@@ -61,7 +61,7 @@ async def test_multiple_completed_records_replay_across_instances(
     _multi_runs.clear()
     session_id = "json-multi"
 
-    backend = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=session_id,
         backend=backend,
@@ -74,7 +74,7 @@ async def test_multiple_completed_records_replay_across_instances(
     assert _multi_runs == [0, 1000, 99999]
 
     _multi_runs.clear()
-    reopened = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    reopened = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=session_id,
         backend=reopened,

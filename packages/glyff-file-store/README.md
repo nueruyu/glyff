@@ -26,14 +26,14 @@ This package depends on `glyff>=0.14.0`.
 | `JsonFileBackend`         | Bundle exposing the store's collaborators.                |
 | `FileExecutionRepository` | Debug repository writing pretty-printed JSON.             |
 | `FileTransactionProvider` | Transaction provider for the file backend.                |
-| `FileAppVersionStore`     | Reads and writes the recorded application version.        |
 
-Construct it with a `base_dir` and `session_id`:
+Construct it with a `base_dir`; it holds every session written under it, each in
+its own directory:
 
 ```python
 from glyff_file_store import JsonFileBackend
 
-backend = JsonFileBackend(base_dir=".sessions", session_id="my-session")
+backend = JsonFileBackend(base_dir=".sessions")
 ```
 
 The underlying `FileClient` is internal and not part of the public API.
@@ -48,11 +48,13 @@ serializers used with this backend must produce JSON text. Canonical arguments
 are stored as a JSON *string* instead: the execution's key is the digest of
 those exact bytes, so they are kept verbatim rather than re-encoded.
 
-A `glyff_format.json` marker beside it carries both versions the store knows
-about: glyff's own `format_version`, so a session written by an incompatible
-build is refused rather than misread, and the `app_version` its records were
-written under. The latter is written through the same staged directory swap as
-the records, so a migration cannot rewrite one without the other.
+A `glyff_format.json` marker beside the session directories records the store's
+`format_version`, so a store written by an incompatible build is refused rather
+than misread. Each session directory carries a `session.json` with the
+`app_version` its records were written under.
+
+A commit swaps each touched session directory into place on its own, so it is
+atomic per session rather than across a whole `base_dir`.
 
 This format is intended for debugging and manual inspection, not as the durable
 or high-throughput backend.

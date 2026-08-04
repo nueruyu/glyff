@@ -91,19 +91,6 @@ class StoreFormatVersionError(GlyffError):
     pass
 
 
-class StoreSessionMismatchError(GlyffError):
-    """
-    Raised when a session-scoped store already holds another session's records.
-
-    A store that keys executions by call path alone has no room for a second
-    session: two sessions writing into it would interleave into one history. The
-    store records which session claimed it and refuses any other, rather than
-    mixing them silently.
-    """
-
-    pass
-
-
 class AppVersionMismatchError(GlyffError):
     """
     Raised when a session's records were written under a different

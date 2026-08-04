@@ -25,7 +25,7 @@ def argument_canonicalizer() -> ArgumentCanonicalizer:
 
 @pytest.fixture
 def backend_factory(tmp_path: Path):
-    def factory(session_id: str) -> JsonFileBackend:
-        return JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    def factory(store: str) -> JsonFileBackend:
+        return JsonFileBackend(base_dir=tmp_path / store)
 
     return factory

@@ -43,7 +43,7 @@ pip install glyff
 | `Serializer`          | Protocol for value serialization.                               |
 | `ArgumentCanonicalizer`   | Contract for normalizing call arguments into a canonical form.  |
 | `CanonicalValue`      | The JSON data model value a canonicalizer returns.              |
-| `AppVersionStore`     | Contract for the application version behind a store's records.  |
+| `SessionId`           | The name a session's records are stored under.                  |
 
 `engrave` also takes an explicit identity —
 `@engrave(name="chat.reply", version=2)` — so recorded histories survive
@@ -57,10 +57,9 @@ name from the function's `__qualname__`.
   [`glyff-sqlite`](https://pypi.org/project/glyff-sqlite/) (production) and
   [`glyff-file-store`](https://pypi.org/project/glyff-file-store/) (debug).
 - For Pydantic-typed serialization, see [`glyff-pydantic`](https://pypi.org/project/glyff-pydantic/).
-- Custom backends provide an `ExecutionRepository`, a `TransactionProvider`, the
-  session they hold and an `AppVersionStore` (or `None`), usually through a small
-  backend bundle, and are verified against the shared contract suite in
-  `glyff.testing` (*planned:*
+- Custom backends provide an `ExecutionRepository`, a `TransactionProvider` and
+  `claim_session`, usually through a small backend bundle, and are verified
+  against the shared contract suite in `glyff.testing` (*planned:*
   [#36](https://github.com/nueruyu/glyff/issues/36)). See
   [the backends doc](https://github.com/nueruyu/glyff/blob/main/docs/backends.md).
 

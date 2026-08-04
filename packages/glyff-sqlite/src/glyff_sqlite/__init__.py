@@ -1,5 +1,4 @@
 from ._sqlite_store import (
-    SQLiteAppVersionStore,
     SQLiteBackend,
     SQLiteExecutionRepository,
     SQLiteTransactionProvider,
@@ -7,7 +6,6 @@ from ._sqlite_store import (
 
 __all__ = [
     "SQLiteBackend",
-    "SQLiteAppVersionStore",
     "SQLiteExecutionRepository",
     "SQLiteTransactionProvider",
 ]

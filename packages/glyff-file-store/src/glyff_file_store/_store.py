@@ -6,11 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from glyff import (
-    AppVersionStore,
     Execution,
     ExecutionId,
     ExecutionRepository,
     ExecutionStatus,
+    SessionId,
     Transaction,
     TransactionProvider,
 )
@@ -24,9 +24,10 @@ from ._transaction import _ClientTransaction
 
 _EXECUTIONS_FILE = "executions.json"
 
-# Holds both versions the store carries: glyff's own format version and the
-# application's, written by the session that claimed the directory.
+# The store's own format version lives beside the session directories; each
+# session's application version lives inside its own.
 _FORMAT_FILE = "glyff_format.json"
+_SESSION_FILE = "session.json"
 _FORMAT_VERSION_KEY = "format_version"
 _APP_VERSION_KEY = "app_version"
 
@@ -47,8 +48,8 @@ def _read_app_version(raw: bytes | None) -> str | None:
 
 
 def _initialize_format_sync(client: FileClient) -> None:
-    # No marker means a session glyff has never stamped, which it adopts as current.
-    marker = client.resolve(_FORMAT_FILE)
+    # No marker means a store glyff has never stamped, which it adopts as current.
+    marker = client.resolve_store_file(_FORMAT_FILE)
     try:
         raw = marker.read_bytes()
     except FileNotFoundError:
@@ -61,7 +62,7 @@ def _initialize_format_sync(client: FileClient) -> None:
     stored = json.loads(raw.decode(DEFAULT_ENCODING)).get(_FORMAT_VERSION_KEY)
     if stored != FORMAT_VERSION:
         raise StoreFormatVersionError(
-            f"File store session at {marker.parent} has format version {stored!r}, "
+            f"File store at {marker.parent} has format version {stored!r}, "
             f"but this build of glyff writes version {FORMAT_VERSION}. "
             "Refusing to open it."
         )
@@ -89,34 +90,41 @@ class FileExecutionRepository(ExecutionRepository):
     def __init__(self, client: FileClient):
         self._client = client
 
-    async def get(self, execution_id: ExecutionId) -> Execution | None:
-        key = execution_id_to_path(execution_id)
-        raw = await self._client.read(_EXECUTIONS_FILE, staged=True)
+    @staticmethod
+    def _key(session_id: SessionId) -> tuple[str, str]:
+        return (session_id.value, _EXECUTIONS_FILE)
+
+    async def get(
+        self, session_id: SessionId, execution_id: ExecutionId
+    ) -> Execution | None:
+        path = execution_id_to_path(execution_id)
+        raw = await self._client.read(self._key(session_id), staged=True)
         if raw is None:
             return None
-        stored = _decode(raw).get(key)
+        stored = _decode(raw).get(path)
         if stored is None:
             return None
         return execution_from_dict(execution_id, stored)
 
-    async def save(self, execution: Execution) -> None:
-        key = execution_id_to_path(execution.id)
+    async def save(self, session_id: SessionId, execution: Execution) -> None:
+        path = execution_id_to_path(execution.id)
 
         def fn(data: bytes | None) -> bytes | None:
             executions = _decode(data)
-            executions[key] = execution_to_dict(execution)
+            executions[path] = execution_to_dict(execution)
             return _encode(executions)
 
-        self._client.stage_update(_EXECUTIONS_FILE, fn)
+        self._client.stage_update(self._key(session_id), fn)
 
     async def executions(
         self,
+        session_id: SessionId,
         *,
         status: ExecutionStatus | None = None,
         under: ExecutionId | None = None,
     ) -> AsyncIterator[Execution]:
         prefix = execution_id_to_path(under) + "/" if under is not None else ""
-        raw = await self._client.read(_EXECUTIONS_FILE, staged=True)
+        raw = await self._client.read(self._key(session_id), staged=True)
         if raw is None:
             return
         for path, stored in sorted(_decode(raw).items()):
@@ -126,57 +134,22 @@ class FileExecutionRepository(ExecutionRepository):
             if status in (None, execution.status):
                 yield execution
 
-    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
-        keys = {execution_id_to_path(eid) for eid in execution_ids}
-        if not keys:
+    async def delete_many(
+        self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
+    ) -> None:
+        paths = {execution_id_to_path(eid) for eid in execution_ids}
+        if not paths:
             return
 
         def fn(data: bytes | None) -> bytes | None:
             if data is None:
                 return None
             executions = _decode(data)
-            for key in keys:
-                executions.pop(key, None)
+            for path in paths:
+                executions.pop(path, None)
             return _encode(executions)
 
-        self._client.stage_update(_EXECUTIONS_FILE, fn)
-
-
-class FileAppVersionStore(AppVersionStore):
-    """Keeps the application version in the same marker as the format version.
-
-    Written through the staging buffer, so a migration's rewritten records and
-    the version they were rewritten to land in one directory swap.
-    """
-
-    def __init__(self, client: FileClient):
-        self._client = client
-
-    async def read(self) -> str | None:
-        raw = await self._client.read(_FORMAT_FILE, staged=True)
-        return _read_app_version(raw)
-
-    async def claim(self, app_version: str) -> str:
-        def fn(data: bytes | None) -> bytes | None:
-            marker = _decode_marker(data)
-            marker.setdefault(_APP_VERSION_KEY, app_version)
-            return _encode_marker(marker)
-
-        # Read and write in one step, under the lock a commit also takes, so two
-        # sessions cannot both find the marker unclaimed.
-        claimed = _read_app_version(
-            await self._client.update_committed(_FORMAT_FILE, fn)
-        )
-        assert claimed is not None
-        return claimed
-
-    async def write(self, app_version: str) -> None:
-        def fn(data: bytes | None) -> bytes | None:
-            marker = _decode_marker(data)
-            marker[_APP_VERSION_KEY] = app_version
-            return _encode_marker(marker)
-
-        self._client.stage_update(_FORMAT_FILE, fn)
+        self._client.stage_update(self._key(session_id), fn)
 
 
 class FileTransactionProvider(TransactionProvider):
@@ -191,7 +164,8 @@ class JsonFileBackend:
     """A file-backed backend for glyff, intended for debugging and inspection.
 
     This backend stores the entire execution history for a session in a single,
-    pretty-printed JSON file. It requires a serializer that produces
+    pretty-printed JSON file under ``<base_dir>/<session_id>/``, and holds as
+    many sessions as it is asked for. It requires a serializer that produces
     UTF-8 JSON text bytes, such as JsonSerializer or PydanticSerializer, because
     execution results and metadata are stored as embedded JSON values.
 
@@ -199,10 +173,24 @@ class JsonFileBackend:
     on each commit, making it unsuitable for high-throughput or large-scale use.
     """
 
-    def __init__(self, *, base_dir: str | Path, session_id: str):
-        client = FileClient(base_dir=base_dir, session_id=session_id)
+    def __init__(self, *, base_dir: str | Path):
+        client = FileClient(base_dir=base_dir)
         _initialize_format_sync(client)
+        self._client = client
         self.repository: ExecutionRepository = FileExecutionRepository(client)
         self.transaction_provider: TransactionProvider = FileTransactionProvider(client)
-        self.session_id: str | None = session_id
-        self.app_version_store: AppVersionStore | None = FileAppVersionStore(client)
+
+    async def claim_session(
+        self, session_id: SessionId, app_version: str | None
+    ) -> str | None:
+        def fn(data: bytes | None) -> bytes | None:
+            marker = _decode_marker(data)
+            if marker.get(_APP_VERSION_KEY) is None:
+                marker[_APP_VERSION_KEY] = app_version
+            return _encode_marker(marker)
+
+        # Read and write in one step, under the lock a commit also takes, so two
+        # processes cannot both find the session unclaimed.
+        return _read_app_version(
+            await self._client.update_committed((session_id.value, _SESSION_FILE), fn)
+        )

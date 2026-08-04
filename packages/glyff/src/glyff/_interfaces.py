@@ -3,7 +3,13 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterable
 from typing import Any, Callable, Protocol
 
-from ._models import CanonicalValue, Execution, ExecutionId, ExecutionStatus
+from ._models import (
+    CanonicalValue,
+    Execution,
+    ExecutionId,
+    ExecutionStatus,
+    SessionId,
+)
 
 
 class Transaction(ABC):
@@ -33,22 +39,30 @@ class TransactionProvider(ABC):
 
 
 class ExecutionRepository(ABC):
-    """Repository for Execution aggregates."""
+    """Repository for Execution aggregates, across every session a store holds.
+
+    Every method names the session it acts on. A store is not bound to one, so
+    the session a record belongs to is never implied by which object you are
+    holding.
+    """
 
     @abstractmethod
-    async def get(self, execution_id: ExecutionId) -> Execution | None: ...
+    async def get(
+        self, session_id: SessionId, execution_id: ExecutionId
+    ) -> Execution | None: ...
 
     @abstractmethod
-    async def save(self, execution: Execution) -> None: ...
+    async def save(self, session_id: SessionId, execution: Execution) -> None: ...
 
     @abstractmethod
     def executions(
         self,
+        session_id: SessionId,
         *,
         status: ExecutionStatus | None = None,
         under: ExecutionId | None = None,
     ) -> AsyncIterator[Execution]:
-        """Yields the stored executions, each after its own ancestors.
+        """Yields the session's executions, each after its own ancestors.
 
         ``status`` keeps only executions in that state, ``under`` only the strict
         descendants of that execution. Records staged in the caller's open
@@ -57,44 +71,9 @@ class ExecutionRepository(ABC):
         ...
 
     @abstractmethod
-    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None: ...
-
-
-class AppVersionStore(ABC):
-    """Reads and writes the application version a store's records were written under.
-
-    A generation marker owned by the application, unlike the store's own format
-    version: glyff only records it and refuses a mismatch (see
-    :class:`~glyff.exceptions.AppVersionMismatchError`).
-    """
-
-    @abstractmethod
-    async def read(self) -> str | None:
-        """Returns the recorded version, or ``None`` if the store carries none."""
-        ...
-
-    @abstractmethod
-    async def claim(self, app_version: str) -> str:
-        """Records ``app_version`` if the store carries none, and returns the
-        version it carries afterwards — the caller's if it took the store, the
-        incumbent's if it did not.
-
-        One atomic step, and its own transaction. Reading and then writing would
-        let two sessions declaring different versions both find the store
-        unclaimed and both start, mixing two generations of records under
-        whichever version committed last.
-        """
-        ...
-
-    @abstractmethod
-    async def write(self, app_version: str) -> None:
-        """Replaces the recorded version, staged into the caller's transaction.
-
-        Unconditional, unlike :meth:`claim`: a migration has already read the
-        version it is moving away from, and re-stamps in the same transaction as
-        the records it rewrote.
-        """
-        ...
+    async def delete_many(
+        self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
+    ) -> None: ...
 
 
 class Serializer(ABC):
@@ -137,18 +116,19 @@ class Backend(Protocol):
     @property
     def transaction_provider(self) -> TransactionProvider: ...
 
-    @property
-    def session_id(self) -> str | None:
-        """The session whose records this store holds.
+    async def claim_session(
+        self, session_id: SessionId, app_version: str | None
+    ) -> str | None:
+        """Records ``app_version`` for a session that carries none, and returns
+        the version it carries afterwards — the caller's if it took the session,
+        the incumbent's if it did not. ``None`` declares nothing and only reads.
 
-        A durable store is claimed by one session and named independently of the
-        :class:`~glyff.Session` that opens it, so it declares its claim here and
-        the session refuses to run against another's records. ``None`` for a
-        store that is not scoped to a session.
+        One atomic step. Reading and then writing would let two processes
+        declaring different versions both find the session unclaimed and both
+        start, mixing two generations of records under whichever committed last.
+
+        Whether a difference is fatal is not the store's call: it reports the
+        winner and :class:`~glyff.Session` decides (see
+        :class:`~glyff.exceptions.AppVersionMismatchError`).
         """
-        ...
-
-    @property
-    def app_version_store(self) -> AppVersionStore | None:
-        """``None`` for a store too ephemeral to outlive the code that wrote it."""
         ...

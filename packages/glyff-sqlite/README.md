@@ -28,13 +28,11 @@ This package depends on `glyff>=0.14.0` (no additional runtime dependencies —
 ```python
 from glyff_sqlite import SQLiteBackend
 
-backend = SQLiteBackend("executions.sqlite3", session_id="my-session")
+backend = SQLiteBackend("executions.sqlite3")
 ```
 
-One set of tables holds one session: execution paths carry no session
-component, so opening the same tables under a different `session_id` raises
-`StoreSessionMismatchError` rather than interleaving two histories. Give each
-session its own database file, or its own `table_prefix`.
+One database holds any number of sessions; each `Session` names itself, and the
+backend keys records by `(session_id, path)`.
 
 ## Public API
 
@@ -43,7 +41,6 @@ session its own database file, or its own `table_prefix`.
 | `SQLiteBackend`             | Bundle exposing the store's collaborators.           |
 | `SQLiteExecutionRepository` | Durable repository backed by local SQLite.           |
 | `SQLiteTransactionProvider` | Transaction provider for the SQLite backend.         |
-| `SQLiteAppVersionStore`     | Reads and writes the recorded application version.   |
 
 The underlying `SQLiteClient` is internal and not part of the public API.
 
@@ -54,9 +51,9 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 - `arguments` holds the canonical arguments verbatim — the row's key is their
   digest, so the column is stored and returned byte-for-byte rather than
   re-encoded.
-- A single `<prefix>_meta` row carries the store's format version, the session
-  that claimed the tables, and the application version its records were written
-  under.
+- Records are keyed by `(session_id, path)`; a `<prefix>_sessions` row carries
+  the application version behind each session, and a single `<prefix>_meta` row
+  the store's format version.
 - Per-execution metadata (see the
   [glyff README](https://pypi.org/project/glyff/)) commits atomically with the
   execution's `COMPLETED` status and result, and is removed with the execution's

@@ -1,5 +1,4 @@
 from ._store import (
-    FileAppVersionStore,
     FileExecutionRepository,
     FileTransactionProvider,
     JsonFileBackend,
@@ -7,7 +6,6 @@ from ._store import (
 
 __all__ = [
     "JsonFileBackend",
-    "FileAppVersionStore",
     "FileExecutionRepository",
     "FileTransactionProvider",
 ]

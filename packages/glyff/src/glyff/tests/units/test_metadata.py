@@ -8,6 +8,7 @@ from glyff import (
     ExecutionId,
     MetadataAccessor,
     SerializedValue,
+    SessionId,
     engrave,
     get_context,
 )
@@ -20,6 +21,8 @@ from glyff.serialization import JsonArgumentCanonicalizer, JsonSerializer
 from glyff.store import MemoryBackend
 from glyff.tests.types import BackendFactory, make_session
 
+SESSION = SessionId("test")
+
 
 def _eid(name: str, parent: ExecutionId | None = None) -> ExecutionId:
     return make_execution_id(name, parent=parent)
@@ -27,7 +30,7 @@ def _eid(name: str, parent: ExecutionId | None = None) -> ExecutionId:
 
 async def _start(ctx: Context, eid: ExecutionId) -> None:
     async with ctx.get_transaction_scope():
-        await ctx.repository.save(Execution.start(eid, canonical_arguments()))
+        await ctx.repository.save(SESSION, Execution.start(eid, canonical_arguments()))
 
 
 async def test_set_get_roundtrip(test_context: Context):
@@ -35,7 +38,9 @@ async def test_set_get_roundtrip(test_context: Context):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid, canonical_arguments()))
+        await test_context.repository.save(
+            SESSION, Execution.start(eid, canonical_arguments())
+        )
         test_context.tracer.start(eid)
         try:
             await accessor.set("note", {"a": 1})
@@ -51,7 +56,9 @@ async def test_keyed_entries_are_independent(test_context: Context):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid, canonical_arguments()))
+        await test_context.repository.save(
+            SESSION, Execution.start(eid, canonical_arguments())
+        )
         test_context.tracer.start(eid)
         try:
             await accessor.set("a", "one")
@@ -92,19 +99,21 @@ async def test_complete_preserves_metadata(test_context: Context, serializer):
     eid = _eid("root")
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.save(Execution.start(eid, canonical_arguments()))
+        await test_context.repository.save(
+            SESSION, Execution.start(eid, canonical_arguments())
+        )
         test_context.tracer.start(eid)
         try:
             await accessor.set("note", "kept")
         finally:
             test_context.tracer.end()
 
-        execution = await test_context.repository.get(eid)
+        execution = await test_context.repository.get(SESSION, eid)
         assert execution is not None
         execution.complete(SerializedValue(await serializer.serialize("result", str)))
-        await test_context.repository.save(execution)
+        await test_context.repository.save(SESSION, execution)
 
-    record = await test_context.repository.get(eid)
+    record = await test_context.repository.get(SESSION, eid)
     assert record is not None and record.result is not None
     assert await serializer.deserialize(record.result.data, str) == "result"
     assert await accessor.get("note", str, execution_id=eid) == "kept"
@@ -123,7 +132,7 @@ async def test_delete_many_removes_metadata(test_context: Context):
             test_context.tracer.end()
 
     async with test_context.get_transaction_scope():
-        await test_context.repository.delete_many([eid])
+        await test_context.repository.delete_many(SESSION, [eid])
 
     assert await accessor.get("note", str, execution_id=eid) is None
 
@@ -167,7 +176,7 @@ async def test_ctx_metadata_roundtrips_and_persists(
 
     assert result == "done"
 
-    loaded = await backend.repository.get(captured["id"])
+    loaded = await backend.repository.get(SessionId("meta-ctx"), captured["id"])
     assert loaded is not None
     meta = loaded.get_metadata("trace")
     assert meta is not None
@@ -177,7 +186,7 @@ async def test_ctx_metadata_roundtrips_and_persists(
 async def test_ctx_set_metadata_requires_active_execution():
     backend = MemoryBackend()
     ctx = Context(
-        session_id="no-exec",
+        session_id=SessionId("no-exec"),
         backend=backend,
         serializer=JsonSerializer(),
         sequencer=Sequencer(),

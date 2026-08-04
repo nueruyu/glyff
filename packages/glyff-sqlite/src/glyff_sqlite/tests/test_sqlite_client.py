@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 
-from glyff import Execution, SerializedValue, TransactionScope
+from glyff import Execution, SerializedValue, SessionId, TransactionScope
 from glyff.store.utils import execution_id_to_path
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff_sqlite import SQLiteBackend
 from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
+
+SESSION = SessionId("test")
 
 
 def record(value: str) -> SQLiteExecutionRecord:
@@ -20,8 +22,8 @@ def record(value: str) -> SQLiteExecutionRecord:
 async def test_sqlite_backend_initializes_schema(tmp_path: Path):
     db = tmp_path / "schema.sqlite3"
 
-    SQLiteBackend(db, session_id="s")
-    client = SQLiteClient(db, session_id="s")
+    SQLiteBackend(db)
+    client = SQLiteClient(db)
     rows = await client.read_sql(
         "SELECT name FROM sqlite_master "
         "WHERE type = 'table' AND name = 'glyff_executions'"
@@ -33,12 +35,13 @@ async def test_sqlite_backend_initializes_schema(tmp_path: Path):
 async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
     db = tmp_path / "existing.sqlite3"
 
-    SQLiteBackend(db, session_id="s")
-    SQLiteBackend(db, session_id="s")
+    SQLiteBackend(db)
+    SQLiteBackend(db)
 
-    client = SQLiteClient(db, session_id="s")
+    client = SQLiteClient(db)
     rows = await client.read_sql("PRAGMA table_info(glyff_executions)")
     assert [row[1] for row in rows] == [
+        "session_id",
         "path",
         "arguments",
         "status",
@@ -48,47 +51,47 @@ async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
 
 
 async def test_sqlite_client_commit_is_atomic_across_execution_paths(tmp_path: Path):
-    client = SQLiteClient(tmp_path / "atomic.sqlite3", session_id="s")
+    client = SQLiteClient(tmp_path / "atomic.sqlite3")
     client._initialize_schema_sync()
 
     token, _ = client.begin_staging()
-    client.stage_write("task", record("execution"))
-    client.stage_write("task/child", record("child"))
+    client.stage_write((SESSION.value, "task"), record("execution"))
+    client.stage_write((SESSION.value, "task/child"), record("child"))
     await client.commit_staged()
     client.end_staging(token)
 
-    assert await client.read("task") == record("execution")
-    assert await client.read("task/child") == record("child")
+    assert await client.read((SESSION.value, "task")) == record("execution")
+    assert await client.read((SESSION.value, "task/child")) == record("child")
 
 
 async def test_sqlite_client_rollback_clears_all_execution_paths(tmp_path: Path):
-    client = SQLiteClient(tmp_path / "rollback.sqlite3", session_id="s")
+    client = SQLiteClient(tmp_path / "rollback.sqlite3")
     client._initialize_schema_sync()
 
     token, _ = client.begin_staging()
-    client.stage_write("task", record("execution"))
-    client.stage_write("task/child", record("child"))
+    client.stage_write((SESSION.value, "task"), record("execution"))
+    client.stage_write((SESSION.value, "task/child"), record("child"))
     await client.clear_staged()
     client.end_staging(token)
 
-    assert await client.read("task") is None
-    assert await client.read("task/child") is None
+    assert await client.read((SESSION.value, "task")) is None
+    assert await client.read((SESSION.value, "task/child")) is None
 
 
 async def test_sqlite_backend_stores_execution_columns_as_readable_json(
     tmp_path: Path,
 ):
     db = tmp_path / "readable.sqlite3"
-    backend = SQLiteBackend(db, session_id="s")
+    backend = SQLiteBackend(db)
     execution_id = make_execution_id("task")
     execution = Execution.start(execution_id, canonical_arguments())
     execution.complete(SerializedValue(b'{"answer":42}'))
     execution.set_metadata("trace", SerializedValue(b'{"step":1}'))
 
     async with TransactionScope(backend.transaction_provider):
-        await backend.repository.save(execution)
+        await backend.repository.save(SESSION, execution)
 
-    client = SQLiteClient(db, session_id="s")
+    client = SQLiteClient(db)
     rows = await client.read_sql(
         "SELECT status, result, metadata FROM glyff_executions WHERE path = ?",
         execution_id_to_path(execution_id),

@@ -6,31 +6,35 @@ and what is being added.
 
 ## The contract
 
-A `Backend` (`_interfaces.py`) is a bundle of four pieces:
+A `Backend` (`_interfaces.py`) is:
 
 | Piece | Role |
 | --- | --- |
 | `ExecutionRepository` | Aggregate persistence: `get`, `save`, `executions`, `delete_many`. |
 | `TransactionProvider` | Owns transaction boundaries; `begin_transaction` returns a `Transaction` with `commit`/`rollback`. |
-| `session_id: str \| None` | The session whose records the store holds, or `None` if it is not scoped to one. |
-| `app_version_store: AppVersionStore \| None` | The application version behind those records, or `None` for a store too ephemeral to outlive the code that wrote it. |
+| `claim_session(session_id, app_version)` | Records the application version behind a session's records, and reports the one it carries. |
 
-`executions(*, status=None, under=None)` yields whole aggregates, each after its
-own ancestors, including records staged in the caller's open transaction. It
-returns `Execution`s rather than ids because its consumers — reconciliation
-sweeps, [pruning](./events.md#pruning-completed-subtrees), and
+Every repository method takes the `SessionId` it acts on. A store is not bound
+to a session, so which session a record belongs to is never implied by which
+object you happen to be holding — `Session.id` is the only place a session is
+named.
+
+`executions(session_id, *, status=None, under=None)` yields whole aggregates,
+each after its own ancestors, including records staged in the caller's open
+transaction. It returns `Execution`s rather than ids because its consumers —
+reconciliation sweeps, [pruning](./events.md#pruning-completed-subtrees), and
 [migration](./migration.md) — need arguments and results, and because the path
 encoding an id is rebuilt from is a backend's internal business. It is an async
 iterator so a backend that can stream does: the SQLite one pulls its range scan
 a batch of rows at a time rather than materializing the table.
 
-`AppVersionStore` has two writes, and they are not interchangeable. `claim` is
-one atomic step and its own transaction — reading and then writing would let two
-sessions declaring different versions both find the store unclaimed and both
-start. `write` is unconditional and staged into the caller's transaction, which
-is what lets a migration re-stamp in the same commit as the records it rewrote.
-glyff only records the version and refuses a mismatch; what it means is the
-application's (see [migration](./migration.md)).
+`claim_session` is one atomic step and its own transaction. Reading the version
+and then writing it would let two processes declaring different versions both
+find the session unclaimed and both start, mixing two generations of records.
+It returns the version the session carries afterwards — the caller's if it took
+the session, the incumbent's if it did not — and `Session` decides what a
+difference means (see [migration](./migration.md)). glyff only records the
+value; what it means is the application's.
 
 The repository stores `Execution` aggregates whole — args, status, result, metadata —
 and core assumes nothing about the medium underneath. Tables, files, and key
@@ -55,26 +59,21 @@ Implement the pieces above and expose them as a bundle. Verify the
 implementation against the shared contract suite in `glyff.testing`: subclass
 the contract classes (`ExecutionBackendContract`, `DurableBackendContract`,
 `AppVersionContract`, and the text/binary-safety variants) and provide your
-backend factory. A backend that records no application version exposes `None`
-and skips `AppVersionContract`. The shipped backends run the same suite. It also
-exports the reference `PruningEventHandler` and the helpers `save_execution`,
-`serialized_value`, and the pair `make_execution_id` / `canonical_arguments`,
-which build an execution that satisfies the `arguments_digest` invariant.
+backend factory — the factory names a *store*, and the same name reopens it. The
+shipped backends run the same suite. It also exports the reference
+`PruningEventHandler` and the helpers `save_execution`, `serialized_value`, and
+the pair `make_execution_id` / `canonical_arguments`, which build an execution
+that satisfies the `arguments_digest` invariant.
 
 ## Session scope
 
-A backend instance covers one session — a file store directory, one set of
-SQLite tables — so no method on the contract takes a session argument. The store
-is named where it is constructed and the `Session` where it is opened, so both
-ends are checked against `Backend.session_id`:
+One store holds any number of sessions: the SQLite backend keys records by
+`(session_id, path)`, the file store gives each session a directory under
+`base_dir`. Backends are constructed over the store, never over a session, so
+there is no second place a session can be named and nothing to reconcile.
 
-- `Session.__aenter__` refuses a backend built for a different session, which is
-  otherwise invisible: the records would simply land in another session's
-  history.
-- The SQLite backend additionally refuses to *reopen* tables claimed by another
-  session, since execution paths carry no session component.
-
-Both raise `StoreSessionMismatchError`.
+A `SessionId` is a name rather than a path, and rejects anything that could
+reach outside the store it is given to.
 
 ## Planned contract extensions
 

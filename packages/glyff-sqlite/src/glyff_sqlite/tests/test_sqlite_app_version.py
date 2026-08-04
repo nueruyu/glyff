@@ -13,7 +13,7 @@ from glyff_sqlite import SQLiteBackend
 async def _enter(
     db: Path, app_version: str, serializer, argument_canonicalizer
 ) -> None:
-    backend = SQLiteBackend(db, session_id="orders")
+    backend = SQLiteBackend(db)
     async with Session(
         id="orders",
         backend=backend,

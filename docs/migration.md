@@ -13,11 +13,10 @@ sessions.
 | User payload (recorded results, metadata) | The serializer boundary — you | Recorded values must deserialize under the current code. |
 | In-flight sessions across code changes | You, with glyff primitives | Raised as a typed error; never auto-migrated. |
 
-The first and last are each guarded by a version, owned by a different party, so
-a store carries both: glyff's `FORMAT_VERSION`, stamped when it first writes the
-store, and your `app_version`, recorded by the session that claimed it. The
-SQLite backend keeps them in one `<table_prefix>_meta` row, the file store in one
-`glyff_format.json` marker.
+The first and last are each guarded by a version, owned by a different party, at
+different scopes: glyff's `FORMAT_VERSION` covers the whole store and is stamped
+when it first writes one, while your `app_version` is recorded per session, by
+whichever process claims it first.
 
 ### glyff's store schema
 
@@ -50,16 +49,16 @@ glyff does not auto-migrate a paused session onto new code. Instead:
 - **A session records an application-supplied generation marker.** Pass
   `Session(app_version=...)`, and entering a session whose records were written
   under a different value raises `AppVersionMismatchError` instead of replaying
-  them against code that may no longer mean the same thing. The value is opaque
+  them against code that may no longer mean the same thing. The claim is one
+  atomic step, so two processes declaring different versions cannot both find
+  the session unclaimed and both start. The value is opaque
   to glyff, which only records it and compares it; what counts as a new
   generation is yours to decide. Leave it unset to opt out — but once a session
   has recorded one, dropping the declaration is refused too, so opting out is
   not something a deleted argument does quietly.
 - **Sessions you decide to carry across** are handled by a forward, offline
   batch that reads records through `ExecutionRepository.executions`, remaps
-  them, and writes them back with the new `app_version` — all in one
-  transaction, so a rewritten store is never left carrying the old version.
-  Nothing is added to the resume path.
+  them, and writes them back. Nothing is added to the resume path.
 
 What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),
@@ -68,11 +67,13 @@ therefore a transformation of recorded JSON, with no dead Python types to keep
 alive and no dependence on the canonicalizer that wrote the record.
 
 > **Planned** — the runner itself
-> ([#39](https://github.com/nueruyu/glyff/issues/39)). The primitives it needs
-> have landed: recorded arguments, `executions`, and the version stamp above.
-> The encoder and digest that recompute a rewritten key ship with the runner;
-> until then, reproducing glyff's canonical encoding yourself is not a supported
-> surface, so pin paused sessions to the code that started them.
+> ([#39](https://github.com/nueruyu/glyff/issues/39)), along with the
+> transaction-scoped re-stamp it needs so a rewritten session is never left
+> carrying the old version. The primitives it reads have landed: recorded
+> arguments, `executions`, and the version claim above. The encoder and digest
+> that recompute a rewritten key ship with the runner; until then, reproducing
+> glyff's canonical encoding yourself is not a supported surface, so pin paused
+> sessions to the code that started them.
 
 ## Running without migration
 

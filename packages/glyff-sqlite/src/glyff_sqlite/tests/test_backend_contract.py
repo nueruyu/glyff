@@ -17,9 +17,7 @@ class TestSQLiteBackendContract(
 ):
     @pytest.fixture
     def backend_factory(self, tmp_path):
-        def factory(session_id: str):
-            return SQLiteBackend(
-                tmp_path / f"{session_id}.sqlite3", session_id=session_id
-            )
+        def factory(store: str):
+            return SQLiteBackend(tmp_path / f"{store}.sqlite3")
 
         return factory
