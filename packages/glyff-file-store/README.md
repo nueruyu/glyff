@@ -40,13 +40,21 @@ The underlying `FileClient` is internal and not part of the public API.
 
 ## JSON debug format
 
-`JsonFileBackend` stores each session under `<base_dir>/<session_id>/` in a
-single pretty-printed JSON file (`executions.json`). The execution map is read
-from that file on access and rewritten atomically on every commit.
-Execution results and metadata are stored as embedded JSON values, so
-serializers used with this backend must produce JSON text. Canonical arguments
-are stored as a JSON *string* instead: the execution's key is the digest of
-those exact bytes, so they are kept verbatim rather than re-encoded.
+`JsonFileBackend` stores each session in a single pretty-printed JSON file
+(`executions.json`) under its own directory in `base_dir`. The directory name is
+the session id percent-escaped — everything outside `A-Za-z0-9-_` is escaped,
+including `.`, so an id can never be a path segment, escape `base_dir`, or
+collide with the dot-prefixed names the store keeps for itself. Ordinary ids
+(`chat-42`, a UUID) come through unchanged.
+
+Directory names fold case on macOS and Windows, so two sessions whose ids differ
+only in case share a directory there.
+
+The execution map is read from that file on access and rewritten atomically on
+every commit. Execution results and metadata are stored as embedded JSON values,
+so serializers used with this backend must produce JSON text. Canonical
+arguments are stored as a JSON *string* instead: the execution's key is the
+digest of those exact bytes, so they are kept verbatim rather than re-encoded.
 
 A `glyff_format.json` marker beside the session directories records the store's
 `format_version`, so a store written by an incompatible build is refused rather

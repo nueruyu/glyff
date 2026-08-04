@@ -74,8 +74,10 @@ One store holds any number of sessions: the SQLite backend keys records by
 `base_dir`. Backends are constructed over the store, never over a session, so
 there is no second place a session can be named and nothing to reconcile.
 
-A `SessionId` is a name rather than a path, and rejects anything that could
-reach outside the store it is given to.
+A `SessionId` is any non-empty string. What a store can safely put in a key, a
+column or a directory name is that store's problem: SQLite binds it as a column
+value, and the file store percent-escapes it into one directory name. Core does
+not narrow what an application may call its sessions.
 
 A transaction covers one session. SQLite could commit more, but a backend is
 free to hold to the narrower rule and the file store does, since its unit of

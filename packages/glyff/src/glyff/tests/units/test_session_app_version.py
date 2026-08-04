@@ -93,9 +93,15 @@ async def test_sessions_in_one_backend_carry_their_own_versions(
     assert await backend.claim_session(SessionId("refunds"), None) == "v2"
 
 
-@pytest.mark.parametrize(
-    "value", ["", ".", "..", ".hidden", "a/b", "a\\b", "a:b", " padded "]
-)
-def test_a_session_id_that_could_escape_its_store_is_refused(value: str):
+def test_an_empty_session_id_is_refused():
     with pytest.raises(ValueError):
-        SessionId(value)
+        SessionId("")
+
+
+@pytest.mark.parametrize(
+    "value", [".", "..", ".hidden", "a/b", "a\\b", "a:b", " padded ", "%2E"]
+)
+def test_a_path_shaped_session_id_is_still_a_name(value: str):
+    # Stores encode the name into whatever their keys allow, so core does not
+    # narrow what an application may call its sessions.
+    assert SessionId(value).value == value

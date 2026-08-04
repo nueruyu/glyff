@@ -5,6 +5,7 @@ import contextvars
 import logging
 import os
 import shutil
+import string
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -47,6 +48,27 @@ _BACKUP_PREFIX = ".bak-"
 _TEMP_PREFIX = ".commit-"
 _LOCK_FILE = ".glyff.lock"
 _PERMISSION_RETRY_DELAYS = (0.01, 0.025, 0.05, 0.1, 0.2)
+
+
+# Everything else is escaped, including '.', so an encoded name can never be a
+# path segment, reach outside base_dir, or collide with the dot-prefixed names
+# the store keeps for itself.
+_UNESCAPED = frozenset(string.ascii_letters + string.digits + "-_")
+
+
+def encode_session_dir(session_id: str) -> str:
+    """The one directory name a session's records live under.
+
+    Percent-escaped rather than validated: a session id is whatever the
+    application calls its session, and turning that into a safe file name is
+    this store's job, not the caller's.
+    """
+    return "".join(
+        character
+        if character in _UNESCAPED
+        else "".join(f"%{byte:02X}" for byte in character.encode("utf-8"))
+        for character in session_id
+    )
 
 
 def replace_atomically(target: Path, data: bytes) -> None:
@@ -156,14 +178,14 @@ class FileClient:
 
     def resolve(self, key: FileKey) -> Path:
         session_id, path = key
-        return self._base_path / session_id / path
+        return self.session_path(session_id) / path
 
     def resolve_store_file(self, name: str) -> Path:
         """A file belonging to the store itself rather than to a session."""
         return self._base_path / name
 
     def session_path(self, session_id: str) -> Path:
-        return self._base_path / session_id
+        return self._base_path / encode_session_dir(session_id)
 
     # -- Staging context management -------------------------------------------
 
