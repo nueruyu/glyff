@@ -65,7 +65,7 @@ async def test_json_parallel_children_durable_after_root_interrupt(
             await jp_root()
     assert _ran == set(range(_N))
 
-    # Fresh store over the same session directory, then resume: no child re-runs.
+    # A fresh handle over the same store, then resume.
     _ran.clear()
     _interrupt_root = False
     backend = backend_factory(sid.value)

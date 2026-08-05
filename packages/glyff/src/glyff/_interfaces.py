@@ -39,12 +39,7 @@ class TransactionProvider(ABC):
 
 
 class ExecutionRepository(ABC):
-    """Repository for Execution aggregates, across every session a store holds.
-
-    Every method names the session it acts on. A store is not bound to one, so
-    the session a record belongs to is never implied by which object you are
-    holding.
-    """
+    """Execution aggregate persistence, explicitly scoped by ``SessionId``."""
 
     @abstractmethod
     async def get(
@@ -65,7 +60,7 @@ class ExecutionRepository(ABC):
         """Yields the session's executions, each after its own ancestors.
 
         ``status`` keeps only executions in that state, ``under`` only the strict
-        descendants of that execution. Records staged in the caller's open
+        descendants of that execution. Changes staged in the caller's open
         transaction are included.
         """
         ...
@@ -118,15 +113,9 @@ class Backend(Protocol):
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         """Records ``app_version`` for a session that carries none, and returns
-        the version it carries afterwards — the caller's if it took the session,
-        the incumbent's if it did not.
+        the version the session carries afterwards.
 
-        One atomic step. Reading and then writing would let two processes
-        declaring different versions both find the session unclaimed and both
-        start, mixing two generations of records under whichever committed last.
-
-        Whether a difference is fatal is not the store's call: it reports the
-        winner and :class:`~glyff.Session` decides (see
-        :class:`~glyff.exceptions.AppVersionMismatchError`).
+        One atomic step, holding across processes, so two of them declaring
+        different versions cannot both find the session unclaimed.
         """
         ...

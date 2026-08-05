@@ -31,9 +31,6 @@ from glyff_sqlite import SQLiteBackend
 backend = SQLiteBackend("executions.sqlite3")
 ```
 
-One database holds any number of sessions; each `Session` names itself, and the
-backend keys records by `(session_id, path)`.
-
 ## Public API
 
 | Name                        | Description                                          |
@@ -65,7 +62,9 @@ The underlying `SQLiteClient` is internal and not part of the public API.
   a large table costs bounded memory.
 - Writes are staged in-memory per transaction and flushed on commit.
 - Nested transactions (child scopes) commit independently of their parent.
-- `BEGIN IMMEDIATE` prevents writer contention; WAL mode keeps reads fast.
+- `BEGIN IMMEDIATE` prevents writer contention; WAL mode keeps reads fast. A
+  session's application version is claimed inside one, so workers racing to
+  resume the same session agree on a single winner.
 - A per-database asyncio write lock serialises concurrent write transactions.
 
 ## Planned

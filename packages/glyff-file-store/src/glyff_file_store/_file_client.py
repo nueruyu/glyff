@@ -18,7 +18,6 @@ from glyff.serialization.constants import DEFAULT_ENCODING
 
 logger = logging.getLogger(__name__)
 
-# One session's records, keyed by execution path.
 Executions = dict[str, dict[str, Any]]
 SessionUpdate = Callable[[Executions], Executions]
 
@@ -53,17 +52,7 @@ class _FileStagingBuffer:
 
 
 class FileClient:
-    """One pretty-printed JSON document holding every session in a store.
-
-    A transaction stages updates per session. Committing applies all of them to
-    the document as it is on disk and replaces the file in one step, so a commit
-    is all-or-nothing however many sessions it touched.
-
-    Writers and claims hold a lock file beside the document, because each is a
-    read-modify-write and atomic replacement alone would still lose updates.
-    Readers hold nothing: a replace is atomic, so a read sees either the whole
-    old document or the whole new one.
-    """
+    """Transactional access to the store's JSON document (see the README)."""
 
     def __init__(self, base_dir: str | Path, *, format_version: int) -> None:
         self._base_path = Path(base_dir)
@@ -90,7 +79,7 @@ class FileClient:
     async def exclusive(self) -> AsyncIterator[None]:
         """Store-wide exclusion for a read-modify-write.
 
-        Two locks: the file lock keeps other processes out, and the
+        Both locks are needed: the file lock keeps other processes out, and the
         ``asyncio.Lock`` keeps this process's own tasks out, because a file lock
         is re-entrant per handle and so does not serialize coroutines sharing
         one.
@@ -180,7 +169,6 @@ class FileClient:
             raise RuntimeError("Transaction closed out of order.")
 
     def stage_executions(self, session_id: str, update: SessionUpdate) -> None:
-        """Stages a change to one session's records in the open transaction."""
         staging = self._require_staging()
         staging.updates.setdefault(session_id, []).append(update)
 
@@ -192,6 +180,8 @@ class FileClient:
     async def read_executions(
         self, session_id: str, *, staged: bool = True
     ) -> Executions:
+        # No lock: a commit replaces the document rather than rewriting it, so
+        # this opens either the whole old one or the whole new one.
         document = await asyncio.to_thread(self._read_document_sync)
         executions = self._session_executions(document, session_id)
 

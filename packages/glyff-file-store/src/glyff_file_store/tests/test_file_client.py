@@ -55,7 +55,6 @@ def test_an_unknown_format_version_is_refused(tmp_path: Path):
 
 
 async def test_the_document_stays_readable(client: FileClient, tmp_path: Path):
-    # The point of this backend is that a human can open the file.
     t, _ = client.begin_staging()
     client.stage_executions(SESSION, put("root#0:abc", "kept"))
     await client.commit_staged()
@@ -145,7 +144,6 @@ async def test_committing_outside_a_transaction_raises(client: FileClient):
 
 
 async def test_one_transaction_commits_every_session_it_touched(client: FileClient):
-    # One document, one replacement: nothing here is atomic per session.
     t, _ = client.begin_staging()
     client.stage_executions("orders", put("a", "1"))
     client.stage_executions("refunds", put("b", "2"))
@@ -215,8 +213,8 @@ async def test_opening_a_store_clears_a_stranded_temporary(tmp_path: Path):
 async def test_the_document_is_replaced_rather_than_rewritten_in_place(
     client: FileClient, tmp_path: Path
 ):
-    # A reader holding the old file keeps reading the old document, which is
-    # why reads need no lock.
+    # Holding the old file open across the commit is what makes lock-free reads
+    # safe: the reader keeps the whole old document.
     t, _ = client.begin_staging()
     client.stage_executions(SESSION, put("a", "before"))
     await client.commit_staged()
@@ -250,8 +248,8 @@ async def test_a_committed_document_survives_reopen(client: FileClient, tmp_path
 
 
 async def test_concurrent_commits_do_not_lose_each_others_updates(tmp_path: Path):
-    # Both read-modify-write the same document; without the lock the later
-    # replacement would drop the earlier one's records.
+    # Independent handles, because each commit read-modify-writes the whole
+    # document and the later replacement would otherwise drop the earlier one.
     async def commit(client: FileClient, path: str) -> None:
         t, _ = client.begin_staging()
         client.stage_executions(SESSION, put(path, path))

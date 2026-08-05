@@ -95,8 +95,6 @@ print(json.dumps("opened"))
 
 
 def test_processes_opening_one_store_leave_a_readable_document(tmp_path: Path):
-    # Stamping the format version is a check-and-write like claiming is, and the
-    # marker it writes has to survive being raced for.
     base_dir = tmp_path / "store"
     signals = tmp_path / "signals"
     signals.mkdir()

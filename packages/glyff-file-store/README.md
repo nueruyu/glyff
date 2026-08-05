@@ -76,14 +76,10 @@ never leave the document itself half-written; the next open clears it.
 
 ## Concurrency
 
-Writers and version claims hold a `.glyff.lock` file beside the document,
-because each is a read-modify-write and atomic replacement alone would still let
-one process overwrite another's records. An in-process `asyncio.Lock` sits
-inside it, because the file lock is re-entrant per handle and so does not
-serialize tasks holding the same one.
-
-Readers hold nothing: a replacement is atomic, so a read sees either the whole
-old document or the whole new one.
+Commits and version claims are serialized across the processes sharing a
+`base_dir`, through a `.glyff.lock` file beside the document. Reads take no
+lock: a replacement is atomic, so a read sees either the whole old document or
+the whole new one.
 
 ## Status
 

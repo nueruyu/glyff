@@ -350,8 +350,6 @@ class ExecutionBackendContract:
     async def test_executions_yields_whole_aggregates(
         self, backend_factory: BackendFactory
     ):
-        # Enumeration returns Executions rather than ids so a consumer that needs
-        # arguments or results does not have to read every record back.
         backend = backend_factory("enumerate-aggregate")
         execution = Execution.start(
             make_execution_id("task", arguments={"a": 1}),
@@ -455,8 +453,6 @@ class ExecutionBackendContract:
     async def test_sessions_in_one_store_do_not_collide(
         self, backend_factory: BackendFactory
     ):
-        # The same execution key under two sessions is two records: the store is
-        # not bound to a session, so nothing else keeps them apart.
         backend = backend_factory("two-sessions")
         execution_id = make_execution_id("task")
 
@@ -745,10 +741,8 @@ class AppVersionContract:
     async def test_concurrent_claims_agree_on_one_winner(
         self, backend_factory: BackendFactory
     ):
-        # Raced through independent handles on one store, because that is the
-        # shape of the hazard: two workers starting the same paused session.
-        # Read-then-write would let both find it unclaimed and both start,
-        # mixing two generations of records under whichever wrote last.
+        # Independent handles, because that is the shape of the hazard: two
+        # workers starting the same paused session from different processes.
         backends = [backend_factory("version-claim-race") for _ in range(8)]
 
         outcomes = await asyncio.gather(
@@ -776,7 +770,6 @@ class AppVersionContract:
     async def test_claim_does_not_need_a_transaction(
         self, backend_factory: BackendFactory
     ):
-        # It is its own transaction: the check and the write cannot be split.
         backend = backend_factory("version-claim-no-tx")
         assert await backend.claim_session(SESSION, "v1") == "v1"
 

@@ -46,15 +46,12 @@ on top.
 
 glyff does not auto-migrate a paused session onto new code. Instead:
 
-- **Every session records an application-supplied generation marker.**
-  `Session(app_version=...)` is required, and entering a session whose records
-  were written under a different value raises `AppVersionMismatchError` instead
-  of replaying them against code that may no longer mean the same thing. The
-  claim is one atomic step, so two processes declaring different versions cannot
-  both find the session unclaimed and both start. The value is opaque to glyff,
-  which only records it and compares it; what counts as a new generation is
-  yours to decide. There is no way to opt out, and so no unversioned records to
-  reason about later.
+- **Every session records an application-supplied generation marker.** Entering
+  a session claims it for `Session(app_version=...)`, and entering one whose
+  records were written under a different value raises `AppVersionMismatchError`
+  instead of replaying them against code that may no longer mean the same thing.
+  The value is opaque to glyff: what counts as a new generation is yours to
+  decide.
 - **Sessions you decide to carry across** are handled by a forward, offline
   batch that reads records through `ExecutionRepository.executions`, remaps
   them, and writes them back. Nothing is added to the resume path.
@@ -65,12 +62,8 @@ byte-for-byte the preimage of its `arguments_digest`. Remapping an argument is
 therefore a transformation of recorded JSON, with no dead Python types to keep
 alive and no dependence on the canonicalizer that wrote the record.
 
-> **Planned** — the runner itself
-> ([#39](https://github.com/nueruyu/glyff/issues/39)), along with the
-> transaction-scoped re-stamp it needs so a rewritten session is never left
-> carrying the old version. The primitives it reads have landed: recorded
-> arguments, `executions`, and the version claim above. The encoder and digest
-> that recompute a rewritten key ship with the runner; until then, reproducing
+> **Planned** — the runner and the atomic re-stamp it needs
+> ([#39](https://github.com/nueruyu/glyff/issues/39)). Until then, reproducing
 > glyff's canonical encoding yourself is not a supported surface, so pin paused
 > sessions to the code that started them.
 

@@ -12,35 +12,32 @@ A `Backend` (`_interfaces.py`) is:
 | --- | --- |
 | `ExecutionRepository` | Aggregate persistence: `get`, `save`, `executions`, `delete_many`. |
 | `TransactionProvider` | Owns transaction boundaries; `begin_transaction` returns a `Transaction` with `commit`/`rollback`. |
-| `claim_session(session_id, app_version)` | Records the application version behind a session's records, and reports the one it carries. |
+| `claim_session(session_id, app_version)` | Atomically establishes the application version behind a session's records, and returns the recorded one. |
 
-Every repository method takes the `SessionId` it acts on. A store is not bound
-to a session, so which session a record belongs to is never implied by which
-object you happen to be holding — `Session.id` is the only place a session is
-named.
+- **Every repository operation names its `SessionId`.** A backend is scoped to a
+  store, not a session, so which session a record belongs to is never implied by
+  which object you happen to be holding — `Session.id` is the only place a
+  session is named. A `SessionId` is any non-empty string; what a store can
+  safely put in a key or a column is that store's problem.
+- **A transaction may carry changes for any number of sessions**, and the
+  shipped stores commit all of them together.
+- **`executions(session_id, *, status=None, under=None)`** yields whole
+  aggregates, each after its own ancestors, including changes staged in the
+  caller's open transaction. It returns `Execution`s rather than ids because its
+  consumers — reconciliation sweeps,
+  [pruning](./events.md#pruning-completed-subtrees), and
+  [migration](./migration.md) — need arguments and results, and because the path
+  an id is rebuilt from is a backend's internal business. It is an async
+  iterator so a backend that can stream does.
+- **`claim_session`** takes an unclaimed session's version or reports the one
+  already recorded, in one step that holds across processes. `Session` decides
+  what a difference means (see [migration](./migration.md)); glyff only records
+  the value.
 
-`executions(session_id, *, status=None, under=None)` yields whole aggregates,
-each after its own ancestors, including records staged in the caller's open
-transaction. It returns `Execution`s rather than ids because its consumers —
-reconciliation sweeps, [pruning](./events.md#pruning-completed-subtrees), and
-[migration](./migration.md) — need arguments and results, and because the path
-encoding an id is rebuilt from is a backend's internal business. It is an async
-iterator so a backend that can stream does: the SQLite one pulls its range scan
-a batch of rows at a time rather than materializing the table.
-
-`claim_session` is one atomic step and its own transaction, and it has to hold
-across *processes*: two workers starting the same paused session is the shape of
-the hazard. Reading the version and then writing it would let both find the
-session unclaimed and both start, mixing two generations of records. SQLite gets
-this from `BEGIN IMMEDIATE`; the file store from a lock file beside its
-document. It returns the version the session carries afterwards — the caller's
-if it took the session, the incumbent's if it did not — and `Session` decides
-what a difference means (see [migration](./migration.md)). glyff only records the
-value; what it means is the application's.
-
-A session is either unclaimed or carries one concrete version. There is no
-unversioned state, so nothing downstream has to reason about what a record
-without a generation means.
+Entering a `Session` atomically claims it with a concrete application version
+before execution begins. Using an `ExecutionRepository` directly is the
+lower-level persistence API and bypasses the `Session` lifecycle, including that
+claim.
 
 The repository stores `Execution` aggregates whole — args, status, result, metadata —
 and core assumes nothing about the medium underneath. Tables, files, and key
@@ -70,20 +67,6 @@ shipped backends run the same suite. It also exports the reference
 `PruningEventHandler` and the helpers `save_execution`, `serialized_value`, and
 the pair `make_execution_id` / `canonical_arguments`, which build an execution
 that satisfies the `arguments_digest` invariant.
-
-## Session scope
-
-One store holds any number of sessions: the SQLite backend keys records by
-`(session_id, path)`, the file store nests them under the session id in one JSON
-document. Backends are constructed over the store, never over a session, so
-there is no second place a session can be named and nothing to reconcile.
-
-A `SessionId` is any non-empty string. What a store can safely put in a key or a
-column is that store's problem, and core does not narrow what an application may
-call its sessions.
-
-Transactions are not session-scoped: one may stage changes for any number of
-sessions, and both shipped stores commit all of them together.
 
 ## Planned contract extensions
 

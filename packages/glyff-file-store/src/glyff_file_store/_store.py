@@ -88,19 +88,14 @@ class FileTransactionProvider(TransactionProvider):
 class JsonFileBackend:
     """A file-backed backend for glyff, intended for debugging and inspection.
 
-    Every session in the store lives in one pretty-printed, key-sorted JSON
-    document under ``base_dir``, nested by session id::
-
-        {"format_version": 1,
-         "sessions": {"orders": {"app_version": "v1", "executions": {...}}}}
+    Every session in the store lives in one pretty-printed JSON document under
+    ``base_dir`` (see the README for its layout), read whole on access and
+    rewritten on every commit — which is what makes it unsuitable for
+    high-throughput or large-scale use.
 
     It requires a serializer that produces UTF-8 JSON text bytes, such as
     JsonSerializer or PydanticSerializer, because execution results and metadata
     are stored as embedded JSON values.
-
-    The whole document is read on access and rewritten on every commit, which is
-    what keeps it readable and what makes it unsuitable for high-throughput or
-    large-scale use.
     """
 
     def __init__(self, *, base_dir: str | Path):

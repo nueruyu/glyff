@@ -33,8 +33,6 @@ class SQLiteExecutionRecord:
 
 SQLiteUpdate = Callable[[SQLiteExecutionRecord | None], SQLiteExecutionRecord | None]
 
-# Rows are staged under the session that owns them, so one transaction can span
-# sessions without their paths colliding.
 SQLiteKey = tuple[str, str]
 
 
@@ -57,7 +55,6 @@ _StagedOp = _Write | _Delete | _Update
 
 _VALID_SYNCHRONOUS_VALUES = {"OFF", "NORMAL", "FULL", "EXTRA"}
 
-# Rows per fetch while streaming a range scan.
 _READ_BATCH_SIZE = 256
 
 
@@ -381,8 +378,7 @@ class SQLiteClient:
         """The session's records whose path starts with ``prefix``, in path order.
 
         Committed rows are pulled a batch at a time rather than materialized, so
-        a sweep over a large table costs bounded memory. Staged ops are already
-        bounded by the open transaction, so those are held and merged in.
+        a sweep over a large table costs bounded memory.
 
         The merge needs one order for both sides: SQLite's BINARY collation
         compares UTF-8 bytes and Python compares code points, which agree,
@@ -407,7 +403,6 @@ class SQLiteClient:
                         next_staged < len(staged_paths)
                         and staged_paths[next_staged] < path
                     ):
-                        # Staged but not committed, and it sorts before this row.
                         pending = staged_paths[next_staged]
                         next_staged += 1
                         record = self._apply_ops(None, overlay[pending])

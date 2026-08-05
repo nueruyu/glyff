@@ -1,4 +1,4 @@
-"""Enumeration streams the table instead of materializing it."""
+"""Enumeration across the batch boundary of the range scan."""
 
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -13,9 +13,7 @@ from glyff_sqlite._sqlite_client import _READ_BATCH_SIZE
 SESSION = SessionId("test")
 
 
-async def test_committed_rows_are_pulled_in_batches(tmp_path: Path):
-    # More rows than one batch, consumed one at a time: the point is that a
-    # sweep over a production-sized table does not load it all first.
+async def test_enumeration_returns_rows_across_batch_boundaries(tmp_path: Path):
     backend = SQLiteBackend(tmp_path / "batched.sqlite3")
     count = _READ_BATCH_SIZE * 2 + 1
 
@@ -49,13 +47,14 @@ async def test_a_partially_consumed_enumeration_closes_its_connection(
                 ),
             )
 
+    # Closed explicitly rather than left to the collector, so the abandoned read
+    # is known to have released the database before the write below.
     enumeration = cast(
         AsyncGenerator[Execution, None], backend.repository.executions(SESSION)
     )
     assert await anext(enumeration) is not None
     await enumeration.aclose()
 
-    # The abandoned read must not leave the database locked against a writer.
     async with TransactionScope(backend.transaction_provider):
         await backend.repository.save(
             SESSION,

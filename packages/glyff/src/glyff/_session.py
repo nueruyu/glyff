@@ -19,11 +19,11 @@ class Session:
     It sets up the execution context. Execution records are persisted per
     event, so there is no session-wide transaction to commit at exit.
 
-    ``app_version`` marks the generation of code the session's records belong
-    to. Entering a session whose records were written under a different one
-    raises :class:`~glyff.exceptions.AppVersionMismatchError` instead of
-    replaying them against code that may no longer mean the same thing. Every
-    session carries one: there is no unversioned state to reason about later.
+    Entering a session atomically claims it for ``app_version``, the generation
+    of code its records belong to. Entering one whose records were written under
+    a different version raises
+    :class:`~glyff.exceptions.AppVersionMismatchError` instead of replaying them
+    against code that may no longer mean the same thing.
     """
 
     def __init__(
@@ -61,11 +61,7 @@ class Session:
         return self._backend.transaction_provider
 
     async def _claim_app_version(self) -> None:
-        """Records this session's generation, or refuses to resume another's.
-
-        Checked on entry rather than at the first write: an engraved call is far
-        from the mistake it would report.
-        """
+        """Records this session's generation, or refuses to resume another's."""
         recorded = await self._backend.claim_session(self._id, self._app_version)
         if recorded != self._app_version:
             raise AppVersionMismatchError(

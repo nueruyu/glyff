@@ -32,12 +32,7 @@ class CanonicalArguments:
 
 @dataclass(frozen=True)
 class SessionId:
-    """The name a session's records are stored under.
-
-    Any non-empty string. What a store can safely put in a key, a column or a
-    directory name is that store's problem, and it encodes the name rather than
-    narrowing what an application may call its sessions.
-    """
+    """A non-empty, application-defined session identifier."""
 
     value: str
 
