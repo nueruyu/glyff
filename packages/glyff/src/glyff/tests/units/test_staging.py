@@ -234,6 +234,33 @@ def test_a_closed_stage_refuses_writes_from_a_copied_context():
         context.run(stage.save, SESSION, started())
 
 
+def test_a_closed_stage_is_not_open_in_a_copied_context():
+    # The copy still holds the stage and has no token to restore, so the only
+    # safe answer is that nothing is open — otherwise a read there would overlay
+    # a batch that may never have been persisted.
+    staging = ExecutionStaging()
+    stage = staging.begin()
+    stage.save(SESSION, started())
+    context = contextvars.copy_context()
+
+    assert context.run(staging.current) is stage
+    stage.close()
+
+    assert context.run(staging.current) is None
+    with pytest.raises(RuntimeError, match="outside a transaction"):
+        context.run(staging.require_current)
+
+
+def test_closing_twice_across_a_copied_context_raises():
+    staging = ExecutionStaging()
+    stage = staging.begin()
+    context = contextvars.copy_context()
+    stage.close()
+
+    with pytest.raises(RuntimeError, match="out of order"):
+        context.run(stage.close)
+
+
 def test_closing_a_parent_while_a_child_is_open_raises():
     staging = ExecutionStaging()
     parent = staging.begin()

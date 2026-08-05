@@ -80,7 +80,9 @@ stage.close()                         # finalizes the batch, restores any parent
 await client.commit_mutations(stage.batch)
 ```
 
-Stages nest, and a rollback is a `close()` whose batch is discarded. Every
+Stages nest, and a rollback is a `close()` whose batch is discarded. A closed
+stage is never the open one, including in a context copied while it was still
+open, so a read there cannot overlay a batch that was never persisted. Every
 shipped backend uses one. Nothing in the contract mentions it — a backend that
 stages differently is free to ignore it.
 

@@ -122,13 +122,20 @@ class _StageRegistry:
         ] = weakref.WeakKeyDictionary()
 
     def open(self) -> ExecutionStage | None:
-        return self._open.get()
+        # A context copied while a stage was open still holds it after it
+        # closes, and there is no token to restore in that copy. Reporting no
+        # open stage is what keeps a rolled-back batch from being read there;
+        # it costs that copy the enclosing stage, which nothing needs back.
+        stage = self._open.get()
+        return None if stage is None or stage.closed else stage
 
     def enter(self, stage: ExecutionStage) -> None:
         self._tokens[stage] = self._open.set(stage)
 
     def leave(self, stage: ExecutionStage) -> None:
-        if self._open.get() is not stage:
+        # Checked before popping, so a close this stage is not entitled to make
+        # leaves it exactly as it was.
+        if self._open.get() is not stage or stage not in self._tokens:
             raise RuntimeError("Transaction closed out of order.")
         self._open.reset(self._tokens.pop(stage))
 
@@ -148,6 +155,11 @@ class ExecutionStage:
         self._registry = registry
         self._mutations: dict[ExecutionKey, ExecutionMutation] = {}
         self._batch: Mapping[ExecutionKey, ExecutionMutation] | None = None
+
+    @property
+    def closed(self) -> bool:
+        """Whether the batch is final. A closed stage is nobody's open stage."""
+        return self._batch is not None
 
     @property
     def batch(self) -> Mapping[ExecutionKey, ExecutionMutation]:
@@ -184,7 +196,7 @@ class ExecutionStage:
         self._batch = MappingProxyType(dict(self._mutations))
 
     def _require_open(self) -> None:
-        if self._batch is not None:
+        if self.closed:
             raise RuntimeError("Execution stage is closed.")
 
 
