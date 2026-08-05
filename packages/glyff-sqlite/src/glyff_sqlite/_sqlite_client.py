@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
+import json
 import re
 import sqlite3
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from glyff import Execution, ExecutionId
 from glyff.exceptions import StoreFormatVersionError
+from glyff.serialization.constants import JSON_SEPARATORS
+from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
+from glyff.store.execution_stage import (
+    DeleteExecution,
+    ExecutionKey,
+    ExecutionMutation,
+)
+from glyff.store.utils import execution_id_to_path
 
 # Bump when the stored schema changes.
 FORMAT_VERSION = 1
@@ -25,33 +34,42 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 @dataclass(frozen=True)
 class SQLiteExecutionRecord:
+    """One row of the executions table, as columns of JSON text."""
+
     arguments: str
     status: str
     result: str | None
     metadata: str
 
+    @classmethod
+    def from_execution(cls, execution: Execution) -> SQLiteExecutionRecord:
+        stored = execution_to_dict(execution)
+        return cls(
+            arguments=stored["arguments"],
+            status=stored["status"],
+            result=_json_text(stored["result"])
+            if execution.result is not None
+            else None,
+            metadata=_json_text(stored["metadata"]),
+        )
 
-SQLiteUpdate = Callable[[SQLiteExecutionRecord | None], SQLiteExecutionRecord | None]
-
-SQLiteKey = tuple[str, str]
-
-
-@dataclass(frozen=True)
-class _Write:
-    value: SQLiteExecutionRecord
-
-
-@dataclass(frozen=True)
-class _Delete:
-    pass
+    def to_execution(self, execution_id: ExecutionId) -> Execution:
+        return execution_from_dict(
+            execution_id,
+            {
+                "arguments": self.arguments,
+                "status": self.status,
+                "result": json.loads(self.result) if self.result is not None else None,
+                "metadata": json.loads(self.metadata),
+            },
+        )
 
 
-@dataclass(frozen=True)
-class _Update:
-    fn: SQLiteUpdate
+def _json_text(value: Any) -> str:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=JSON_SEPARATORS
+    )
 
-
-_StagedOp = _Write | _Delete | _Update
 
 _VALID_SYNCHRONOUS_VALUES = {"OFF", "NORMAL", "FULL", "EXTRA"}
 
@@ -67,22 +85,11 @@ def _prefix_upper_bound(prefix: str) -> str:
     return prefix[:-1] + chr(ord(prefix[-1]) + 1)
 
 
-class _SQLiteStagingBuffer:
-    __slots__ = ("ops",)
-
-    def __init__(self) -> None:
-        self.ops: dict[SQLiteKey, list[_StagedOp]] = {}
-
-    def clear(self) -> None:
-        self.ops.clear()
-
-
 class SQLiteClient:
-    """SQLite-backed transactional execution table.
+    """Committed rows of the execution tables, and the batch that replaces them.
 
-    Each execution is identified by its path and stored in the
-    ``<table_prefix>_executions`` table (default prefix ``glyff``). Operations
-    are staged per transaction and committed atomically. A sibling
+    Each execution is a row of ``<table_prefix>_executions`` (default prefix
+    ``glyff``) keyed by ``(session_id, path)``. A sibling
     ``<table_prefix>_sessions`` table records the application version behind each
     session's records, and ``<table_prefix>_meta`` holds the store's own format
     version in a single row.
@@ -130,9 +137,6 @@ class SQLiteClient:
         self._sessions_table_name = table_prefix + _SESSIONS_SUFFIX
         self._meta_table_name = table_prefix + _META_SUFFIX
         self._write_lock = asyncio.Lock()
-        self._current: contextvars.ContextVar[_SQLiteStagingBuffer | None] = (
-            contextvars.ContextVar("sqlite_client_staging", default=None)
-        )
 
         self._database_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -219,93 +223,57 @@ class SQLiteClient:
                 "Refusing to open it."
             )
 
-    # -- Staging lifecycle -----------------------------------------------------
-
-    def begin_staging(self) -> tuple[contextvars.Token, _SQLiteStagingBuffer]:
-        staging = _SQLiteStagingBuffer()
-        token = self._current.set(staging)
-        return token, staging
-
-    def end_staging(self, token: contextvars.Token) -> None:
-        self._current.reset(token)
-
-    def _require_staging(self) -> _SQLiteStagingBuffer:
-        staging = self._current.get()
-        if staging is None:
-            raise RuntimeError("SQLiteClient write attempted outside a transaction.")
-        return staging
-
-    def _require_current_staging(self, expected: _SQLiteStagingBuffer) -> None:
-        if self._current.get() is not expected:
-            raise RuntimeError("Transaction closed out of order.")
-
-    # -- Staging API -----------------------------------------------------------
-
-    def stage_write(self, key: SQLiteKey, value: SQLiteExecutionRecord) -> None:
-        staging = self._require_staging()
-        staging.ops.setdefault(key, []).append(_Write(value))
-
-    def stage_delete(self, key: SQLiteKey) -> None:
-        staging = self._require_staging()
-        staging.ops.setdefault(key, []).append(_Delete())
-
-    def stage_update(self, key: SQLiteKey, fn: SQLiteUpdate) -> None:
-        staging = self._require_staging()
-        staging.ops.setdefault(key, []).append(_Update(fn))
-
-    async def clear_staged(self) -> None:
-        self._require_staging().clear()
-
     # -- Commit ----------------------------------------------------------------
 
-    async def commit_staged(self) -> None:
-        staging = self._require_staging()
-
-        if not staging.ops:
+    async def commit_mutations(
+        self, mutations: dict[ExecutionKey, ExecutionMutation]
+    ) -> None:
+        if not mutations:
             return
 
         async with self._write_lock:
-            await asyncio.to_thread(self._commit_staged_sync, staging)
+            await asyncio.to_thread(self._commit_mutations_sync, mutations)
 
-        staging.clear()
-
-    def _commit_staged_sync(self, staging: _SQLiteStagingBuffer) -> None:
+    def _commit_mutations_sync(
+        self, mutations: dict[ExecutionKey, ExecutionMutation]
+    ) -> None:
         connection = self._connect()
         in_transaction = False
         try:
             connection.execute("BEGIN IMMEDIATE")
             in_transaction = True
 
-            for key, ops in staging.ops.items():
-                session_id, path = key
-                current = self._read_value_sync(connection, key)
-                result = self._apply_ops(current, ops)
-
-                if result is None:
+            for key, mutation in mutations.items():
+                path = execution_id_to_path(key.execution_id)
+                if isinstance(mutation, DeleteExecution):
                     connection.execute(
                         f'DELETE FROM "{self._table_name}" '
                         "WHERE session_id = ? AND path = ?",
-                        (session_id, path),
+                        (key.session_id.value, path),
                     )
-                else:
-                    connection.execute(
-                        f"""INSERT INTO "{self._table_name}"
-                               (session_id, path, arguments, status, result, metadata)
-                           VALUES (?, ?, ?, ?, ?, ?)
-                           ON CONFLICT(session_id, path) DO UPDATE SET
-                               arguments = excluded.arguments,
-                               status = excluded.status,
-                               result = excluded.result,
-                               metadata = excluded.metadata""",
-                        (
-                            session_id,
-                            path,
-                            result.arguments,
-                            result.status,
-                            result.result,
-                            result.metadata,
-                        ),
-                    )
+                    continue
+
+                record = SQLiteExecutionRecord.from_execution(
+                    mutation.snapshot.to_execution()
+                )
+                connection.execute(
+                    f"""INSERT INTO "{self._table_name}"
+                           (session_id, path, arguments, status, result, metadata)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(session_id, path) DO UPDATE SET
+                           arguments = excluded.arguments,
+                           status = excluded.status,
+                           result = excluded.result,
+                           metadata = excluded.metadata""",
+                    (
+                        key.session_id.value,
+                        path,
+                        record.arguments,
+                        record.status,
+                        record.result,
+                        record.metadata,
+                    ),
+                )
 
             connection.execute("COMMIT")
             in_transaction = False
@@ -319,75 +287,40 @@ class SQLiteClient:
         finally:
             connection.close()
 
-    @staticmethod
-    def _apply_ops(
-        data: SQLiteExecutionRecord | None, ops: list[_StagedOp]
-    ) -> SQLiteExecutionRecord | None:
-        current = data
-        for op in ops:
-            if isinstance(op, _Write):
-                current = op.value
-            elif isinstance(op, _Delete):
-                current = None
-            elif isinstance(op, _Update):
-                current = op.fn(current)
-            else:
-                raise TypeError(f"Unknown SQLite op: {op!r}")
-        return current
-
     # -- Read ------------------------------------------------------------------
 
-    async def read(
-        self, key: SQLiteKey, *, staged: bool = True
+    async def read_committed(
+        self, session_id: str, path: str
     ) -> SQLiteExecutionRecord | None:
-        committed = await asyncio.to_thread(self._read_committed_sync, key)
+        return await asyncio.to_thread(self._read_committed_sync, session_id, path)
 
-        if staged:
-            staging = self._current.get()
-            if staging is not None:
-                ops = staging.ops.get(key)
-                if ops:
-                    committed = self._apply_ops(committed, ops)
-
-        return committed
-
-    def _read_committed_sync(self, key: SQLiteKey) -> SQLiteExecutionRecord | None:
+    def _read_committed_sync(
+        self, session_id: str, path: str
+    ) -> SQLiteExecutionRecord | None:
         connection = self._connect()
         try:
-            return self._read_value_sync(connection, key)
+            row = connection.execute(
+                f'SELECT arguments, status, result, metadata FROM "{self._table_name}" '
+                "WHERE session_id = ? AND path = ?",
+                (session_id, path),
+            ).fetchone()
+            if row is None:
+                return None
+            return SQLiteExecutionRecord(
+                arguments=row[0], status=row[1], result=row[2], metadata=row[3]
+            )
         finally:
             connection.close()
 
-    def _read_value_sync(
-        self, connection: sqlite3.Connection, key: SQLiteKey
-    ) -> SQLiteExecutionRecord | None:
-        row = connection.execute(
-            f'SELECT arguments, status, result, metadata FROM "{self._table_name}" '
-            "WHERE session_id = ? AND path = ?",
-            key,
-        ).fetchone()
-        if row is None:
-            return None
-        return SQLiteExecutionRecord(
-            arguments=row[0], status=row[1], result=row[2], metadata=row[3]
-        )
-
-    async def iter_records(
-        self, session_id: str, prefix: str = "", *, staged: bool = True
+    async def iter_committed(
+        self, session_id: str, prefix: str = ""
     ) -> AsyncIterator[tuple[str, SQLiteExecutionRecord]]:
-        """The session's records whose path starts with ``prefix``, in path order.
+        """The session's committed rows whose path starts with ``prefix``, in
+        path order.
 
-        Committed rows are pulled a batch at a time rather than materialized, so
-        a sweep over a large table costs bounded memory.
-
-        The merge needs one order for both sides: SQLite's BINARY collation
-        compares UTF-8 bytes and Python compares code points, which agree,
-        because UTF-8 preserves code point order.
+        Rows are pulled a batch at a time rather than materialized, so a sweep
+        over a large table costs bounded memory.
         """
-        overlay = self._staged_overlay(session_id, prefix) if staged else {}
-        staged_paths = sorted(overlay)
-        next_staged = 0
-
         connection = await asyncio.to_thread(self._connect)
         try:
             cursor = await asyncio.to_thread(
@@ -398,49 +331,17 @@ class SQLiteClient:
                 if not rows:
                     break
                 for row in rows:
-                    path = row[0]
-                    while (
-                        next_staged < len(staged_paths)
-                        and staged_paths[next_staged] < path
-                    ):
-                        pending = staged_paths[next_staged]
-                        next_staged += 1
-                        record = self._apply_ops(None, overlay[pending])
-                        if record is not None:
-                            yield pending, record
-
-                    committed = SQLiteExecutionRecord(
-                        arguments=row[1], status=row[2], result=row[3], metadata=row[4]
+                    yield (
+                        row[0],
+                        SQLiteExecutionRecord(
+                            arguments=row[1],
+                            status=row[2],
+                            result=row[3],
+                            metadata=row[4],
+                        ),
                     )
-                    if (
-                        next_staged < len(staged_paths)
-                        and staged_paths[next_staged] == path
-                    ):
-                        next_staged += 1
-                        final = self._apply_ops(committed, overlay[path])
-                        if final is None:
-                            continue
-                        committed = final
-                    yield path, committed
         finally:
             connection.close()
-
-        for path in staged_paths[next_staged:]:
-            record = self._apply_ops(None, overlay[path])
-            if record is not None:
-                yield path, record
-
-    def _staged_overlay(
-        self, session_id: str, prefix: str
-    ) -> dict[str, list[_StagedOp]]:
-        staging = self._current.get()
-        if staging is None:
-            return {}
-        return {
-            path: ops
-            for (session, path), ops in staging.ops.items()
-            if session == session_id and path.startswith(prefix)
-        }
 
     def _select_range(
         self, connection: sqlite3.Connection, session_id: str, prefix: str

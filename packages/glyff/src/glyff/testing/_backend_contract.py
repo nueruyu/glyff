@@ -239,6 +239,35 @@ class ExecutionBackendContract:
         assert loaded.get_metadata("old") is None
         assert loaded.get_metadata("new") == Metadata("new", serialized_value("new"))
 
+    async def test_save_snapshots_the_execution(self, backend_factory: BackendFactory):
+        # The aggregate is mutable and the caller keeps a reference, so what was
+        # saved must not follow it.
+        backend = backend_factory("snapshot")
+        execution = Execution.start(make_execution_id("task"), canonical_arguments())
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.save(SESSION, execution)
+            execution.complete(serialized_value("changed without another save"))
+
+        loaded = await backend.repository.get(SESSION, execution.id)
+        assert loaded is not None
+        assert loaded.status is ExecutionStatus.STARTED
+        assert loaded.result is None
+
+    async def test_a_staged_save_is_snapshotted_before_commit(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("snapshot-staged")
+        execution = Execution.start(make_execution_id("task"), canonical_arguments())
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.save(SESSION, execution)
+            execution.complete(serialized_value("changed without another save"))
+
+            staged = await backend.repository.get(SESSION, execution.id)
+            assert staged is not None
+            assert staged.status is ExecutionStatus.STARTED
+
     async def test_save_requires_active_transaction(
         self, backend_factory: BackendFactory
     ):

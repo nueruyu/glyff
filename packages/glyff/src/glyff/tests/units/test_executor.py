@@ -19,9 +19,8 @@ from glyff._executor import execute
 from glyff._sequencer import Sequencer
 from glyff.events import ExecutionCompleted, ExecutionFailed
 from glyff.store import MemoryExecutionRepository
-from glyff.store._memory import _make_key
 from glyff.store._memory_client import MemoryClient
-from glyff.store.utils import execution_id_to_path
+from glyff.store.execution_stage import ExecutionKey, ExecutionSnapshot
 from glyff.testing import PruningEventHandler, canonical_arguments, make_execution_id
 from glyff.tests.stubs.store import StubBackend, StubExecutionRepository
 
@@ -206,16 +205,11 @@ async def test_completed_task_is_skipped(
 
     test_context.sequencer.reset_for_call = AsyncMock()
 
-    path = execution_id_to_path(base_execution_id)
-    mock_backend._client.data[_make_key(SESSION, path, "arguments")] = (
-        canonical_arguments().data
+    cached = Execution.start(base_execution_id, canonical_arguments())
+    cached.complete(SerializedValue(await serializer.serialize("cached_result", str)))
+    mock_backend._client.data[ExecutionKey(SESSION, base_execution_id)] = (
+        ExecutionSnapshot.from_execution(cached)
     )
-    mock_backend._client.data[_make_key(SESSION, path, "status")] = (
-        ExecutionStatus.COMPLETED
-    )
-    mock_backend._client.data[
-        _make_key(SESSION, path, "result")
-    ] = await serializer.serialize("cached_result", str)
 
     result = await execute(
         ctx=test_context,
@@ -244,12 +238,10 @@ async def test_started_record_is_retryable(
 
     # A leftover STARTED record (an interrupted prior attempt) does not block
     # re-execution.
-    path = execution_id_to_path(base_execution_id)
-    mock_backend._client.data[_make_key(SESSION, path, "arguments")] = (
-        canonical_arguments().data
-    )
-    mock_backend._client.data[_make_key(SESSION, path, "status")] = (
-        ExecutionStatus.STARTED
+    mock_backend._client.data[ExecutionKey(SESSION, base_execution_id)] = (
+        ExecutionSnapshot.from_execution(
+            Execution.start(base_execution_id, canonical_arguments())
+        )
     )
 
     result = await execute(
@@ -542,7 +534,9 @@ async def test_execution_failed_emits_after_body_transaction_closes(
     call_names = [call.name for call in mock_backend.calls]
     assert call_names.index("rollback") < call_names.index("failure_handler")
     assert handler_saw_scratch == [False]
-    assert write_errors == ["MemoryClient write attempted outside a transaction."]
+    assert write_errors == [
+        "Execution repository write attempted outside a transaction."
+    ]
     assert await mock_backend.repository.get(SESSION, scratch_id) is None
 
 
@@ -612,7 +606,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     client = MemoryClient()
     backend = StubBackend(client)
     backend.repository = FailingCompleteRepository(
-        backend._record, MemoryExecutionRepository(client)
+        backend._record, MemoryExecutionRepository(client, backend.stage)
     )
     ctx = Context(
         session_id=SESSION,

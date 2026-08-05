@@ -3,7 +3,7 @@
 import pytest
 
 from glyff import ArgumentCanonicalizer, EventEmitter, SessionId, engrave
-from glyff.store._memory import _key_to_path
+from glyff.store.utils import execution_id_to_path
 from glyff.testing import PruningEventHandler
 from glyff.tests.types import BackendFactory, make_session
 
@@ -40,9 +40,9 @@ def _committed_paths(backend, session_id: str) -> set[str]:
     only the root has a depth-1 path)."""
     session = SessionId(session_id)
     return {
-        p
-        for k in backend.repository._client.data
-        if (p := _key_to_path(k, session)) is not None
+        execution_id_to_path(key.execution_id)
+        for key in backend.repository._client.data
+        if key.session_id == session
     }
 
 

@@ -5,18 +5,21 @@ from glyff import Execution, SerializedValue, SessionId, TransactionScope
 from glyff.store.utils import execution_id_to_path
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff_sqlite import SQLiteBackend
-from glyff_sqlite._sqlite_client import SQLiteClient, SQLiteExecutionRecord
+from glyff.store.execution_stage import (
+    DeleteExecution,
+    ExecutionKey,
+    ExecutionSnapshot,
+    SaveExecution,
+)
+
+from glyff_sqlite._sqlite_client import SQLiteClient
 
 SESSION = SessionId("test")
 
 
-def record(value: str) -> SQLiteExecutionRecord:
-    return SQLiteExecutionRecord(
-        arguments="{}",
-        status="completed",
-        result=f'"{value}"',
-        metadata="{}",
-    )
+def _save(execution_id) -> SaveExecution:
+    execution = Execution.start(execution_id, canonical_arguments())
+    return SaveExecution(ExecutionSnapshot.from_execution(execution))
 
 
 async def test_sqlite_backend_initializes_schema(tmp_path: Path):
@@ -50,32 +53,38 @@ async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
     ]
 
 
-async def test_sqlite_client_commit_is_atomic_across_execution_paths(tmp_path: Path):
+async def test_sqlite_client_commits_a_batch_of_mutations(tmp_path: Path):
     client = SQLiteClient(tmp_path / "atomic.sqlite3")
     client._initialize_schema_sync()
+    root = make_execution_id("task")
+    child = make_execution_id("child", parent=root)
 
-    token, _ = client.begin_staging()
-    client.stage_write((SESSION.value, "task"), record("execution"))
-    client.stage_write((SESSION.value, "task/child"), record("child"))
-    await client.commit_staged()
-    client.end_staging(token)
+    await client.commit_mutations(
+        {
+            ExecutionKey(SESSION, root): _save(root),
+            ExecutionKey(SESSION, child): _save(child),
+        }
+    )
 
-    assert await client.read((SESSION.value, "task")) == record("execution")
-    assert await client.read((SESSION.value, "task/child")) == record("child")
+    for execution_id in (root, child):
+        path = execution_id_to_path(execution_id)
+        assert await client.read_committed(SESSION.value, path) is not None
 
 
-async def test_sqlite_client_rollback_clears_all_execution_paths(tmp_path: Path):
-    client = SQLiteClient(tmp_path / "rollback.sqlite3")
+async def test_sqlite_client_commits_a_delete(tmp_path: Path):
+    client = SQLiteClient(tmp_path / "delete.sqlite3")
     client._initialize_schema_sync()
+    execution_id = make_execution_id("task")
+    path = execution_id_to_path(execution_id)
 
-    token, _ = client.begin_staging()
-    client.stage_write((SESSION.value, "task"), record("execution"))
-    client.stage_write((SESSION.value, "task/child"), record("child"))
-    await client.clear_staged()
-    client.end_staging(token)
+    await client.commit_mutations(
+        {ExecutionKey(SESSION, execution_id): _save(execution_id)}
+    )
+    await client.commit_mutations(
+        {ExecutionKey(SESSION, execution_id): DeleteExecution()}
+    )
 
-    assert await client.read((SESSION.value, "task")) is None
-    assert await client.read((SESSION.value, "task/child")) is None
+    assert await client.read_committed(SESSION.value, path) is None
 
 
 async def test_sqlite_backend_stores_execution_columns_as_readable_json(
