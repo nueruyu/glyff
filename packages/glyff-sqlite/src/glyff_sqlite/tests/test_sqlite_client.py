@@ -5,7 +5,7 @@ from glyff import Execution, SerializedValue, SessionId, TransactionScope
 from glyff.store.utils import execution_id_to_path
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff_sqlite import SQLiteBackend
-from glyff.store._execution_stage import (
+from glyff.store.staging import (
     DeleteExecution,
     ExecutionKey,
     ExecutionSnapshot,

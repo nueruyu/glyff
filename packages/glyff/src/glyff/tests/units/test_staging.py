@@ -1,8 +1,17 @@
 """The transaction-local stage every backend shares."""
 
+from typing import cast
+
 import pytest
-from glyff import Execution, ExecutionStatus, SerializedValue, SessionId
-from glyff.store._execution_stage import (
+from glyff import (
+    CanonicalArguments,
+    Execution,
+    ExecutionStatus,
+    SerializedValue,
+    SessionId,
+)
+from glyff.store import staging
+from glyff.store.staging import (
     DeleteExecution,
     ExecutionKey,
     ExecutionStage,
@@ -16,6 +25,27 @@ OTHER = SessionId("other")
 
 def started(name: str = "task") -> Execution:
     return Execution.start(make_execution_id(name), canonical_arguments())
+
+
+# -- The supported surface ---------------------------------------------------
+
+
+def test_the_staging_types_are_importable_from_the_public_module():
+    # Out-of-tree backends import these, so the module path and the names in it
+    # are the promise; losing one has to be a deliberate edit here.
+    assert staging.__all__ == [
+        "DeleteExecution",
+        "ExecutionKey",
+        "ExecutionMutation",
+        "ExecutionSnapshot",
+        "ExecutionStage",
+        "SaveExecution",
+        "StageHandle",
+    ]
+    assert all(hasattr(staging, name) for name in staging.__all__)
+
+
+# -- Staging -----------------------------------------------------------------
 
 
 def test_a_write_outside_a_stage_raises():
@@ -83,6 +113,34 @@ def test_a_save_snapshots_the_execution():
     staged = mutation.snapshot.to_execution()
     assert staged.status is ExecutionStatus.STARTED
     assert staged.result is None
+
+
+def test_a_save_copies_the_payloads_it_snapshots():
+    # The annotations say ``bytes``, but a mutable buffer satisfies them at
+    # runtime, so the snapshot copies rather than trusting the caller.
+    stage = ExecutionStage()
+    arguments = bytearray(canonical_arguments().data)
+    result = bytearray(b'"result"')
+    metadata = bytearray(b'"metadata"')
+
+    # The casts are the point: this is the call a type checker cannot stop.
+    execution = Execution.start(
+        make_execution_id("task"), CanonicalArguments(cast(bytes, arguments))
+    )
+    execution.complete(SerializedValue(cast(bytes, result)))
+    execution.set_metadata("note", SerializedValue(cast(bytes, metadata)))
+
+    stage.begin()
+    stage.save(SESSION, execution)
+    for payload in (arguments, result, metadata):
+        payload[:] = b"!" * len(payload)
+
+    mutation = stage.lookup(SESSION, execution.id)
+    assert isinstance(mutation, SaveExecution)
+    staged = mutation.snapshot.to_execution()
+    assert staged.arguments.data == canonical_arguments().data
+    assert staged.result == SerializedValue(b'"result"')
+    assert staged.metadata["note"].value == SerializedValue(b'"metadata"')
 
 
 def test_a_current_snapshot_is_detached_from_later_changes():

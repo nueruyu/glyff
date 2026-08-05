@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from glyff import Transaction
-from glyff.store._execution_stage import ExecutionStage, StageHandle
+from glyff.store.staging import ExecutionStage, StageHandle
 
 from glyff_sqlite._sqlite_client import SQLiteClient
 

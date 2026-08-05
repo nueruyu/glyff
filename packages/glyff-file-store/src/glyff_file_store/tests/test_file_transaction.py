@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from glyff_file_store import FileTransactionProvider
-from glyff.store._execution_stage import ExecutionStage
+from glyff.store.staging import ExecutionStage
 
 from glyff_file_store._file_client import FileClient
 

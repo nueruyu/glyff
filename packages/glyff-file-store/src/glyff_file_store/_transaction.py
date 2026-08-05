@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from glyff import Transaction
-from glyff.store._execution_stage import ExecutionStage, StageHandle
+from glyff.store.staging import ExecutionStage, StageHandle
 
 from glyff_file_store._file_client import FileClient
 

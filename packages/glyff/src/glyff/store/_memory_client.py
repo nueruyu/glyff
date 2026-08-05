@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from .._models import ExecutionId, SessionId
-from ._execution_stage import (
+from .staging import (
     DeleteExecution,
     ExecutionKey,
     ExecutionMutation,

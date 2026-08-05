@@ -18,7 +18,7 @@ from glyff.store import (
     MemoryTransactionProvider,
 )
 from glyff.store._memory_client import MemoryClient
-from glyff.store._execution_stage import ExecutionStage
+from glyff.store.staging import ExecutionStage
 
 
 class Call(NamedTuple):
