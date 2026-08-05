@@ -4,7 +4,8 @@ import asyncio
 import json
 import re
 import sqlite3
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -154,14 +155,34 @@ class SQLiteClient:
         connection.execute(f"PRAGMA synchronous={self._synchronous}")
         return connection
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """A configured connection, closed however the block ends."""
+        with closing(self._connect()) as connection:
+            yield connection
+
+    @contextmanager
+    def _immediate_transaction(self) -> Iterator[sqlite3.Connection]:
+        """One ``BEGIN IMMEDIATE``: committed if the block returns, rolled back
+        if anything in it — or the commit itself — raises.
+
+        A failed rollback is swallowed so it cannot replace the failure that
+        caused it. A failed ``BEGIN`` leaves nothing to roll back.
+        """
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                yield connection
+                connection.execute("COMMIT")
+            except BaseException:
+                with suppress(sqlite3.Error):
+                    connection.execute("ROLLBACK")
+                raise
+
     # -- Schema initialization -------------------------------------------------
 
     def _initialize_schema_sync(self) -> None:
-        connection = self._connect()
-        in_transaction = False
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            in_transaction = True
+        with self._immediate_transaction() as connection:
             self._stamp_or_check_meta(connection)
             connection.execute(
                 f"""
@@ -184,17 +205,6 @@ class SQLiteClient:
                 )
                 """
             )
-            connection.execute("COMMIT")
-            in_transaction = False
-        except BaseException:
-            if in_transaction:
-                try:
-                    connection.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-            raise
-        finally:
-            connection.close()
 
     def _stamp_or_check_meta(self, connection: sqlite3.Connection) -> None:
         # No row means a store glyff has never stamped, which it adopts as current.
@@ -237,55 +247,43 @@ class SQLiteClient:
     def _commit_mutations_sync(
         self, mutations: Mapping[ExecutionKey, ExecutionMutation]
     ) -> None:
-        connection = self._connect()
-        in_transaction = False
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            in_transaction = True
-
+        with self._immediate_transaction() as connection:
             for key, mutation in mutations.items():
-                path = execution_id_to_path(key.execution_id)
-                if isinstance(mutation, DeleteExecution):
-                    connection.execute(
-                        f'DELETE FROM "{self._table_name}" '
-                        "WHERE session_id = ? AND path = ?",
-                        (key.session_id.value, path),
-                    )
-                    continue
+                self._apply_mutation(connection, key, mutation)
 
-                record = SQLiteExecutionRecord.from_execution(
-                    mutation.snapshot.to_execution()
-                )
-                connection.execute(
-                    f"""INSERT INTO "{self._table_name}"
-                           (session_id, path, arguments, status, result, metadata)
-                       VALUES (?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(session_id, path) DO UPDATE SET
-                           arguments = excluded.arguments,
-                           status = excluded.status,
-                           result = excluded.result,
-                           metadata = excluded.metadata""",
-                    (
-                        key.session_id.value,
-                        path,
-                        record.arguments,
-                        record.status,
-                        record.result,
-                        record.metadata,
-                    ),
-                )
+    def _apply_mutation(
+        self,
+        connection: sqlite3.Connection,
+        key: ExecutionKey,
+        mutation: ExecutionMutation,
+    ) -> None:
+        path = execution_id_to_path(key.execution_id)
+        if isinstance(mutation, DeleteExecution):
+            connection.execute(
+                f'DELETE FROM "{self._table_name}" WHERE session_id = ? AND path = ?',
+                (key.session_id.value, path),
+            )
+            return
 
-            connection.execute("COMMIT")
-            in_transaction = False
-        except BaseException:
-            if in_transaction:
-                try:
-                    connection.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-            raise
-        finally:
-            connection.close()
+        record = SQLiteExecutionRecord.from_execution(mutation.snapshot.to_execution())
+        connection.execute(
+            f"""INSERT INTO "{self._table_name}"
+                   (session_id, path, arguments, status, result, metadata)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(session_id, path) DO UPDATE SET
+                   arguments = excluded.arguments,
+                   status = excluded.status,
+                   result = excluded.result,
+                   metadata = excluded.metadata""",
+            (
+                key.session_id.value,
+                path,
+                record.arguments,
+                record.status,
+                record.result,
+                record.metadata,
+            ),
+        )
 
     # -- Read ------------------------------------------------------------------
 
@@ -297,8 +295,7 @@ class SQLiteClient:
     def _read_committed_sync(
         self, session_id: str, path: str
     ) -> SQLiteExecutionRecord | None:
-        connection = self._connect()
-        try:
+        with self._connection() as connection:
             row = connection.execute(
                 f'SELECT arguments, status, result, metadata FROM "{self._table_name}" '
                 "WHERE session_id = ? AND path = ?",
@@ -309,8 +306,6 @@ class SQLiteClient:
             return SQLiteExecutionRecord(
                 arguments=row[0], status=row[1], result=row[2], metadata=row[3]
             )
-        finally:
-            connection.close()
 
     async def iter_committed(
         self, session_id: str, prefix: str = ""
@@ -321,8 +316,11 @@ class SQLiteClient:
         Rows are pulled a batch at a time rather than materialized, so a sweep
         over a large table costs bounded memory.
         """
+        # Connecting blocks, so it stays on a worker thread rather than going
+        # through _connection(); closing() gives the same guarantee around the
+        # one connection and cursor this iteration holds.
         connection = await asyncio.to_thread(self._connect)
-        try:
+        with closing(connection):
             cursor = await asyncio.to_thread(
                 self._select_range, connection, session_id, prefix
             )
@@ -340,8 +338,6 @@ class SQLiteClient:
                             metadata=row[4],
                         ),
                     )
-        finally:
-            connection.close()
 
     def _select_range(
         self, connection: sqlite3.Connection, session_id: str, prefix: str
@@ -371,37 +367,21 @@ class SQLiteClient:
             )
 
     def _claim_session_sync(self, session_id: str, app_version: str) -> str:
-        connection = self._connect()
-        in_transaction = False
-        try:
-            # One BEGIN IMMEDIATE around the insert and the read: a concurrent
-            # claim either waits for this commit and then reads the winner, or
-            # takes the write lock first and makes this one read its version.
-            connection.execute("BEGIN IMMEDIATE")
-            in_transaction = True
+        # The insert and the read share one BEGIN IMMEDIATE: a concurrent claim
+        # either waits for this commit and then reads the winner, or takes the
+        # write lock first and makes this one read its version.
+        with self._immediate_transaction() as connection:
             connection.execute(
                 f'INSERT INTO "{self._sessions_table_name}" '
                 "(session_id, app_version) VALUES (?, ?) "
                 "ON CONFLICT(session_id) DO NOTHING",
                 (session_id, app_version),
             )
-            recorded = connection.execute(
+            return connection.execute(
                 f'SELECT app_version FROM "{self._sessions_table_name}" '
                 "WHERE session_id = ?",
                 (session_id,),
             ).fetchone()[0]
-            connection.execute("COMMIT")
-            in_transaction = False
-            return recorded
-        except BaseException:
-            if in_transaction:
-                try:
-                    connection.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-            raise
-        finally:
-            connection.close()
 
     # -- Direct SQL access (for initialization / inspection) -------------------
 
@@ -409,31 +389,13 @@ class SQLiteClient:
         return await asyncio.to_thread(self._read_sql_sync, sql, params)
 
     def _read_sql_sync(self, sql: str, params: tuple[Any, ...]) -> list[tuple]:
-        connection = self._connect()
-        try:
+        with self._connection() as connection:
             return list(connection.execute(sql, params))
-        finally:
-            connection.close()
 
     async def execute(self, sql: str, *params: Any) -> None:
         async with self._write_lock:
             await asyncio.to_thread(self._execute_sync, sql, params)
 
     def _execute_sync(self, sql: str, params: tuple[Any, ...]) -> None:
-        connection = self._connect()
-        in_transaction = False
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            in_transaction = True
+        with self._immediate_transaction() as connection:
             connection.execute(sql, params)
-            connection.execute("COMMIT")
-            in_transaction = False
-        except BaseException:
-            if in_transaction:
-                try:
-                    connection.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
-            raise
-        finally:
-            connection.close()
