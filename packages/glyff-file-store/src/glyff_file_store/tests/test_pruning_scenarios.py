@@ -19,7 +19,7 @@ class PruningPause(Exception):
 
 async def _read_execution_map(backend: JsonFileBackend, session_id: str) -> Executions:
     repository = cast(FileExecutionRepository, backend.repository)
-    return await repository._client.read_executions(session_id)
+    return await repository._client.read_committed_executions(session_id)
 
 
 async def _leaf_names(backend: JsonFileBackend, session_id: str) -> list[str]:

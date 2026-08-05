@@ -6,8 +6,9 @@ Re-exported from :mod:`glyff.testing`, the public entry point.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Protocol
 
 import pytest
@@ -38,6 +39,11 @@ class BackendHandle(Protocol):
 
 BackendFactory = Callable[[str], BackendHandle]
 """Builds a backend over the named store. The same name reopens the same store."""
+
+
+async def _collect(executions: AsyncIterator[Execution]) -> list[Execution]:
+    return [execution async for execution in executions]
+
 
 SESSION = SessionId("contract")
 OTHER_SESSION = SessionId("contract-other")
@@ -239,6 +245,35 @@ class ExecutionBackendContract:
         assert loaded.get_metadata("old") is None
         assert loaded.get_metadata("new") == Metadata("new", serialized_value("new"))
 
+    async def test_save_snapshots_the_execution(self, backend_factory: BackendFactory):
+        # The aggregate is mutable and the caller keeps a reference, so what was
+        # saved must not follow it.
+        backend = backend_factory("snapshot")
+        execution = Execution.start(make_execution_id("task"), canonical_arguments())
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.save(SESSION, execution)
+            execution.complete(serialized_value("changed without another save"))
+
+        loaded = await backend.repository.get(SESSION, execution.id)
+        assert loaded is not None
+        assert loaded.status is ExecutionStatus.STARTED
+        assert loaded.result is None
+
+    async def test_a_staged_save_is_snapshotted_before_commit(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("snapshot-staged")
+        execution = Execution.start(make_execution_id("task"), canonical_arguments())
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.save(SESSION, execution)
+            execution.complete(serialized_value("changed without another save"))
+
+            staged = await backend.repository.get(SESSION, execution.id)
+            assert staged is not None
+            assert staged.status is ExecutionStatus.STARTED
+
     async def test_save_requires_active_transaction(
         self, backend_factory: BackendFactory
     ):
@@ -267,6 +302,33 @@ class ExecutionBackendContract:
         await tx.rollback()
 
         assert await backend.repository.get(SESSION, execution_id) is None
+
+    async def test_rollback_is_invisible_to_a_read_in_a_context_copied_before_it(
+        self, backend_factory: BackendFactory
+    ):
+        # A read can run in a context copied while the transaction was open —
+        # a task started back then, say. It must still see the rolled-back save
+        # as never having happened.
+        backend = backend_factory("rollback-copied-context")
+        execution_id = make_execution_id("task")
+
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(
+            SESSION, Execution.start(execution_id, canonical_arguments())
+        )
+        context = contextvars.copy_context()
+        await tx.rollback()
+
+        loop = asyncio.get_running_loop()
+        read = loop.create_task(
+            backend.repository.get(SESSION, execution_id), context=context
+        )
+        listed = loop.create_task(
+            _collect(backend.repository.executions(SESSION)), context=context
+        )
+
+        assert await read is None
+        assert await listed == []
 
     async def test_commit_persists_save(self, backend_factory: BackendFactory):
         backend = backend_factory("commit-save")

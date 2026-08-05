@@ -15,7 +15,9 @@ from glyff import (
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
-from ._file_client import Executions, FileClient
+from glyff.store.staging import ExecutionStaging, SaveExecution
+
+from ._file_client import FileClient
 from ._transaction import _ClientTransaction
 
 # Bump when the stored layout changes.
@@ -25,26 +27,28 @@ FORMAT_VERSION = 1
 class FileExecutionRepository(ExecutionRepository):
     """File-backed Execution aggregate repository."""
 
-    def __init__(self, client: FileClient):
+    def __init__(self, client: FileClient, staging: ExecutionStaging):
         self._client = client
+        self._staging = staging
 
     async def get(
         self, session_id: SessionId, execution_id: ExecutionId
     ) -> Execution | None:
-        executions = await self._client.read_executions(session_id.value)
+        stage = self._staging.current()
+        mutation = stage.lookup(session_id, execution_id) if stage else None
+        if mutation is not None:
+            return (
+                mutation.snapshot.to_execution()
+                if isinstance(mutation, SaveExecution)
+                else None
+            )
+
+        executions = await self._client.read_committed_executions(session_id.value)
         stored = executions.get(execution_id_to_path(execution_id))
-        if stored is None:
-            return None
-        return execution_from_dict(execution_id, stored)
+        return None if stored is None else execution_from_dict(execution_id, stored)
 
     async def save(self, session_id: SessionId, execution: Execution) -> None:
-        path = execution_id_to_path(execution.id)
-        stored = execution_to_dict(execution)
-
-        def update(executions: Executions) -> Executions:
-            return {**executions, path: stored}
-
-        self._client.stage_executions(session_id.value, update)
+        self._staging.require_current().save(session_id, execution)
 
     async def executions(
         self,
@@ -54,8 +58,19 @@ class FileExecutionRepository(ExecutionRepository):
         under: ExecutionId | None = None,
     ) -> AsyncIterator[Execution]:
         prefix = execution_id_to_path(under) + "/" if under is not None else ""
-        recorded = await self._client.read_executions(session_id.value)
-        for path, stored in sorted(recorded.items()):
+        visible = await self._client.read_committed_executions(session_id.value)
+
+        stage = self._staging.current()
+        for key, mutation in (stage.snapshot() if stage else {}).items():
+            if key.session_id != session_id:
+                continue
+            path = execution_id_to_path(key.execution_id)
+            if isinstance(mutation, SaveExecution):
+                visible[path] = execution_to_dict(mutation.snapshot.to_execution())
+            else:
+                visible.pop(path, None)
+
+        for path, stored in sorted(visible.items()):
             if not path.startswith(prefix):
                 continue
             execution = execution_from_dict(path_to_execution_id(path), stored)
@@ -65,24 +80,18 @@ class FileExecutionRepository(ExecutionRepository):
     async def delete_many(
         self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
     ) -> None:
-        paths = {execution_id_to_path(eid) for eid in execution_ids}
-        if not paths:
-            return
-
-        def update(executions: Executions) -> Executions:
-            return {
-                path: stored for path, stored in executions.items() if path not in paths
-            }
-
-        self._client.stage_executions(session_id.value, update)
+        stage = self._staging.require_current()
+        for execution_id in execution_ids:
+            stage.delete(session_id, execution_id)
 
 
 class FileTransactionProvider(TransactionProvider):
-    def __init__(self, client: FileClient):
+    def __init__(self, client: FileClient, staging: ExecutionStaging):
         self._client = client
+        self._staging = staging
 
     async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client).begin()
+        return await _ClientTransaction(self._client, self._staging).begin()
 
 
 class JsonFileBackend:
@@ -100,9 +109,12 @@ class JsonFileBackend:
 
     def __init__(self, *, base_dir: str | Path):
         client = FileClient(base_dir, format_version=FORMAT_VERSION)
+        staging = ExecutionStaging()
         self._client = client
-        self.repository: ExecutionRepository = FileExecutionRepository(client)
-        self.transaction_provider: TransactionProvider = FileTransactionProvider(client)
+        self.repository: ExecutionRepository = FileExecutionRepository(client, staging)
+        self.transaction_provider: TransactionProvider = FileTransactionProvider(
+            client, staging
+        )
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         return await self._client.claim_session(session_id.value, app_version)

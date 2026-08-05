@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
-from typing import Any
 
 from glyff import (
     Execution,
@@ -14,63 +12,43 @@ from glyff import (
     Transaction,
     TransactionProvider,
 )
-from glyff.serialization.constants import JSON_SEPARATORS
-from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
+from glyff.store.staging import (
+    ExecutionMutation,
+    ExecutionStaging,
+    SaveExecution,
+)
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
-from ._sqlite_client import SQLiteClient, SQLiteExecutionRecord
+from ._sqlite_client import SQLiteClient
 from ._transaction import _ClientTransaction
-
-
-def _json_text(value: Any) -> str:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=JSON_SEPARATORS,
-    )
-
-
-def _to_execution(
-    execution_id: ExecutionId, record: SQLiteExecutionRecord
-) -> Execution:
-    stored = {
-        "arguments": record.arguments,
-        "status": record.status,
-        "result": json.loads(record.result) if record.result is not None else None,
-        "metadata": json.loads(record.metadata),
-    }
-    return execution_from_dict(execution_id, stored)
-
-
-def _from_execution(execution: Execution) -> SQLiteExecutionRecord:
-    stored = execution_to_dict(execution)
-    return SQLiteExecutionRecord(
-        arguments=stored["arguments"],
-        status=stored["status"],
-        result=_json_text(stored["result"]) if execution.result is not None else None,
-        metadata=_json_text(stored["metadata"]),
-    )
 
 
 class SQLiteExecutionRepository(ExecutionRepository):
     """SQLite-backed Execution aggregate repository."""
 
-    def __init__(self, client: SQLiteClient):
+    def __init__(self, client: SQLiteClient, staging: ExecutionStaging):
         self._client = client
+        self._staging = staging
 
     async def get(
         self, session_id: SessionId, execution_id: ExecutionId
     ) -> Execution | None:
-        key = (session_id.value, execution_id_to_path(execution_id))
-        record = await self._client.read(key, staged=True)
-        if record is None:
-            return None
-        return _to_execution(execution_id, record)
+        stage = self._staging.current()
+        mutation = stage.lookup(session_id, execution_id) if stage else None
+        if mutation is not None:
+            return (
+                mutation.snapshot.to_execution()
+                if isinstance(mutation, SaveExecution)
+                else None
+            )
+
+        record = await self._client.read_committed(
+            session_id.value, execution_id_to_path(execution_id)
+        )
+        return None if record is None else record.to_execution(execution_id)
 
     async def save(self, session_id: SessionId, execution: Execution) -> None:
-        key = (session_id.value, execution_id_to_path(execution.id))
-        self._client.stage_write(key, _from_execution(execution))
+        self._staging.require_current().save(session_id, execution)
 
     async def executions(
         self,
@@ -80,30 +58,75 @@ class SQLiteExecutionRepository(ExecutionRepository):
         under: ExecutionId | None = None,
     ) -> AsyncIterator[Execution]:
         prefix = execution_id_to_path(under) + "/" if under is not None else ""
-        # Status is filtered here rather than in SQL: a staged record can differ
-        # in status from the committed row a WHERE clause would have judged it by.
-        async for path, record in self._client.iter_records(
-            session_id.value, prefix, staged=True
-        ):
-            execution = _to_execution(path_to_execution_id(path), record)
+        staged = self._staged_for(session_id, prefix)
+        staged_paths = sorted(staged)
+        next_staged = 0
+
+        # The merge needs one order for both sides: SQLite's BINARY collation
+        # compares UTF-8 bytes and Python compares code points, which agree,
+        # because UTF-8 preserves code point order.
+        async for path, record in self._client.iter_committed(session_id.value, prefix):
+            while next_staged < len(staged_paths) and staged_paths[next_staged] < path:
+                pending = staged_paths[next_staged]
+                next_staged += 1
+                execution = _staged_execution(staged[pending])
+                if execution is not None and status in (None, execution.status):
+                    yield execution
+
+            if next_staged < len(staged_paths) and staged_paths[next_staged] == path:
+                next_staged += 1
+                execution = _staged_execution(staged[path])
+                if execution is None:
+                    continue
+            else:
+                execution = record.to_execution(path_to_execution_id(path))
+
+            # Status is filtered after the overlay: a staged save can differ in
+            # status from the committed row a WHERE clause would have judged.
             if status in (None, execution.status):
+                yield execution
+
+        for path in staged_paths[next_staged:]:
+            execution = _staged_execution(staged[path])
+            if execution is not None and status in (None, execution.status):
                 yield execution
 
     async def delete_many(
         self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
     ) -> None:
+        stage = self._staging.require_current()
         for execution_id in execution_ids:
-            self._client.stage_delete(
-                (session_id.value, execution_id_to_path(execution_id))
-            )
+            stage.delete(session_id, execution_id)
+
+    def _staged_for(
+        self, session_id: SessionId, prefix: str
+    ) -> dict[str, ExecutionMutation]:
+        stage = self._staging.current()
+        staged = {}
+        for key, mutation in (stage.snapshot() if stage else {}).items():
+            if key.session_id != session_id:
+                continue
+            path = execution_id_to_path(key.execution_id)
+            if path.startswith(prefix):
+                staged[path] = mutation
+        return staged
+
+
+def _staged_execution(mutation: ExecutionMutation) -> Execution | None:
+    return (
+        mutation.snapshot.to_execution()
+        if isinstance(mutation, SaveExecution)
+        else None
+    )
 
 
 class SQLiteTransactionProvider(TransactionProvider):
-    def __init__(self, client: SQLiteClient):
+    def __init__(self, client: SQLiteClient, staging: ExecutionStaging):
         self._client = client
+        self._staging = staging
 
     async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client).begin()
+        return await _ClientTransaction(self._client, self._staging).begin()
 
 
 class SQLiteBackend:
@@ -144,10 +167,13 @@ class SQLiteBackend:
             table_prefix=table_prefix,
         )
         client._initialize_schema_sync()
+        staging = ExecutionStaging()
         self._client = client
-        self.repository: ExecutionRepository = SQLiteExecutionRepository(client)
+        self.repository: ExecutionRepository = SQLiteExecutionRepository(
+            client, staging
+        )
         self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(
-            client
+            client, staging
         )
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:

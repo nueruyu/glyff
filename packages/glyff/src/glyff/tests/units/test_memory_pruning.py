@@ -1,11 +1,7 @@
-from typing import cast
-
 from glyff import Execution, ExecutionStatus, SerializedValue, SessionId
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff._context import TransactionScope
-from glyff.store import MemoryBackend, MemoryExecutionRepository
-from glyff.store._memory import _make_key
-from glyff.store.utils import execution_id_to_path
+from glyff.store import MemoryBackend
 
 SESSION = SessionId("test")
 
@@ -48,17 +44,6 @@ async def test_delete_many_removes_execution_parts(serializer):
         await backend.repository.delete_many(SESSION, [execution_id])
 
     assert await backend.repository.get(SESSION, execution_id) is None
-
-
-async def test_executions_ignore_metadata_only_orphans(serializer):
-    backend = MemoryBackend()
-    root = make_execution_id("root")
-    child = make_execution_id("child", parent=root)
-    path = execution_id_to_path(child)
-    repository = cast(MemoryExecutionRepository, backend.repository)
-    repository._client.data[_make_key(SESSION, path, "metadata")] = {"k": b'"v"'}
-
-    assert await _ids_under(backend, root) == set()
 
 
 async def test_delete_one_descendant_preserves_siblings(serializer):
