@@ -3,45 +3,40 @@ from __future__ import annotations
 import asyncio
 
 from glyff import Transaction
-from glyff.store.staging import ExecutionStage, StageHandle
+from glyff.store.staging import ExecutionStage, ExecutionStaging
 
 from glyff_file_store._file_client import FileClient
 
 
 class _ClientTransaction(Transaction):
-    def __init__(self, client: FileClient, stage: ExecutionStage) -> None:
+    def __init__(self, client: FileClient, staging: ExecutionStaging) -> None:
         self._client = client
-        self._stage = stage
-        self._handle: StageHandle | None = None
+        self._staging = staging
+        self._stage: ExecutionStage | None = None
         self._closed = False
         self._lock = asyncio.Lock()
 
     async def begin(self) -> _ClientTransaction:
-        self._handle = self._stage.begin()
+        self._stage = self._staging.begin()
         return self
 
     async def commit(self) -> None:
         async with self._lock:
             if self._closed:
                 return
-            handle = self._require_handle()
-            mutations = self._stage.seal(handle)
+            stage = self._require_stage()
+            stage.close()
             self._closed = True
-            try:
-                await self._client.commit_mutations(mutations)
-            finally:
-                self._stage.close(handle)
+            await self._client.commit_mutations(stage.batch)
 
     async def rollback(self) -> None:
         async with self._lock:
             if self._closed:
                 return
-            handle = self._require_handle()
-            self._stage.seal(handle)
+            self._require_stage().close()
             self._closed = True
-            self._stage.close(handle)
 
-    def _require_handle(self) -> StageHandle:
-        if self._handle is None:
+    def _require_stage(self) -> ExecutionStage:
+        if self._stage is None:
             raise RuntimeError("transaction not started")
-        return self._handle
+        return self._stage

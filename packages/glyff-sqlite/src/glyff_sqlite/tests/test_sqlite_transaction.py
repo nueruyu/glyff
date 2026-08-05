@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from glyff import Execution, SessionId
-from glyff.store.staging import ExecutionStage
+from glyff.store.staging import ExecutionStaging
 from glyff.testing import canonical_arguments, make_execution_id
 
 from glyff_sqlite import SQLiteExecutionRepository, SQLiteTransactionProvider
@@ -32,9 +32,9 @@ def _client(database_path: Path) -> SQLiteClient:
 
 async def test_sqlite_transaction_commit_closes_and_is_idempotent(tmp_path: Path):
     client = _client(tmp_path / "commit.sqlite3")
-    stage = ExecutionStage()
-    repository = SQLiteExecutionRepository(client, stage)
-    transaction_provider = SQLiteTransactionProvider(client, stage)
+    staging = ExecutionStaging()
+    repository = SQLiteExecutionRepository(client, staging)
+    transaction_provider = SQLiteTransactionProvider(client, staging)
 
     transaction = await transaction_provider.begin_transaction()
     await repository.save(SESSION, _started())
@@ -47,9 +47,9 @@ async def test_sqlite_transaction_commit_closes_and_is_idempotent(tmp_path: Path
 
 async def test_sqlite_transaction_rollback_closes_and_is_idempotent(tmp_path: Path):
     client = _client(tmp_path / "rollback.sqlite3")
-    stage = ExecutionStage()
-    repository = SQLiteExecutionRepository(client, stage)
-    transaction_provider = SQLiteTransactionProvider(client, stage)
+    staging = ExecutionStaging()
+    repository = SQLiteExecutionRepository(client, staging)
+    transaction_provider = SQLiteTransactionProvider(client, staging)
 
     transaction = await transaction_provider.begin_transaction()
     await repository.save(SESSION, _started())
@@ -62,7 +62,7 @@ async def test_sqlite_transaction_rollback_closes_and_is_idempotent(tmp_path: Pa
 
 async def test_sqlite_transaction_out_of_order_close_raises(tmp_path: Path):
     client = _client(tmp_path / "out-of-order.sqlite3")
-    transaction_provider = SQLiteTransactionProvider(client, ExecutionStage())
+    transaction_provider = SQLiteTransactionProvider(client, ExecutionStaging())
 
     parent = await transaction_provider.begin_transaction()
     child = await transaction_provider.begin_transaction()

@@ -15,7 +15,7 @@ from glyff import (
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
-from glyff.store.staging import ExecutionStage, SaveExecution
+from glyff.store.staging import ExecutionStaging, SaveExecution
 
 from ._file_client import FileClient
 from ._transaction import _ClientTransaction
@@ -27,14 +27,15 @@ FORMAT_VERSION = 1
 class FileExecutionRepository(ExecutionRepository):
     """File-backed Execution aggregate repository."""
 
-    def __init__(self, client: FileClient, stage: ExecutionStage):
+    def __init__(self, client: FileClient, staging: ExecutionStaging):
         self._client = client
-        self._stage = stage
+        self._staging = staging
 
     async def get(
         self, session_id: SessionId, execution_id: ExecutionId
     ) -> Execution | None:
-        mutation = self._stage.lookup(session_id, execution_id)
+        stage = self._staging.current()
+        mutation = stage.lookup(session_id, execution_id) if stage else None
         if mutation is not None:
             return (
                 mutation.snapshot.to_execution()
@@ -47,7 +48,7 @@ class FileExecutionRepository(ExecutionRepository):
         return None if stored is None else execution_from_dict(execution_id, stored)
 
     async def save(self, session_id: SessionId, execution: Execution) -> None:
-        self._stage.save(session_id, execution)
+        self._staging.require_current().save(session_id, execution)
 
     async def executions(
         self,
@@ -59,7 +60,8 @@ class FileExecutionRepository(ExecutionRepository):
         prefix = execution_id_to_path(under) + "/" if under is not None else ""
         visible = await self._client.read_committed_executions(session_id.value)
 
-        for key, mutation in self._stage.current_snapshot().items():
+        stage = self._staging.current()
+        for key, mutation in (stage.snapshot() if stage else {}).items():
             if key.session_id != session_id:
                 continue
             path = execution_id_to_path(key.execution_id)
@@ -78,17 +80,18 @@ class FileExecutionRepository(ExecutionRepository):
     async def delete_many(
         self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
     ) -> None:
+        stage = self._staging.require_current()
         for execution_id in execution_ids:
-            self._stage.delete(session_id, execution_id)
+            stage.delete(session_id, execution_id)
 
 
 class FileTransactionProvider(TransactionProvider):
-    def __init__(self, client: FileClient, stage: ExecutionStage):
+    def __init__(self, client: FileClient, staging: ExecutionStaging):
         self._client = client
-        self._stage = stage
+        self._staging = staging
 
     async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client, self._stage).begin()
+        return await _ClientTransaction(self._client, self._staging).begin()
 
 
 class JsonFileBackend:
@@ -106,11 +109,11 @@ class JsonFileBackend:
 
     def __init__(self, *, base_dir: str | Path):
         client = FileClient(base_dir, format_version=FORMAT_VERSION)
-        stage = ExecutionStage()
+        staging = ExecutionStaging()
         self._client = client
-        self.repository: ExecutionRepository = FileExecutionRepository(client, stage)
+        self.repository: ExecutionRepository = FileExecutionRepository(client, staging)
         self.transaction_provider: TransactionProvider = FileTransactionProvider(
-            client, stage
+            client, staging
         )
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:

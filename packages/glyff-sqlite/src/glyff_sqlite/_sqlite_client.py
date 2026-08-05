@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -226,7 +226,7 @@ class SQLiteClient:
     # -- Commit ----------------------------------------------------------------
 
     async def commit_mutations(
-        self, mutations: dict[ExecutionKey, ExecutionMutation]
+        self, mutations: Mapping[ExecutionKey, ExecutionMutation]
     ) -> None:
         if not mutations:
             return
@@ -235,7 +235,7 @@ class SQLiteClient:
             await asyncio.to_thread(self._commit_mutations_sync, mutations)
 
     def _commit_mutations_sync(
-        self, mutations: dict[ExecutionKey, ExecutionMutation]
+        self, mutations: Mapping[ExecutionKey, ExecutionMutation]
     ) -> None:
         connection = self._connect()
         in_transaction = False

@@ -18,7 +18,7 @@ from glyff.store import (
     MemoryTransactionProvider,
 )
 from glyff.store._memory_client import MemoryClient
-from glyff.store.staging import ExecutionStage
+from glyff.store.staging import ExecutionStaging
 
 
 class Call(NamedTuple):
@@ -94,12 +94,12 @@ class StubBackend:
         self.calls: list[Call] = []
         self._client = client
         self._backend = MemoryBackend()
-        self.stage = ExecutionStage()
+        self.staging = ExecutionStaging()
         self.repository = StubExecutionRepository(
-            self._record, MemoryExecutionRepository(client, self.stage)
+            self._record, MemoryExecutionRepository(client, self.staging)
         )
         self.transaction_provider = StubTransactionProvider(
-            self._record, MemoryTransactionProvider(client, self.stage)
+            self._record, MemoryTransactionProvider(client, self.staging)
         )
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:

@@ -68,11 +68,21 @@ shipped backends run the same suite. It also exports the reference
 the pair `make_execution_id` / `canonical_arguments`, which build an execution
 that satisfies the `arguments_digest` invariant.
 
-`glyff.store.staging` is there if you want it: an `ExecutionStage` holds the
-mutations an open transaction has staged, so `save`/`delete` become visible to
-reads in the same transaction and nowhere else, and `seal` hands the batch over
-at commit. Every shipped backend uses one. Nothing in the contract mentions it —
-a backend that stages differently is free to ignore it.
+`glyff.store.staging` is there if you want it. A backend holds one
+`ExecutionStaging`; a transaction calls `begin()` for its own `ExecutionStage`,
+and the repository reaches the open one through `current()` /
+`require_current()`, so neither has to hold a reference to the other:
+
+```python
+stage = staging.begin()
+stage.save(session_id, execution)     # visible to reads in this transaction only
+stage.close()                         # finalizes the batch, restores any parent
+await client.commit_mutations(stage.batch)
+```
+
+Stages nest, and a rollback is a `close()` whose batch is discarded. Every
+shipped backend uses one. Nothing in the contract mentions it — a backend that
+stages differently is free to ignore it.
 
 ## Planned contract extensions
 

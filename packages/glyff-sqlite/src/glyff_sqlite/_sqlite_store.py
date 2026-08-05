@@ -14,7 +14,7 @@ from glyff import (
 )
 from glyff.store.staging import (
     ExecutionMutation,
-    ExecutionStage,
+    ExecutionStaging,
     SaveExecution,
 )
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
@@ -26,14 +26,15 @@ from ._transaction import _ClientTransaction
 class SQLiteExecutionRepository(ExecutionRepository):
     """SQLite-backed Execution aggregate repository."""
 
-    def __init__(self, client: SQLiteClient, stage: ExecutionStage):
+    def __init__(self, client: SQLiteClient, staging: ExecutionStaging):
         self._client = client
-        self._stage = stage
+        self._staging = staging
 
     async def get(
         self, session_id: SessionId, execution_id: ExecutionId
     ) -> Execution | None:
-        mutation = self._stage.lookup(session_id, execution_id)
+        stage = self._staging.current()
+        mutation = stage.lookup(session_id, execution_id) if stage else None
         if mutation is not None:
             return (
                 mutation.snapshot.to_execution()
@@ -47,7 +48,7 @@ class SQLiteExecutionRepository(ExecutionRepository):
         return None if record is None else record.to_execution(execution_id)
 
     async def save(self, session_id: SessionId, execution: Execution) -> None:
-        self._stage.save(session_id, execution)
+        self._staging.require_current().save(session_id, execution)
 
     async def executions(
         self,
@@ -93,14 +94,16 @@ class SQLiteExecutionRepository(ExecutionRepository):
     async def delete_many(
         self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
     ) -> None:
+        stage = self._staging.require_current()
         for execution_id in execution_ids:
-            self._stage.delete(session_id, execution_id)
+            stage.delete(session_id, execution_id)
 
     def _staged_for(
         self, session_id: SessionId, prefix: str
     ) -> dict[str, ExecutionMutation]:
+        stage = self._staging.current()
         staged = {}
-        for key, mutation in self._stage.current_snapshot().items():
+        for key, mutation in (stage.snapshot() if stage else {}).items():
             if key.session_id != session_id:
                 continue
             path = execution_id_to_path(key.execution_id)
@@ -118,12 +121,12 @@ def _staged_execution(mutation: ExecutionMutation) -> Execution | None:
 
 
 class SQLiteTransactionProvider(TransactionProvider):
-    def __init__(self, client: SQLiteClient, stage: ExecutionStage):
+    def __init__(self, client: SQLiteClient, staging: ExecutionStaging):
         self._client = client
-        self._stage = stage
+        self._staging = staging
 
     async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client, self._stage).begin()
+        return await _ClientTransaction(self._client, self._staging).begin()
 
 
 class SQLiteBackend:
@@ -164,11 +167,13 @@ class SQLiteBackend:
             table_prefix=table_prefix,
         )
         client._initialize_schema_sync()
-        stage = ExecutionStage()
+        staging = ExecutionStaging()
         self._client = client
-        self.repository: ExecutionRepository = SQLiteExecutionRepository(client, stage)
+        self.repository: ExecutionRepository = SQLiteExecutionRepository(
+            client, staging
+        )
         self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(
-            client, stage
+            client, staging
         )
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:

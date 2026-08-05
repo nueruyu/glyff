@@ -7,7 +7,7 @@ import os
 import tempfile
 import time
 from contextlib import asynccontextmanager, contextmanager
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -144,7 +144,7 @@ class FileClient:
         return dict(self._session_executions(document, session_id))
 
     async def commit_mutations(
-        self, mutations: dict[ExecutionKey, ExecutionMutation]
+        self, mutations: Mapping[ExecutionKey, ExecutionMutation]
     ) -> None:
         if not mutations:
             return
@@ -153,7 +153,7 @@ class FileClient:
             await asyncio.to_thread(self._commit_mutations_sync, mutations)
 
     def _commit_mutations_sync(
-        self, mutations: dict[ExecutionKey, ExecutionMutation]
+        self, mutations: Mapping[ExecutionKey, ExecutionMutation]
     ) -> None:
         document = self._read_document_sync()
         sessions = document.setdefault(_SESSIONS_KEY, {})

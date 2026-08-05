@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 
 from .._models import ExecutionId, SessionId
 from .staging import (
@@ -37,7 +38,7 @@ class MemoryClient:
             }
 
     async def commit_mutations(
-        self, mutations: dict[ExecutionKey, ExecutionMutation]
+        self, mutations: Mapping[ExecutionKey, ExecutionMutation]
     ) -> None:
         async with self._lock:
             for key, mutation in mutations.items():

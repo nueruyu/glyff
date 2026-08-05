@@ -14,7 +14,10 @@ the rest of the supported surface.
 from __future__ import annotations
 
 import contextvars
+import weakref
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from .._models import (
     CanonicalArguments,
@@ -32,8 +35,8 @@ __all__ = [
     "ExecutionMutation",
     "ExecutionSnapshot",
     "ExecutionStage",
+    "ExecutionStaging",
     "SaveExecution",
-    "StageHandle",
 ]
 
 
@@ -98,94 +101,121 @@ class DeleteExecution:
 ExecutionMutation = SaveExecution | DeleteExecution
 
 
-class _StageBuffer:
-    __slots__ = ("mutations", "sealed")
+class _StageRegistry:
+    """Which stage is open, and how a nested one gives its parent back.
 
-    def __init__(self) -> None:
-        self.mutations: dict[ExecutionKey, ExecutionMutation] = {}
-        self.sealed = False
-
-
-class StageHandle:
-    """One open staging scope, to hand back to ``seal`` and ``close``.
-
-    Opaque on purpose: a transaction carries it around, and only the
-    ``ExecutionStage`` that issued it looks inside.
+    Private because nesting is staging's own business: a backend only ever holds
+    the stage it opened.
     """
 
-    __slots__ = ("_token", "_buffer")
+    __slots__ = ("_open", "_tokens")
 
-    def __init__(self, token: contextvars.Token, buffer: _StageBuffer) -> None:
-        self._token = token
-        self._buffer = buffer
+    def __init__(self) -> None:
+        self._open: contextvars.ContextVar[ExecutionStage | None] = (
+            contextvars.ContextVar("glyff_open_execution_stage", default=None)
+        )
+        # Keyed by stage rather than kept in a stack, because concurrent tasks
+        # nest independently and each has to restore the context it replaced.
+        # Weakly, so a stage nobody ever closed is collectable like any other.
+        self._tokens: weakref.WeakKeyDictionary[
+            ExecutionStage, contextvars.Token[ExecutionStage | None]
+        ] = weakref.WeakKeyDictionary()
+
+    def open(self) -> ExecutionStage | None:
+        return self._open.get()
+
+    def enter(self, stage: ExecutionStage) -> None:
+        self._tokens[stage] = self._open.set(stage)
+
+    def leave(self, stage: ExecutionStage) -> None:
+        if self._open.get() is not stage:
+            raise RuntimeError("Transaction closed out of order.")
+        self._open.reset(self._tokens.pop(stage))
 
 
 class ExecutionStage:
-    """The mutations an open transaction has staged but not yet persisted.
+    """The mutations one open transaction has staged but not yet persisted.
 
-    Only the lifetime and contents of a stage: it never commits, rolls back,
-    reads persistent state, or knows how a backend stores anything. Scopes nest
-    through a ``ContextVar``, so a transaction opened inside another stages
-    separately and restores its parent when it closes.
+    Only the contents and the lifetime of that batch: it never commits, rolls
+    back, reads persistent state, or knows how a backend stores anything.
+    Closing it finalizes :attr:`batch` and gives back the stage it was opened
+    inside, if any.
     """
 
-    def __init__(self) -> None:
-        self._current: contextvars.ContextVar[_StageBuffer | None] = (
-            contextvars.ContextVar("glyff_execution_stage", default=None)
-        )
+    __slots__ = ("_registry", "_mutations", "_batch", "__weakref__")
 
-    def begin(self) -> StageHandle:
-        buffer = _StageBuffer()
-        return StageHandle(self._current.set(buffer), buffer)
+    def __init__(self, registry: _StageRegistry) -> None:
+        self._registry = registry
+        self._mutations: dict[ExecutionKey, ExecutionMutation] = {}
+        self._batch: Mapping[ExecutionKey, ExecutionMutation] | None = None
+
+    @property
+    def batch(self) -> Mapping[ExecutionKey, ExecutionMutation]:
+        """What the transaction should commit or discard, once it has closed."""
+        if self._batch is None:
+            raise RuntimeError("Execution stage is still open.")
+        return self._batch
 
     def save(self, session_id: SessionId, execution: Execution) -> None:
-        buffer = self._require_writable()
-        key = ExecutionKey(session_id, execution.id)
-        buffer.mutations[key] = SaveExecution(
+        self._require_open()
+        self._mutations[ExecutionKey(session_id, execution.id)] = SaveExecution(
             ExecutionSnapshot.from_execution(execution)
         )
 
     def delete(self, session_id: SessionId, execution_id: ExecutionId) -> None:
-        buffer = self._require_writable()
-        buffer.mutations[ExecutionKey(session_id, execution_id)] = DeleteExecution()
+        self._require_open()
+        self._mutations[ExecutionKey(session_id, execution_id)] = DeleteExecution()
 
     def lookup(
         self, session_id: SessionId, execution_id: ExecutionId
     ) -> ExecutionMutation | None:
-        buffer = self._current.get()
-        if buffer is None:
-            return None
-        return buffer.mutations.get(ExecutionKey(session_id, execution_id))
+        return self._mutations.get(ExecutionKey(session_id, execution_id))
 
-    def current_snapshot(self) -> dict[ExecutionKey, ExecutionMutation]:
+    def snapshot(self) -> dict[ExecutionKey, ExecutionMutation]:
         """A copy of what is staged now, for a repository to overlay while it
         enumerates without the stage changing underneath it."""
-        buffer = self._current.get()
-        return {} if buffer is None else dict(buffer.mutations)
+        return dict(self._mutations)
 
-    def seal(self, handle: StageHandle) -> dict[ExecutionKey, ExecutionMutation]:
-        """Refuses further writes and returns the batch to commit or discard."""
-        self._require_current(handle)
-        if handle._buffer.sealed:
-            raise RuntimeError("Execution stage is already sealed.")
-        handle._buffer.sealed = True
-        return dict(handle._buffer.mutations)
+    def close(self) -> None:
+        """Finalizes :attr:`batch` and gives back the enclosing stage, if any."""
+        # Leaving first: a close this stage is not entitled to make leaves it
+        # open and writable rather than half-finalized.
+        self._registry.leave(self)
+        self._batch = MappingProxyType(dict(self._mutations))
 
-    def close(self, handle: StageHandle) -> None:
-        """Closes this scope and restores the enclosing stage, if any."""
-        self._require_current(handle)
-        self._current.reset(handle._token)
+    def _require_open(self) -> None:
+        if self._batch is not None:
+            raise RuntimeError("Execution stage is closed.")
 
-    def _require_writable(self) -> _StageBuffer:
-        buffer = self._current.get()
-        if buffer is None:
+
+class ExecutionStaging:
+    """Where a backend's repository and its transactions meet.
+
+    A transaction opens a stage and owns it from there; a repository writes to
+    and reads from whichever stage is open around the call, so neither has to
+    hold a reference to the other. Stages nest through a ``ContextVar``, so a
+    transaction opened inside another stages separately.
+    """
+
+    __slots__ = ("_registry",)
+
+    def __init__(self) -> None:
+        self._registry = _StageRegistry()
+
+    def begin(self) -> ExecutionStage:
+        stage = ExecutionStage(self._registry)
+        self._registry.enter(stage)
+        return stage
+
+    def current(self) -> ExecutionStage | None:
+        """The open stage, or ``None`` outside a transaction."""
+        return self._registry.open()
+
+    def require_current(self) -> ExecutionStage:
+        """The open stage, for a write that has to be inside a transaction."""
+        stage = self._registry.open()
+        if stage is None:
             raise RuntimeError(
                 "Execution repository write attempted outside a transaction."
             )
-        if buffer.sealed:
-            raise RuntimeError("Execution stage is closing.")
-        return buffer
-
-    def _require_current(self, handle: StageHandle) -> None:
-        if self._current.get() is not handle._buffer:
-            raise RuntimeError("Transaction closed out of order.")
+        return stage

@@ -5,66 +5,62 @@ from collections.abc import AsyncIterator, Iterable
 
 from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
 from .._models import Execution, ExecutionId, ExecutionStatus, SessionId
+from ._memory_client import MemoryClient
 from .staging import (
     ExecutionKey,
     ExecutionStage,
+    ExecutionStaging,
     SaveExecution,
-    StageHandle,
 )
-from ._memory_client import MemoryClient
 from .utils import execution_id_to_path
 
 
 class _MemoryTransaction(Transaction):
-    def __init__(self, client: MemoryClient, stage: ExecutionStage):
+    def __init__(self, client: MemoryClient, staging: ExecutionStaging):
         self._client = client
-        self._stage = stage
-        self._handle: StageHandle | None = None
+        self._staging = staging
+        self._stage: ExecutionStage | None = None
         self._closed = False
         self._lock = asyncio.Lock()
 
     async def begin(self) -> _MemoryTransaction:
-        self._handle = self._stage.begin()
+        self._stage = self._staging.begin()
         return self
 
     async def commit(self) -> None:
         async with self._lock:
             if self._closed:
                 return
-            handle = self._require_handle()
-            mutations = self._stage.seal(handle)
+            stage = self._require_stage()
+            stage.close()
             self._closed = True
-            try:
-                await self._client.commit_mutations(mutations)
-            finally:
-                self._stage.close(handle)
+            await self._client.commit_mutations(stage.batch)
 
     async def rollback(self) -> None:
         async with self._lock:
             if self._closed:
                 return
-            handle = self._require_handle()
-            self._stage.seal(handle)
+            self._require_stage().close()
             self._closed = True
-            self._stage.close(handle)
 
-    def _require_handle(self) -> StageHandle:
-        if self._handle is None:
+    def _require_stage(self) -> ExecutionStage:
+        if self._stage is None:
             raise RuntimeError("transaction not started")
-        return self._handle
+        return self._stage
 
 
 class MemoryExecutionRepository(ExecutionRepository):
     """In-memory Execution aggregate repository."""
 
-    def __init__(self, client: MemoryClient, stage: ExecutionStage):
+    def __init__(self, client: MemoryClient, staging: ExecutionStaging):
         self._client = client
-        self._stage = stage
+        self._staging = staging
 
     async def get(
         self, session_id: SessionId, execution_id: ExecutionId
     ) -> Execution | None:
-        mutation = self._stage.lookup(session_id, execution_id)
+        stage = self._staging.current()
+        mutation = stage.lookup(session_id, execution_id) if stage else None
         if mutation is not None:
             return (
                 mutation.snapshot.to_execution()
@@ -78,7 +74,7 @@ class MemoryExecutionRepository(ExecutionRepository):
         return None if snapshot is None else snapshot.to_execution()
 
     async def save(self, session_id: SessionId, execution: Execution) -> None:
-        self._stage.save(session_id, execution)
+        self._staging.require_current().save(session_id, execution)
 
     async def executions(
         self,
@@ -95,7 +91,8 @@ class MemoryExecutionRepository(ExecutionRepository):
             ).items()
         }
 
-        for key, mutation in self._stage.current_snapshot().items():
+        stage = self._staging.current()
+        for key, mutation in (stage.snapshot() if stage else {}).items():
             if key.session_id != session_id:
                 continue
             path = execution_id_to_path(key.execution_id)
@@ -114,26 +111,29 @@ class MemoryExecutionRepository(ExecutionRepository):
     async def delete_many(
         self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
     ) -> None:
+        stage = self._staging.require_current()
         for execution_id in execution_ids:
-            self._stage.delete(session_id, execution_id)
+            stage.delete(session_id, execution_id)
 
 
 class MemoryTransactionProvider(TransactionProvider):
-    def __init__(self, client: MemoryClient, stage: ExecutionStage):
+    def __init__(self, client: MemoryClient, staging: ExecutionStaging):
         self._client = client
-        self._stage = stage
+        self._staging = staging
 
     async def begin_transaction(self) -> Transaction:
-        return await _MemoryTransaction(self._client, self._stage).begin()
+        return await _MemoryTransaction(self._client, self._staging).begin()
 
 
 class MemoryBackend:
     def __init__(self) -> None:
         client = MemoryClient()
-        stage = ExecutionStage()
-        self.repository: ExecutionRepository = MemoryExecutionRepository(client, stage)
+        staging = ExecutionStaging()
+        self.repository: ExecutionRepository = MemoryExecutionRepository(
+            client, staging
+        )
         self.transaction_provider: TransactionProvider = MemoryTransactionProvider(
-            client, stage
+            client, staging
         )
         self._app_versions: dict[str, str] = {}
         self._claim_lock = asyncio.Lock()
