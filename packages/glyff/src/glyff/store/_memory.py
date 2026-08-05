@@ -2,35 +2,35 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from collections.abc import Iterable
+import functools
+from collections.abc import AsyncIterator, Iterable
 
 from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
 from .._models import (
     CanonicalArguments,
     Execution,
     ExecutionId,
+    ExecutionStatus,
     Metadata,
     SerializedValue,
+    SessionId,
 )
 from ..exceptions import InvalidExecutionError
-from ._memory_client import MemoryClient
+from ._memory_client import MemoryClient, MemoryKey
 from .utils import execution_id_to_path, path_to_execution_id
 
-_KEY_PREFIX = "execution::"
 _PARTS = ("arguments", "status", "result", "metadata")
 
 
-def _make_key(path: str, part: str) -> str:
-    return f"{_KEY_PREFIX}{path}::{part}"
+def _make_key(session_id: SessionId, path: str, part: str) -> MemoryKey:
+    return (session_id.value, path, part)
 
 
-def _key_to_path(key: str) -> str | None:
-    if not key.startswith(_KEY_PREFIX):
+def _key_to_path(key: MemoryKey, session_id: SessionId) -> str | None:
+    session, path, part = key
+    if session != session_id.value or part != "status":
         return None
-    body, _, part = key[len(_KEY_PREFIX) :].rpartition("::")
-    if part != "status":
-        return None
-    return body or None
+    return path or None
 
 
 class _MemoryTransaction(Transaction):
@@ -82,31 +82,32 @@ class MemoryExecutionRepository(ExecutionRepository):
     def __init__(self, client: MemoryClient):
         self._client = client
 
-    def _id_to_key(self, execution_id: ExecutionId, part: str) -> str:
-        return _make_key(execution_id_to_path(execution_id), part)
+    def _id_to_key(
+        self, session_id: SessionId, execution_id: ExecutionId, part: str
+    ) -> MemoryKey:
+        return _make_key(session_id, execution_id_to_path(execution_id), part)
 
-    async def get(self, execution_id: ExecutionId) -> Execution | None:
-        status = await self._client.read(self._id_to_key(execution_id, "status"))
+    async def get(
+        self, session_id: SessionId, execution_id: ExecutionId
+    ) -> Execution | None:
+        key = functools.partial(self._id_to_key, session_id, execution_id)
+        status = await self._client.read(key("status"))
         if status is None:
             return None
 
-        arguments_data = await self._client.read(
-            self._id_to_key(execution_id, "arguments")
-        )
+        arguments_data = await self._client.read(key("arguments"))
         if not isinstance(arguments_data, bytes):
             raise InvalidExecutionError(
                 f"Execution {execution_id} is stored without its arguments."
             )
-        result_data = await self._client.read(self._id_to_key(execution_id, "result"))
-        raw_metadata = await self._client.read(
-            self._id_to_key(execution_id, "metadata")
-        )
+        result_data = await self._client.read(key("result"))
+        raw_metadata = await self._client.read(key("metadata"))
 
         metadata: dict[str, Metadata] = {}
         if isinstance(raw_metadata, dict):
-            for key, value in raw_metadata.items():
+            for name, value in raw_metadata.items():
                 if isinstance(value, bytes):
-                    metadata[key] = Metadata(key=key, value=SerializedValue(value))
+                    metadata[name] = Metadata(key=name, value=SerializedValue(value))
 
         return Execution(
             id=execution_id,
@@ -118,45 +119,52 @@ class MemoryExecutionRepository(ExecutionRepository):
             metadata=metadata,
         )
 
-    async def save(self, execution: Execution) -> None:
-        self._client.stage_write(
-            self._id_to_key(execution.id, "status"),
-            execution.status,
-        )
-        self._client.stage_write(
-            self._id_to_key(execution.id, "arguments"),
-            execution.arguments.data,
-        )
+    async def save(self, session_id: SessionId, execution: Execution) -> None:
+        key = functools.partial(self._id_to_key, session_id, execution.id)
+        self._client.stage_write(key("status"), execution.status)
+        self._client.stage_write(key("arguments"), execution.arguments.data)
 
         if execution.result is not None:
-            self._client.stage_write(
-                self._id_to_key(execution.id, "result"),
-                execution.result.data,
-            )
+            self._client.stage_write(key("result"), execution.result.data)
         else:
-            self._client.stage_delete(self._id_to_key(execution.id, "result"))
+            self._client.stage_delete(key("result"))
 
         if execution.metadata:
             self._client.stage_write(
-                self._id_to_key(execution.id, "metadata"),
-                {key: item.value.data for key, item in execution.metadata.items()},
+                key("metadata"),
+                {name: item.value.data for name, item in execution.metadata.items()},
             )
         else:
-            self._client.stage_delete(self._id_to_key(execution.id, "metadata"))
+            self._client.stage_delete(key("metadata"))
 
-    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        prefix = execution_id_to_path(execution_id) + "/"
-        paths: set[str] = set()
-        for key in self._client.all_keys():
-            path = _key_to_path(key)
-            if path is not None and path.startswith(prefix):
-                paths.add(path)
-        return [path_to_execution_id(p) for p in paths]
+    async def executions(
+        self,
+        session_id: SessionId,
+        *,
+        status: ExecutionStatus | None = None,
+        under: ExecutionId | None = None,
+    ) -> AsyncIterator[Execution]:
+        prefix = execution_id_to_path(under) + "/" if under is not None else ""
+        paths = sorted(
+            path
+            for path in (
+                _key_to_path(key, session_id) for key in self._client.all_keys()
+            )
+            if path is not None and path.startswith(prefix)
+        )
+        for path in paths:
+            execution = await self.get(session_id, path_to_execution_id(path))
+            if execution is not None and status in (None, execution.status):
+                yield execution
 
-    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
+    async def delete_many(
+        self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
+    ) -> None:
         for execution_id in execution_ids:
             for part in _PARTS:
-                self._client.stage_delete(self._id_to_key(execution_id, part))
+                self._client.stage_delete(
+                    self._id_to_key(session_id, execution_id, part)
+                )
 
 
 class MemoryTransactionProvider(TransactionProvider):
@@ -174,3 +182,11 @@ class MemoryBackend:
         self.transaction_provider: TransactionProvider = MemoryTransactionProvider(
             client
         )
+        self._app_versions: dict[str, str] = {}
+        self._claim_lock = asyncio.Lock()
+
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
+        # Nothing here outlives the process, so the claim only has to hold for
+        # as long as the records do.
+        async with self._claim_lock:
+            return self._app_versions.setdefault(session_id.value, app_version)

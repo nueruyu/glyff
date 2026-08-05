@@ -17,54 +17,69 @@ For the durable production backend, see
 pip install glyff-file-store
 ```
 
-This package depends on `glyff>=0.1.0`.
+This package depends on `glyff>=0.14.0` and `filelock>=3.15`.
 
 ## Public API
 
 | Name                      | Description                                               |
 | ------------------------- | --------------------------------------------------------- |
-| `JsonFileBackend`         | Bundle exposing repository and transaction provider.      |
+| `JsonFileBackend`         | Bundle exposing the store's collaborators.                |
 | `FileExecutionRepository` | Debug repository writing pretty-printed JSON.             |
 | `FileTransactionProvider` | Transaction provider for the file backend.                |
 
-Construct it with a `base_dir` and `session_id`:
+Construct it with a `base_dir`; it holds every session written under it:
 
 ```python
 from glyff_file_store import JsonFileBackend
 
-backend = JsonFileBackend(base_dir=".sessions", session_id="my-session")
+backend = JsonFileBackend(base_dir=".sessions")
 ```
 
 The underlying `FileClient` is internal and not part of the public API.
 
 ## JSON debug format
 
-`JsonFileBackend` stores each session under `<base_dir>/<session_id>/` in a
-single pretty-printed JSON file (`executions.json`). The execution map is read
-from that file on access and rewritten atomically on every commit.
+Everything the store holds lives in one pretty-printed, key-sorted document at
+`<base_dir>/glyff.json`, nested by session id:
+
+```json
+{
+  "format_version": 1,
+  "sessions": {
+    "orders": {
+      "app_version": "v1",
+      "executions": {}
+    }
+  }
+}
+```
+
+`format_version` is glyff's own, so a store written by an incompatible build is
+refused rather than misread; `app_version` is the application's, claimed by
+whichever process opens the session first.
+
 Execution results and metadata are stored as embedded JSON values, so
 serializers used with this backend must produce JSON text. Canonical arguments
 are stored as a JSON *string* instead: the execution's key is the digest of
 those exact bytes, so they are kept verbatim rather than re-encoded.
 
-A `glyff_format.json` marker beside it records the store format version; a
-session written by an incompatible build is refused rather than misread.
-
-This format is intended for debugging and manual inspection, not as the durable
-or high-throughput backend.
+The whole document is read on access and rewritten on every commit, which is
+what keeps it readable and what makes it unsuitable for high-throughput or
+large-scale use.
 
 ## Commit atomicity
 
-The store commits the staged ops for an entire session directory as a unit.
-Each commit builds the full new session state in a sibling `.commit-*`
-directory and then swaps it into place using directory renames. All staged ops
-are visible together or none are, regardless of how many files were touched,
-and a writer callback raising mid-commit leaves the on-disk session unchanged.
+A commit reads the document, applies the transaction's staged updates, and
+replaces the file in one `os.replace`, so it is all-or-nothing however many
+sessions it touched. A crash can only strand a temporary beside the document,
+never leave the document itself half-written; the next open clears it.
 
-If a process dies mid-commit, the next time the session directory is opened it
-is restored from `session.bak` when the live directory is missing, or the stale
-backup is removed when the live directory is already in place. Any orphan
-`.commit-*` temp directories are also removed.
+## Concurrency
+
+Commits and version claims are serialized across the processes sharing a
+`base_dir`, through a `.glyff.lock` file beside the document. Reads take no
+lock: a replacement is atomic, so a read sees either the whole old document or
+the whole new one.
 
 ## Status
 

@@ -13,7 +13,7 @@ from ._interfaces import (
     Transaction,
     TransactionProvider,
 )
-from ._models import ExecutionId, SerializedValue
+from ._models import ExecutionId, SerializedValue, SessionId
 from ._sequencer import Sequencer
 from .exceptions import ContextNotSetError, NoCurrentExecutionError
 
@@ -35,7 +35,7 @@ class MetadataAccessor:
                 "set() requires an active execution; call it from within "
                 "an engraved function."
             )
-        execution = await self._ctx.repository.get(execution_id)
+        execution = await self._ctx.repository.get(self._ctx.session_id, execution_id)
         if execution is None:
             raise LookupError(f"Execution {execution_id} not found")
 
@@ -44,7 +44,7 @@ class MetadataAccessor:
             type(value) if value_type is None else value_type,
         )
         execution.set_metadata(key, SerializedValue(serialized))
-        await self._ctx.repository.save(execution)
+        await self._ctx.repository.save(self._ctx.session_id, execution)
 
     async def get(
         self,
@@ -63,7 +63,7 @@ class MetadataAccessor:
             raise NoCurrentExecutionError(
                 "get() requires an active execution or an explicit execution_id."
             )
-        execution = await self._ctx.repository.get(target)
+        execution = await self._ctx.repository.get(self._ctx.session_id, target)
         if execution is None:
             return None
 
@@ -79,7 +79,7 @@ class Context:
 
     def __init__(
         self,
-        session_id: str,
+        session_id: SessionId,
         backend: Backend,
         serializer: Serializer,
         sequencer: Sequencer,
@@ -96,7 +96,7 @@ class Context:
         self._tracer = ExecutionTracer()
 
     @property
-    def session_id(self) -> str:
+    def session_id(self) -> SessionId:
         return self._session_id
 
     @property

@@ -1,9 +1,15 @@
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from typing import Any, Callable, Protocol
 
-from ._models import CanonicalValue, Execution, ExecutionId
+from ._models import (
+    CanonicalValue,
+    Execution,
+    ExecutionId,
+    ExecutionStatus,
+    SessionId,
+)
 
 
 class Transaction(ABC):
@@ -33,19 +39,36 @@ class TransactionProvider(ABC):
 
 
 class ExecutionRepository(ABC):
-    """Repository for Execution aggregates."""
+    """Execution aggregate persistence, explicitly scoped by ``SessionId``."""
 
     @abstractmethod
-    async def get(self, execution_id: ExecutionId) -> Execution | None: ...
+    async def get(
+        self, session_id: SessionId, execution_id: ExecutionId
+    ) -> Execution | None: ...
 
     @abstractmethod
-    async def save(self, execution: Execution) -> None: ...
+    async def save(self, session_id: SessionId, execution: Execution) -> None: ...
 
     @abstractmethod
-    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]: ...
+    def executions(
+        self,
+        session_id: SessionId,
+        *,
+        status: ExecutionStatus | None = None,
+        under: ExecutionId | None = None,
+    ) -> AsyncIterator[Execution]:
+        """Yields the session's executions, each after its own ancestors.
+
+        ``status`` keeps only executions in that state, ``under`` only the strict
+        descendants of that execution. Changes staged in the caller's open
+        transaction are included.
+        """
+        ...
 
     @abstractmethod
-    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None: ...
+    async def delete_many(
+        self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
+    ) -> None: ...
 
 
 class Serializer(ABC):
@@ -87,3 +110,12 @@ class Backend(Protocol):
 
     @property
     def transaction_provider(self) -> TransactionProvider: ...
+
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
+        """Records ``app_version`` for a session that carries none, and returns
+        the version the session carries afterwards.
+
+        One atomic step, holding across processes, so two of them declaring
+        different versions cannot both find the session unclaimed.
+        """
+        ...

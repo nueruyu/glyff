@@ -1,8 +1,12 @@
-import uuid
-
 import pytest
 
-from glyff import ArgumentCanonicalizer, EventEmitter, ExecutionId, Serializer
+from glyff import (
+    ArgumentCanonicalizer,
+    EventEmitter,
+    ExecutionId,
+    Serializer,
+    SessionId,
+)
 from glyff._context import Context
 from glyff._sequencer import Sequencer
 from glyff.serialization import (
@@ -38,8 +42,12 @@ def argument_canonicalizer() -> ArgumentCanonicalizer:
 
 @pytest.fixture
 def backend_factory() -> BackendFactory:
-    def factory(session_id: str) -> MemoryBackend:
-        return MemoryBackend()
+    # The contract's factory reopens a store by name, which for an in-process
+    # store means handing back the same one.
+    stores: dict[str, MemoryBackend] = {}
+
+    def factory(store: str) -> MemoryBackend:
+        return stores.setdefault(store, MemoryBackend())
 
     return factory
 
@@ -57,7 +65,7 @@ def test_context(
     serializer: Serializer,
 ) -> Context:
     return Context(
-        session_id=str(uuid.uuid4()),
+        session_id=SessionId("test"),
         backend=mock_backend,
         serializer=serializer,
         sequencer=Sequencer(),

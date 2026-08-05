@@ -5,6 +5,7 @@ Re-exported from :mod:`glyff.testing`, the public entry point.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Protocol
@@ -20,6 +21,7 @@ from glyff import (
     ExecutionStatus,
     Metadata,
     SerializedValue,
+    SessionId,
     TransactionProvider,
     TransactionScope,
 )
@@ -31,8 +33,14 @@ class BackendHandle(Protocol):
     repository: ExecutionRepository
     transaction_provider: TransactionProvider
 
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str: ...
+
 
 BackendFactory = Callable[[str], BackendHandle]
+"""Builds a backend over the named store. The same name reopens the same store."""
+
+SESSION = SessionId("contract")
+OTHER_SESSION = SessionId("contract-other")
 
 
 def make_execution_id(
@@ -69,9 +77,11 @@ def serialized_value(raw: object = "value") -> SerializedValue:
     )
 
 
-async def save_execution(backend: BackendHandle, execution: Execution) -> None:
+async def save_execution(
+    backend: BackendHandle, execution: Execution, session_id: SessionId = SESSION
+) -> None:
     async with TransactionScope(backend.transaction_provider):
-        await backend.repository.save(execution)
+        await backend.repository.save(session_id, execution)
 
 
 class ExecutionBackendContract:
@@ -92,7 +102,9 @@ class ExecutionBackendContract:
 
     async def test_get_missing_returns_none(self, backend_factory: BackendFactory):
         backend = backend_factory("missing")
-        assert await backend.repository.get(make_execution_id("missing")) is None
+        assert (
+            await backend.repository.get(SESSION, make_execution_id("missing")) is None
+        )
 
     async def test_save_started_then_get(self, backend_factory: BackendFactory):
         backend = backend_factory("started")
@@ -102,7 +114,7 @@ class ExecutionBackendContract:
             backend, Execution.start(execution_id, canonical_arguments())
         )
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
         assert loaded.result is None
@@ -116,7 +128,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, Execution.start(execution_id, args))
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         # Byte equality, not JSON equality: non-ASCII catches a store that re-encodes.
         assert loaded.arguments.data == args.data
@@ -132,7 +144,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.arguments.data == args.data
 
@@ -146,7 +158,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == serialized_value("result-bytes")
@@ -161,7 +173,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == serialized_value(None)
@@ -177,7 +189,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.get_metadata("trace") == Metadata(
             "trace", serialized_value("trace-bytes")
@@ -197,7 +209,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == serialized_value("result")
@@ -220,7 +232,7 @@ class ExecutionBackendContract:
         second.complete(serialized_value("done"))
         await save_execution(backend, second)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.COMPLETED
         assert loaded.result == serialized_value("done")
@@ -233,7 +245,8 @@ class ExecutionBackendContract:
         backend = backend_factory("save-no-tx")
         with pytest.raises(RuntimeError):
             await backend.repository.save(
-                Execution.start(make_execution_id("task"), canonical_arguments())
+                SESSION,
+                Execution.start(make_execution_id("task"), canonical_arguments()),
             )
 
     async def test_delete_many_requires_active_transaction(
@@ -241,7 +254,7 @@ class ExecutionBackendContract:
     ):
         backend = backend_factory("delete-no-tx")
         with pytest.raises(RuntimeError):
-            await backend.repository.delete_many([make_execution_id("task")])
+            await backend.repository.delete_many(SESSION, [make_execution_id("task")])
 
     async def test_rollback_discards_save(self, backend_factory: BackendFactory):
         backend = backend_factory("rollback-save")
@@ -249,11 +262,11 @@ class ExecutionBackendContract:
 
         tx = await backend.transaction_provider.begin_transaction()
         await backend.repository.save(
-            Execution.start(execution_id, canonical_arguments())
+            SESSION, Execution.start(execution_id, canonical_arguments())
         )
         await tx.rollback()
 
-        assert await backend.repository.get(execution_id) is None
+        assert await backend.repository.get(SESSION, execution_id) is None
 
     async def test_commit_persists_save(self, backend_factory: BackendFactory):
         backend = backend_factory("commit-save")
@@ -261,11 +274,11 @@ class ExecutionBackendContract:
 
         tx = await backend.transaction_provider.begin_transaction()
         await backend.repository.save(
-            Execution.start(execution_id, canonical_arguments())
+            SESSION, Execution.start(execution_id, canonical_arguments())
         )
         await tx.commit()
 
-        assert await backend.repository.get(execution_id) is not None
+        assert await backend.repository.get(SESSION, execution_id) is not None
 
     async def test_delete_many_removes_execution_and_metadata(
         self, backend_factory: BackendFactory
@@ -278,16 +291,18 @@ class ExecutionBackendContract:
         await save_execution(backend, execution)
 
         async with TransactionScope(backend.transaction_provider):
-            await backend.repository.delete_many([execution_id])
+            await backend.repository.delete_many(SESSION, [execution_id])
 
-        assert await backend.repository.get(execution_id) is None
+        assert await backend.repository.get(SESSION, execution_id) is None
 
     async def test_delete_many_ignores_missing_ids(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("delete-missing")
         async with TransactionScope(backend.transaction_provider):
-            await backend.repository.delete_many([make_execution_id("missing")])
+            await backend.repository.delete_many(
+                SESSION, [make_execution_id("missing")]
+            )
 
     async def test_delete_rollback_preserves_execution(
         self, backend_factory: BackendFactory
@@ -300,17 +315,62 @@ class ExecutionBackendContract:
         )
 
         tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.delete_many([execution_id])
+        await backend.repository.delete_many(SESSION, [execution_id])
         await tx.rollback()
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
 
-    async def test_descendants_of_returns_strict_descendants_only(
+    async def test_executions_is_empty_for_a_fresh_store(
         self, backend_factory: BackendFactory
     ):
-        backend = backend_factory("descendants")
+        backend = backend_factory("enumerate-empty")
+        assert [e async for e in backend.repository.executions(SESSION)] == []
+
+    async def test_executions_yields_each_record_after_its_ancestors(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate")
+        root = make_execution_id("root")
+        child = make_execution_id("child", parent=root)
+        grandchild = make_execution_id("grandchild", parent=child)
+
+        async with TransactionScope(backend.transaction_provider):
+            # Saved leaf-first: the order comes from the contract, not insertion.
+            for execution_id in [grandchild, child, root]:
+                await backend.repository.save(
+                    SESSION, Execution.start(execution_id, canonical_arguments())
+                )
+
+        yielded = [e.id async for e in backend.repository.executions(SESSION)]
+        assert set(yielded) == {root, child, grandchild}
+        assert yielded.index(root) < yielded.index(child) < yielded.index(grandchild)
+
+    async def test_executions_yields_whole_aggregates(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate-aggregate")
+        execution = Execution.start(
+            make_execution_id("task", arguments={"a": 1}),
+            canonical_arguments({"a": 1}),
+        )
+        execution.set_metadata("trace", serialized_value("trace"))
+        execution.complete(serialized_value("done"))
+
+        await save_execution(backend, execution)
+
+        (loaded,) = [e async for e in backend.repository.executions(SESSION)]
+        assert loaded.arguments.data == canonical_arguments({"a": 1}).data
+        assert loaded.result == serialized_value("done")
+        assert loaded.get_metadata("trace") == Metadata(
+            "trace", serialized_value("trace")
+        )
+
+    async def test_executions_under_returns_strict_descendants_only(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate-under")
         root = make_execution_id("root")
         child = make_execution_id("child", parent=root)
         grandchild = make_execution_id("grandchild", parent=child)
@@ -319,13 +379,116 @@ class ExecutionBackendContract:
         async with TransactionScope(backend.transaction_provider):
             for execution_id in [root, child, grandchild, sibling]:
                 await backend.repository.save(
-                    Execution.start(execution_id, canonical_arguments())
+                    SESSION, Execution.start(execution_id, canonical_arguments())
                 )
 
-        descendants = await backend.repository.descendants_of(root)
-        assert set(descendants) == {child, grandchild}
-        assert root not in descendants
-        assert sibling not in descendants
+        under_root = {
+            e.id async for e in backend.repository.executions(SESSION, under=root)
+        }
+        assert under_root == {child, grandchild}
+        assert {
+            e.id async for e in backend.repository.executions(SESSION, under=grandchild)
+        } == set()
+
+    async def test_executions_filters_by_status(self, backend_factory: BackendFactory):
+        backend = backend_factory("enumerate-status")
+        started = make_execution_id("started")
+        completed = Execution.start(
+            make_execution_id("completed"), canonical_arguments()
+        )
+        completed.complete(serialized_value("done"))
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.save(
+                SESSION, Execution.start(started, canonical_arguments())
+            )
+            await backend.repository.save(SESSION, completed)
+
+        repository = backend.repository
+        assert [
+            e.id
+            async for e in repository.executions(
+                SESSION, status=ExecutionStatus.STARTED
+            )
+        ] == [started]
+        assert [
+            e.id
+            async for e in repository.executions(
+                SESSION, status=ExecutionStatus.COMPLETED
+            )
+        ] == [completed.id]
+
+    async def test_executions_sees_records_staged_in_the_open_transaction(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate-staged")
+        execution_id = make_execution_id("task")
+
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.save(
+            SESSION, Execution.start(execution_id, canonical_arguments())
+        )
+        staged = [e.id async for e in backend.repository.executions(SESSION)]
+        await tx.rollback()
+
+        assert staged == [execution_id]
+        assert [e async for e in backend.repository.executions(SESSION)] == []
+
+    async def test_executions_omits_records_deleted_in_the_open_transaction(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("enumerate-staged-delete")
+        execution_id = make_execution_id("task")
+        await save_execution(
+            backend, Execution.start(execution_id, canonical_arguments())
+        )
+
+        tx = await backend.transaction_provider.begin_transaction()
+        await backend.repository.delete_many(SESSION, [execution_id])
+        staged = [e.id async for e in backend.repository.executions(SESSION)]
+        await tx.rollback()
+
+        assert staged == []
+
+    async def test_sessions_in_one_store_do_not_collide(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("two-sessions")
+        execution_id = make_execution_id("task")
+
+        first = Execution.start(execution_id, canonical_arguments())
+        first.complete(serialized_value("one"))
+        second = Execution.start(execution_id, canonical_arguments())
+        second.complete(serialized_value("two"))
+        await save_execution(backend, first, SESSION)
+        await save_execution(backend, second, OTHER_SESSION)
+
+        loaded = await backend.repository.get(SESSION, execution_id)
+        other = await backend.repository.get(OTHER_SESSION, execution_id)
+        assert loaded is not None and loaded.result == serialized_value("one")
+        assert other is not None and other.result == serialized_value("two")
+
+        assert [e.id async for e in backend.repository.executions(SESSION)] == [
+            execution_id
+        ]
+
+    async def test_deleting_in_one_session_leaves_the_other(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("two-sessions-delete")
+        execution_id = make_execution_id("task")
+        for session_id in (SESSION, OTHER_SESSION):
+            await save_execution(
+                backend,
+                Execution.start(execution_id, canonical_arguments()),
+                session_id,
+            )
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.delete_many(SESSION, [execution_id])
+
+        assert await backend.repository.get(SESSION, execution_id) is None
+        assert await backend.repository.get(OTHER_SESSION, execution_id) is not None
 
     async def test_same_frame_under_different_parents_do_not_collide(
         self, backend_factory: BackendFactory
@@ -344,11 +507,11 @@ class ExecutionBackendContract:
         second = Execution.start(leaf2, canonical_arguments({"a": "same"}))
         second.complete(serialized_value("two"))
         async with TransactionScope(backend.transaction_provider):
-            await backend.repository.save(first)
-            await backend.repository.save(second)
+            await backend.repository.save(SESSION, first)
+            await backend.repository.save(SESSION, second)
 
-        loaded1 = await backend.repository.get(leaf1)
-        loaded2 = await backend.repository.get(leaf2)
+        loaded1 = await backend.repository.get(SESSION, leaf1)
+        loaded2 = await backend.repository.get(SESSION, leaf2)
         assert loaded1 is not None and loaded1.result == serialized_value("one")
         assert loaded2 is not None and loaded2.result == serialized_value("two")
 
@@ -360,18 +523,20 @@ class ExecutionBackendContract:
         child = make_execution_id("child", parent=root)
 
         parent_tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(root, canonical_arguments()))
+        await backend.repository.save(
+            SESSION, Execution.start(root, canonical_arguments())
+        )
 
         child_tx = await backend.transaction_provider.begin_transaction()
         child_execution = Execution.start(child, canonical_arguments())
         child_execution.complete(serialized_value("child"))
-        await backend.repository.save(child_execution)
+        await backend.repository.save(SESSION, child_execution)
         await child_tx.commit()
 
         await parent_tx.rollback()
 
-        assert await backend.repository.get(root) is None
-        loaded_child = await backend.repository.get(child)
+        assert await backend.repository.get(SESSION, root) is None
+        loaded_child = await backend.repository.get(SESSION, child)
         assert loaded_child is not None
         assert loaded_child.status is ExecutionStatus.COMPLETED
 
@@ -383,23 +548,27 @@ class ExecutionBackendContract:
         child = make_execution_id("child", parent=root)
 
         parent_tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(root, canonical_arguments()))
+        await backend.repository.save(
+            SESSION, Execution.start(root, canonical_arguments())
+        )
 
         child_tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(child, canonical_arguments()))
+        await backend.repository.save(
+            SESSION, Execution.start(child, canonical_arguments())
+        )
         await child_tx.rollback()
 
-        staged_root = await backend.repository.get(root)
+        staged_root = await backend.repository.get(SESSION, root)
         assert staged_root is not None
         assert staged_root.status is ExecutionStatus.STARTED
-        assert await backend.repository.get(child) is None
+        assert await backend.repository.get(SESSION, child) is None
 
         await parent_tx.commit()
 
-        committed_root = await backend.repository.get(root)
+        committed_root = await backend.repository.get(SESSION, root)
         assert committed_root is not None
         assert committed_root.status is ExecutionStatus.STARTED
-        assert await backend.repository.get(child) is None
+        assert await backend.repository.get(SESSION, child) is None
 
     async def test_out_of_order_transaction_close_raises(
         self, backend_factory: BackendFactory
@@ -424,7 +593,9 @@ class ExecutionBackendContract:
         grandchild = make_execution_id("grandchild", parent=child)
 
         root_tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.save(Execution.start(root, canonical_arguments()))
+        await backend.repository.save(
+            SESSION, Execution.start(root, canonical_arguments())
+        )
 
         child_tx = await backend.transaction_provider.begin_transaction()
         child_execution = Execution.start(child, canonical_arguments())
@@ -432,22 +603,22 @@ class ExecutionBackendContract:
         grandchild_tx = await backend.transaction_provider.begin_transaction()
         grandchild_execution = Execution.start(grandchild, canonical_arguments())
         grandchild_execution.complete(serialized_value("grandchild"))
-        await backend.repository.save(grandchild_execution)
+        await backend.repository.save(SESSION, grandchild_execution)
         await grandchild_tx.commit()
 
         child_execution.complete(serialized_value("child"))
-        await backend.repository.save(child_execution)
+        await backend.repository.save(SESSION, child_execution)
         await child_tx.commit()
 
         await root_tx.rollback()
 
-        assert await backend.repository.get(root) is None
+        assert await backend.repository.get(SESSION, root) is None
 
-        loaded_child = await backend.repository.get(child)
+        loaded_child = await backend.repository.get(SESSION, child)
         assert loaded_child is not None
         assert loaded_child.status is ExecutionStatus.COMPLETED
 
-        loaded_grandchild = await backend.repository.get(grandchild)
+        loaded_grandchild = await backend.repository.get(SESSION, grandchild)
         assert loaded_grandchild is not None
         assert loaded_grandchild.status is ExecutionStatus.COMPLETED
 
@@ -463,7 +634,7 @@ class ExecutionBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.result == serialized_value(payload)
         assert loaded.get_metadata("json") == Metadata(
@@ -524,7 +695,7 @@ class BinarySafeBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.result == SerializedValue(b"\xff")
 
@@ -538,11 +709,69 @@ class BinarySafeBackendContract:
 
         await save_execution(backend, execution)
 
-        loaded = await backend.repository.get(execution_id)
+        loaded = await backend.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.get_metadata("trace") == Metadata(
             "trace", SerializedValue(b"not-json")
         )
+
+
+class AppVersionContract:
+    """Claiming the application version behind a session's records."""
+
+    pytestmark = pytest.mark.asyncio
+
+    @pytest.fixture
+    def backend_factory(self) -> BackendFactory:
+        raise NotImplementedError
+
+    async def test_claim_takes_an_unclaimed_session(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("version-claim")
+
+        assert await backend.claim_session(SESSION, "v1") == "v1"
+
+    async def test_claim_yields_to_the_incumbent(self, backend_factory: BackendFactory):
+        backend = backend_factory("version-claim-taken")
+        await backend.claim_session(SESSION, "v1")
+
+        assert await backend.claim_session(SESSION, "v2") == "v1"
+
+    async def test_concurrent_claims_agree_on_one_winner(
+        self, backend_factory: BackendFactory
+    ):
+        # Independent handles, because that is the shape of the hazard: two
+        # workers starting the same paused session from different processes.
+        backends = [backend_factory("version-claim-race") for _ in range(8)]
+
+        outcomes = await asyncio.gather(
+            *(
+                backend.claim_session(SESSION, f"v{index}")
+                for index, backend in enumerate(backends)
+            )
+        )
+
+        recorded = await backend_factory("version-claim-race").claim_session(
+            SESSION, "v-later"
+        )
+        assert recorded != "v-later"
+        assert set(outcomes) == {recorded}
+
+    async def test_sessions_are_claimed_independently(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("version-per-session")
+
+        assert await backend.claim_session(SESSION, "v1") == "v1"
+        assert await backend.claim_session(OTHER_SESSION, "v2") == "v2"
+        assert await backend.claim_session(SESSION, "v3") == "v1"
+
+    async def test_claim_does_not_need_a_transaction(
+        self, backend_factory: BackendFactory
+    ):
+        backend = backend_factory("version-claim-no-tx")
+        assert await backend.claim_session(SESSION, "v1") == "v1"
 
 
 class DurableBackendContract:
@@ -564,7 +793,7 @@ class DurableBackendContract:
         )
 
         reopened = backend_factory(session_id)
-        loaded = await reopened.repository.get(execution_id)
+        loaded = await reopened.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
 
@@ -580,10 +809,10 @@ class DurableBackendContract:
         )
 
         async with TransactionScope(backend.transaction_provider):
-            await backend.repository.delete_many([execution_id])
+            await backend.repository.delete_many(SESSION, [execution_id])
 
         reopened = backend_factory(session_id)
-        assert await reopened.repository.get(execution_id) is None
+        assert await reopened.repository.get(SESSION, execution_id) is None
 
     async def test_rolled_back_delete_does_not_survive_reopen(
         self, backend_factory: BackendFactory
@@ -597,11 +826,11 @@ class DurableBackendContract:
         )
 
         tx = await backend.transaction_provider.begin_transaction()
-        await backend.repository.delete_many([execution_id])
+        await backend.repository.delete_many(SESSION, [execution_id])
         await tx.rollback()
 
         reopened = backend_factory(session_id)
-        loaded = await reopened.repository.get(execution_id)
+        loaded = await reopened.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.status is ExecutionStatus.STARTED
 
@@ -615,11 +844,21 @@ class DurableBackendContract:
         await save_execution(backend, execution)
 
         reopened = backend_factory(session_id)
-        loaded = await reopened.repository.get(execution_id)
+        loaded = await reopened.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.get_metadata("trace") == Metadata(
             "trace", serialized_value("trace")
         )
+
+    async def test_claimed_version_survives_reopen(
+        self, backend_factory: BackendFactory
+    ):
+        store = "durable-version"
+        backend = backend_factory(store)
+        await backend.claim_session(SESSION, "v1")
+
+        reopened = backend_factory(store)
+        assert await reopened.claim_session(SESSION, "v2") == "v1"
 
     async def test_json_value_survives_reopen(self, backend_factory: BackendFactory):
         session_id = "durable-json"
@@ -635,7 +874,7 @@ class DurableBackendContract:
         await save_execution(backend, execution)
 
         reopened = backend_factory(session_id)
-        loaded = await reopened.repository.get(execution_id)
+        loaded = await reopened.repository.get(SESSION, execution_id)
         assert loaded is not None
         assert loaded.result == serialized_value(payload)
         assert loaded.get_metadata("json") == Metadata(

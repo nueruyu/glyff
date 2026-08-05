@@ -24,7 +24,7 @@ def argument_canonicalizer() -> ArgumentCanonicalizer:
 
 @pytest.fixture
 def backend_factory(tmp_path: Path):
-    def factory(session_id: str) -> SQLiteBackend:
-        return SQLiteBackend(tmp_path / f"{session_id}.sqlite3")
+    def factory(store: str) -> SQLiteBackend:
+        return SQLiteBackend(tmp_path / f"{store}.sqlite3")
 
     return factory

@@ -26,12 +26,12 @@ async def test_sqlite_transaction_commit_closes_and_is_idempotent(tmp_path: Path
     transaction_provider = SQLiteTransactionProvider(client)
 
     transaction = await transaction_provider.begin_transaction()
-    client.stage_write("key", record("value"))
+    client.stage_write(("s", "key"), record("value"))
     await transaction.commit()
     await transaction.commit()
     await transaction.rollback()
 
-    assert await client.read("key") == record("value")
+    assert await client.read(("s", "key")) == record("value")
 
 
 async def test_sqlite_transaction_rollback_closes_and_is_idempotent(tmp_path: Path):
@@ -39,12 +39,12 @@ async def test_sqlite_transaction_rollback_closes_and_is_idempotent(tmp_path: Pa
     transaction_provider = SQLiteTransactionProvider(client)
 
     transaction = await transaction_provider.begin_transaction()
-    client.stage_write("key", record("value"))
+    client.stage_write(("s", "key"), record("value"))
     await transaction.rollback()
     await transaction.rollback()
     await transaction.commit()
 
-    assert await client.read("key") is None
+    assert await client.read(("s", "key")) is None
 
 
 async def test_sqlite_transaction_out_of_order_close_raises(tmp_path: Path):
@@ -59,4 +59,4 @@ async def test_sqlite_transaction_out_of_order_close_raises(tmp_path: Path):
 
     await child.rollback()
     await parent.rollback()
-    assert await client.read("key") is None
+    assert await client.read(("s", "key")) is None

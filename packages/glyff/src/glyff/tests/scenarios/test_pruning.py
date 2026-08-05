@@ -2,7 +2,7 @@
 
 import pytest
 
-from glyff import ArgumentCanonicalizer, EventEmitter, engrave
+from glyff import ArgumentCanonicalizer, EventEmitter, SessionId, engrave
 from glyff.store._memory import _key_to_path
 from glyff.testing import PruningEventHandler
 from glyff.tests.types import BackendFactory, make_session
@@ -35,11 +35,14 @@ async def mp_root() -> int:
     return await mp_mid(0) + await mp_mid(10)
 
 
-def _committed_paths(backend) -> set[str]:
+def _committed_paths(backend, session_id: str) -> set[str]:
     """Path body of every committed key (depth shows in the '/'-separated path:
     only the root has a depth-1 path)."""
+    session = SessionId(session_id)
     return {
-        p for k in backend.repository._client.data if (p := _key_to_path(k)) is not None
+        p
+        for k in backend.repository._client.data
+        if (p := _key_to_path(k, session)) is not None
     }
 
 
@@ -67,7 +70,7 @@ async def test_descendant_records_are_gone_after_completion(
 
     # Only the root's own records survive — every descendant (any path with a
     # '/') has been deleted.
-    paths = _committed_paths(backend)
+    paths = _committed_paths(backend, "mem-prune")
     assert paths  # the root is still recorded
     assert all("/" not in p for p in paths)
 
@@ -81,7 +84,7 @@ async def test_disabled_by_default_keeps_descendants(
     async with make_session("mem-noprune", backend, argument_canonicalizer, serializer):
         await mp_root()
 
-    assert any("/" in p for p in _committed_paths(backend))
+    assert any("/" in p for p in _committed_paths(backend, "mem-noprune"))
 
 
 async def test_replay_after_prune_does_not_rerun(

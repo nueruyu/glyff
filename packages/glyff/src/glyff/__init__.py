@@ -17,6 +17,7 @@ from ._models import (
     ExecutionStatus,
     Metadata,
     SerializedValue,
+    SessionId,
 )
 from ._session import Session
 
@@ -41,5 +42,6 @@ __all__ = [
     "Metadata",
     "MetadataAccessor",
     "SerializedValue",
+    "SessionId",
     "get_context",
 ]

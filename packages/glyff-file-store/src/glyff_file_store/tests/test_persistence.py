@@ -1,4 +1,4 @@
-from glyff import ArgumentCanonicalizer, Session, engrave
+from glyff import ArgumentCanonicalizer, Session, SessionId, engrave
 from glyff.serialization import JsonSerializer
 
 from glyff_file_store import JsonFileBackend
@@ -18,26 +18,28 @@ async def test_completed_record_replays_across_instances(
     """A completed entry persisted by one store instance must be replayed by
     a fresh instance reading the same on-disk file."""
     _json_runs.clear()
-    session_id = "json-replay"
+    session_id = SessionId("json-replay")
 
-    backend = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=session_id,
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         first = await json_func(7)
     assert first == 14
     assert _json_runs == [7]
 
     _json_runs.clear()
-    reopened = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    reopened = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=session_id,
         backend=reopened,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         second = await json_func(7)
     assert second == 14
@@ -59,14 +61,15 @@ async def test_multiple_completed_records_replay_across_instances(
     """Multiple completed entries with non-trivial payloads must each be
     replayable from a fresh store reading the same on-disk file."""
     _multi_runs.clear()
-    session_id = "json-multi"
+    session_id = SessionId("json-multi")
 
-    backend = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    backend = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=session_id,
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         a = await multi_payload(0)
         b = await multi_payload(1000)
@@ -74,12 +77,13 @@ async def test_multiple_completed_records_replay_across_instances(
     assert _multi_runs == [0, 1000, 99999]
 
     _multi_runs.clear()
-    reopened = JsonFileBackend(base_dir=tmp_path, session_id=session_id)
+    reopened = JsonFileBackend(base_dir=tmp_path)
     async with Session(
         id=session_id,
         backend=reopened,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         a2 = await multi_payload(0)
         b2 = await multi_payload(1000)

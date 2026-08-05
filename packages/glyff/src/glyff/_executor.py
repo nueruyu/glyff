@@ -33,7 +33,9 @@ async def execute(
     sequencer = ctx.sequencer
     tracer = ctx.tracer
 
-    cached = await repository.get(execution_id)
+    session_id = ctx.session_id
+
+    cached = await repository.get(session_id, execution_id)
     if cached is not None and cached.status == ExecutionStatus.COMPLETED:
         # A completed execution always carries a result; the aggregate enforces it.
         assert cached.result is not None
@@ -41,8 +43,10 @@ async def execute(
 
     async with ctx.get_transaction_scope():
         await sequencer.reset_for_call(execution_id)
-        if await repository.get(execution_id) is None:
-            await repository.save(Execution.start(execution_id, canonical_arguments))
+        if await repository.get(session_id, execution_id) is None:
+            await repository.save(
+                session_id, Execution.start(execution_id, canonical_arguments)
+            )
 
     tracer.start(execution_id)
 
@@ -56,13 +60,13 @@ async def execute(
                 func_exception = e
                 raise
 
-            execution = await repository.get(execution_id)
+            execution = await repository.get(session_id, execution_id)
             if execution is None:
                 raise LookupError(f"Execution {execution_id} not found")
 
             serialized = await serializer.serialize(result, return_type)
             execution.complete(SerializedValue(serialized))
-            await repository.save(execution)
+            await repository.save(session_id, execution)
 
         await ctx.event_emitter.emit(
             ExecutionCompleted(

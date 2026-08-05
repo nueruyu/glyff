@@ -6,7 +6,7 @@ on resume."""
 import asyncio
 
 import pytest
-from glyff import ArgumentCanonicalizer, Session, engrave
+from glyff import ArgumentCanonicalizer, Session, SessionId, engrave
 from glyff.serialization import JsonSerializer
 
 _ran: set[int] = set()
@@ -50,29 +50,31 @@ async def test_json_parallel_children_durable_after_root_interrupt(
     serializer: JsonSerializer,
 ):
     global _interrupt_root
-    sid = "json-parallel"
+    sid = SessionId("json-parallel")
 
     _interrupt_root = True
     with pytest.raises(RootInterrupted):
-        backend = backend_factory(sid)
+        backend = backend_factory(sid.value)
         async with Session(
             id=sid,
             backend=backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,
+            app_version="test",
         ):
             await jp_root()
     assert _ran == set(range(_N))
 
-    # Fresh store over the same session directory, then resume: no child re-runs.
+    # A fresh handle over the same store, then resume.
     _ran.clear()
     _interrupt_root = False
-    backend = backend_factory(sid)
+    backend = backend_factory(sid.value)
     async with Session(
         id=sid,
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
+        app_version="test",
     ):
         total = await jp_root()
 

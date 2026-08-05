@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +9,8 @@ from glyff import (
     Execution,
     ExecutionId,
     ExecutionRepository,
+    ExecutionStatus,
+    SessionId,
     Transaction,
     TransactionProvider,
 )
@@ -57,25 +59,43 @@ class SQLiteExecutionRepository(ExecutionRepository):
     def __init__(self, client: SQLiteClient):
         self._client = client
 
-    async def get(self, execution_id: ExecutionId) -> Execution | None:
-        key = execution_id_to_path(execution_id)
+    async def get(
+        self, session_id: SessionId, execution_id: ExecutionId
+    ) -> Execution | None:
+        key = (session_id.value, execution_id_to_path(execution_id))
         record = await self._client.read(key, staged=True)
         if record is None:
             return None
         return _to_execution(execution_id, record)
 
-    async def save(self, execution: Execution) -> None:
-        key = execution_id_to_path(execution.id)
+    async def save(self, session_id: SessionId, execution: Execution) -> None:
+        key = (session_id.value, execution_id_to_path(execution.id))
         self._client.stage_write(key, _from_execution(execution))
 
-    async def descendants_of(self, execution_id: ExecutionId) -> list[ExecutionId]:
-        prefix = execution_id_to_path(execution_id) + "/"
-        keys = await self._client.list_paths(prefix, staged=True)
-        return [path_to_execution_id(k) for k in keys]
+    async def executions(
+        self,
+        session_id: SessionId,
+        *,
+        status: ExecutionStatus | None = None,
+        under: ExecutionId | None = None,
+    ) -> AsyncIterator[Execution]:
+        prefix = execution_id_to_path(under) + "/" if under is not None else ""
+        # Status is filtered here rather than in SQL: a staged record can differ
+        # in status from the committed row a WHERE clause would have judged it by.
+        async for path, record in self._client.iter_records(
+            session_id.value, prefix, staged=True
+        ):
+            execution = _to_execution(path_to_execution_id(path), record)
+            if status in (None, execution.status):
+                yield execution
 
-    async def delete_many(self, execution_ids: Iterable[ExecutionId]) -> None:
+    async def delete_many(
+        self, session_id: SessionId, execution_ids: Iterable[ExecutionId]
+    ) -> None:
         for execution_id in execution_ids:
-            self._client.stage_delete(execution_id_to_path(execution_id))
+            self._client.stage_delete(
+                (session_id.value, execution_id_to_path(execution_id))
+            )
 
 
 class SQLiteTransactionProvider(TransactionProvider):
@@ -97,11 +117,16 @@ class SQLiteBackend:
     JsonSerializer or PydanticSerializer, because execution results and metadata
     are stored as JSON text columns for readability and queryability.
 
-    ``table_prefix`` (default ``glyff``) names the two tables the store owns:
-    ``<prefix>_executions`` for the records and ``<prefix>_meta`` for their
-    format version. Set it to cohabit an application's database; a store written
-    by an incompatible build is refused, and ``PRAGMA user_version`` is left to
-    the application.
+    One database holds any number of sessions: records are keyed by
+    ``(session_id, path)``, and each session's application version lives in a
+    row of its own.
+
+    ``table_prefix`` (default ``glyff``) names the three tables the store owns:
+    ``<prefix>_executions`` for the records, ``<prefix>_sessions`` for their
+    application versions, and ``<prefix>_meta`` for the store's format version.
+    Set it to cohabit an application's database; a store written by an
+    incompatible build is refused, and ``PRAGMA user_version`` is left to the
+    application.
     """
 
     def __init__(
@@ -119,7 +144,11 @@ class SQLiteBackend:
             table_prefix=table_prefix,
         )
         client._initialize_schema_sync()
+        self._client = client
         self.repository: ExecutionRepository = SQLiteExecutionRepository(client)
         self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(
             client
         )
+
+    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
+        return await self._client.claim_session(session_id.value, app_version)

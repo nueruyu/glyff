@@ -2,7 +2,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from glyff import Execution, TransactionScope
+from glyff import Execution, SessionId, TransactionScope
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff.exceptions import StoreFormatVersionError
 
@@ -79,6 +79,7 @@ class TestConfigurableTablePrefix:
     def test_default_prefix_derives_both_table_names(self, tmp_path: Path):
         client = SQLiteClient(tmp_path / "default.sqlite3")
         assert client._table_name == "glyff_executions"
+        assert client._sessions_table_name == "glyff_sessions"
         assert client._meta_table_name == "glyff_meta"
 
     async def test_custom_prefix_round_trips(self, tmp_path: Path):
@@ -88,17 +89,17 @@ class TestConfigurableTablePrefix:
         execution_id = make_execution_id("task")
         execution = Execution.start(execution_id, canonical_arguments())
         async with TransactionScope(backend.transaction_provider):
-            await backend.repository.save(execution)
+            await backend.repository.save(SessionId("custom"), execution)
 
         client = SQLiteClient(db, table_prefix="app")
         rows = await client.read_sql(
             "SELECT name FROM sqlite_master "
-            "WHERE type = 'table' AND name IN ('app_executions', 'app_meta') "
-            "ORDER BY name"
+            "WHERE type = 'table' AND name IN "
+            "('app_executions', 'app_meta', 'app_sessions') ORDER BY name"
         )
-        assert rows == [("app_executions",), ("app_meta",)]
+        assert rows == [("app_executions",), ("app_meta",), ("app_sessions",)]
 
-        reloaded = await backend.repository.get(execution_id)
+        reloaded = await backend.repository.get(SessionId("custom"), execution_id)
         assert reloaded is not None
 
     def test_invalid_prefix_is_rejected(self, tmp_path: Path):
