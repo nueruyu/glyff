@@ -2,7 +2,7 @@
 
 import pytest
 from glyff import Execution, ExecutionStatus, SerializedValue, SessionId
-from glyff.store.execution_stage import (
+from glyff.store._execution_stage import (
     DeleteExecution,
     ExecutionKey,
     ExecutionStage,

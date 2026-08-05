@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from glyff import Execution, SessionId
 from glyff.exceptions import StoreFormatVersionError
-from glyff.store.execution_stage import (
+from glyff.store._execution_stage import (
     DeleteExecution,
     ExecutionKey,
     ExecutionSnapshot,

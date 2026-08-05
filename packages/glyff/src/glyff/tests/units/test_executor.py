@@ -20,7 +20,7 @@ from glyff._sequencer import Sequencer
 from glyff.events import ExecutionCompleted, ExecutionFailed
 from glyff.store import MemoryExecutionRepository
 from glyff.store._memory_client import MemoryClient
-from glyff.store.execution_stage import ExecutionKey, ExecutionSnapshot
+from glyff.store._execution_stage import ExecutionKey, ExecutionSnapshot
 from glyff.testing import PruningEventHandler, canonical_arguments, make_execution_id
 from glyff.tests.stubs.store import StubBackend, StubExecutionRepository
 

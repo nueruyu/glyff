@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Iterable
 
 from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
 from .._models import Execution, ExecutionId, ExecutionStatus, SessionId
-from .execution_stage import (
+from ._execution_stage import (
     ExecutionKey,
     ExecutionStage,
     SaveExecution,

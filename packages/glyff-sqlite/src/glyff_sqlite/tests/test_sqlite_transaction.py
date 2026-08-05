@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from glyff import Execution, SessionId
-from glyff.store.execution_stage import ExecutionStage
+from glyff.store._execution_stage import ExecutionStage
 from glyff.testing import canonical_arguments, make_execution_id
 
 from glyff_sqlite import SQLiteExecutionRepository, SQLiteTransactionProvider

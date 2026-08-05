@@ -15,7 +15,7 @@ from glyff import (
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
-from glyff.store.execution_stage import ExecutionStage, SaveExecution
+from glyff.store._execution_stage import ExecutionStage, SaveExecution
 
 from ._file_client import FileClient
 from ._transaction import _ClientTransaction

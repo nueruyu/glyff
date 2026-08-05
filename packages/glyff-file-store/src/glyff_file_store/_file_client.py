@@ -16,7 +16,7 @@ from glyff.exceptions import StoreFormatVersionError
 from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.store.aggregate_codec import execution_to_dict
 from glyff.store.utils import execution_id_to_path
-from glyff.store.execution_stage import (
+from glyff.store._execution_stage import (
     DeleteExecution,
     ExecutionKey,
     ExecutionMutation,
