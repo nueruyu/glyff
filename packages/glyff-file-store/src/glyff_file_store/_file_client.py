@@ -8,8 +8,9 @@ import tempfile
 import time
 from contextlib import asynccontextmanager, contextmanager
 from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, TypeVar
+from typing import Any, AsyncIterator, Generic, TypeVar
 
 from filelock import AsyncFileLock, FileLock
 from glyff.exceptions import StoreFormatVersionError
@@ -40,6 +41,19 @@ _EXECUTIONS_KEY = "executions"
 _PERMISSION_RETRY_DELAYS = (0.01, 0.025, 0.05, 0.1, 0.2)
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class DocumentUpdate(Generic[T]):
+    """What an operation made of the document: its answer, and whether the
+    document now needs writing back."""
+
+    result: T
+    changed: bool = True
+
+    @classmethod
+    def unchanged(cls, result: T) -> DocumentUpdate[T]:
+        return cls(result, changed=False)
 
 
 class FileClient:
@@ -151,7 +165,7 @@ class FileClient:
         if not mutations:
             return
 
-        def apply(document: dict[str, Any]) -> None:
+        def apply(document: dict[str, Any]) -> DocumentUpdate[None]:
             sessions = document.setdefault(_SESSIONS_KEY, {})
             for key, mutation in mutations.items():
                 session = sessions.setdefault(key.session_id.value, {})
@@ -164,54 +178,76 @@ class FileClient:
                     executions[path] = execution_to_dict(
                         mutation.snapshot.to_execution()
                     )
+            return DocumentUpdate(None)
 
         await self.update_document(apply)
 
     # -- The write primitive ---------------------------------------------------
 
-    async def update_document(self, operation: Callable[[dict[str, Any]], T]) -> T:
+    async def update_document(
+        self, operation: Callable[[dict[str, Any]], DocumentUpdate[T]]
+    ) -> T:
         """Reads the document, hands it to ``operation`` to change in place, and
-        replaces it — all with the store held, and off the event loop.
+        replaces it if the operation says it changed anything — all with the
+        store held, and off the event loop.
 
         Every write the store makes goes through here. Because one document
         carries every session, a single replacement covers whatever ``operation``
-        touched.
+        touched. An operation that decided to change nothing costs a read: a
+        whole store is re-serialized and fsynced on every replacement, so a
+        no-op must not pay for one.
         """
         async with self._exclusive():
             return await self._while_held(lambda: self._update_document_sync(operation))
 
-    def _update_document_sync(self, operation: Callable[[dict[str, Any]], T]) -> T:
+    def _update_document_sync(
+        self, operation: Callable[[dict[str, Any]], DocumentUpdate[T]]
+    ) -> T:
         document = self._read_document_sync()
-        result = operation(document)
-        self._write_document_sync(document)
-        return result
+        update = operation(document)
+        if update.changed:
+            self._write_document_sync(document)
+        return update.result
 
     @staticmethod
     async def _while_held(work: Callable[[], T]) -> T:
-        """Runs ``work`` on a worker thread, waiting for it even if cancelled.
+        """Runs ``work`` on a worker thread, waiting for it however many times
+        the caller is cancelled.
 
-        A cancelled caller must not hand the store on while the worker is still
-        going: the next writer would take both locks, write, and then be
-        overwritten by this one's replacement of a document read before it.
+        Leaving early would hand the store on while the worker is still going:
+        the next writer would take both locks, write, and then be overwritten by
+        this one's replacement of a document read before it. So cancellation is
+        absorbed until the worker is done and then re-raised — including the
+        second cancellation, which would otherwise escape the wait that the
+        first one put us in.
         """
         worker = asyncio.ensure_future(asyncio.to_thread(work))
-        try:
-            await asyncio.wait([worker])
-        except asyncio.CancelledError:
-            await asyncio.wait([worker])
-            raise
+        cancellation: asyncio.CancelledError | None = None
+        while not worker.done():
+            try:
+                await asyncio.wait([worker])
+            except asyncio.CancelledError as cancelled:
+                cancellation = cancelled
+
+        if cancellation is not None:
+            # Collected so a worker that also failed is not reported as an
+            # exception nobody retrieved. The cancellation is what happened.
+            worker.exception()
+            raise cancellation
         return worker.result()
 
     # -- Application version ---------------------------------------------------
 
     async def claim_session(self, session_id: str, app_version: str) -> str:
-        def claim(document: dict[str, Any]) -> str:
+        def claim(document: dict[str, Any]) -> DocumentUpdate[str]:
             session = document.setdefault(_SESSIONS_KEY, {}).setdefault(session_id, {})
             recorded = session.get(_APP_VERSION_KEY)
             if recorded is not None:
-                return recorded
+                # A session already has its version: reading it is the whole
+                # operation, and rewriting the store to say so is pure cost.
+                return DocumentUpdate.unchanged(recorded)
 
             session[_APP_VERSION_KEY] = app_version
-            return app_version
+            return DocumentUpdate(app_version)
 
         return await self.update_document(claim)

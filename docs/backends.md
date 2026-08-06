@@ -77,9 +77,11 @@ with a side effect happens inside a transaction that may yet be undone.
 Exclusion is the store's own, and each backend has one primitive that every
 write goes through: SQLite's `run_immediate` runs an operation inside a single
 `BEGIN IMMEDIATE`, and the file store's `update_document` reads, changes and
-replaces the document with the store held — including past a cancellation, so a
-cancelled caller cannot hand the store to the next writer while its own worker
-is still replacing it. Either way no other writer can act on the state being
+replaces the document with the store held — including past however many
+cancellations arrive, so a cancelled caller cannot hand the store to the next
+writer while its own worker is still replacing it. An operation that reports
+changing nothing skips the replacement, because rewriting a whole store to say
+so is pure cost. Either way no other writer can act on the state being
 replaced. A `StoredSession` refuses to hold two executions on one id, so a
 migrator that merges two histories is stopped before a store can silently keep
 whichever it wrote last.

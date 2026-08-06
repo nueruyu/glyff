@@ -154,6 +154,84 @@ async def test_a_cancelled_migration_does_not_hand_the_store_on_early(
     }
 
 
+async def test_repeated_cancellation_still_does_not_hand_the_store_on_early(
+    tmp_path: Path,
+):
+    # Absorbing one cancellation is not enough: a second one would land in the
+    # wait the first one put us in, and escape the lock with the worker still
+    # holding the document.
+    migrating = JsonFileBackend(base_dir=tmp_path)
+    writing = JsonFileBackend(base_dir=tmp_path)
+    await seed(migrating, "before")
+    after = started("after")
+    intruder = started("intruder")
+
+    inside = threading.Event()
+    release = threading.Event()
+
+    class SlowMigrator(ReplacingMigrator):
+        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+            inside.set()
+            release.wait(5)
+            return super().migrate(source)
+
+    migration = asyncio.create_task(
+        migrating.session_migration.run(SESSION, SlowMigrator(after))
+    )
+    await asyncio.to_thread(inside.wait, 5)
+
+    for _ in range(3):
+        migration.cancel()
+        await asyncio.sleep(0.02)
+
+    writer = asyncio.create_task(_save(writing, intruder))
+    await asyncio.sleep(0.05)
+    assert not writer.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await migration
+    await writer
+
+    assert {e.id async for e in writing.repository.executions(SESSION)} == {
+        after.id,
+        intruder.id,
+    }
+
+
+async def test_a_cancelled_migration_still_reports_a_worker_failure_as_cancelled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # The worker's own failure is collected rather than left unretrieved, but
+    # cancellation is what the caller asked for and what it is told.
+    backend = JsonFileBackend(base_dir=tmp_path)
+    await seed(backend, "before")
+
+    inside = threading.Event()
+    release = threading.Event()
+
+    def refuse(source: str, target: Path) -> None:
+        raise OSError("refusing to replace")
+
+    monkeypatch.setattr(backend._client, "_replace_sync", refuse)
+
+    class SlowMigrator(ReplacingMigrator):
+        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+            inside.set()
+            release.wait(5)
+            return super().migrate(source)
+
+    migration = asyncio.create_task(
+        backend.session_migration.run(SESSION, SlowMigrator(started("after")))
+    )
+    await asyncio.to_thread(inside.wait, 5)
+    migration.cancel()
+    release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await migration
+
+
 async def test_a_migration_rewrites_the_session_in_place_in_the_document(
     tmp_path: Path,
 ):

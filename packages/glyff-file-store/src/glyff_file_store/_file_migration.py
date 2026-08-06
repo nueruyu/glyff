@@ -18,6 +18,7 @@ from ._file_client import (
     _APP_VERSION_KEY,
     _EXECUTIONS_KEY,
     _SESSIONS_KEY,
+    DocumentUpdate,
     FileClient,
 )
 
@@ -37,7 +38,7 @@ class FileSessionMigration(SessionMigration):
     async def run(
         self, session_id: SessionId, migrator: SessionMigrator
     ) -> MigrationReport:
-        def migrate(document: dict[str, Any]) -> MigrationReport:
+        def migrate(document: dict[str, Any]) -> DocumentUpdate[MigrationReport]:
             source = self._read(document, session_id.value)
             result = migrator.migrate(source)
 
@@ -48,7 +49,7 @@ class FileSessionMigration(SessionMigration):
                     for execution in result.session.executions
                 },
             }
-            return result.report
+            return DocumentUpdate(result.report)
 
         return await self._client.update_document(migrate)
 
