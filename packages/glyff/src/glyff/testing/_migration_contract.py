@@ -9,22 +9,21 @@ import asyncio
 import threading
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Protocol
 
 import pytest
 
-from glyff import Execution, SessionId, TransactionScope
+from glyff import Backend, Execution, SessionId, TransactionScope
 from glyff.exceptions import MigrationCollisionError, MigrationError
 from glyff.migration import (
+    MigratableBackend,
     MigrationReport,
     SessionMetadata,
-    SessionMigration,
     SessionMigrationResult,
+    SessionMigrator,
     StoredSession,
 )
 
 from ._backend_contract import (
-    BackendHandle,
     canonical_arguments,
     make_execution_id,
     save_execution,
@@ -32,17 +31,13 @@ from ._backend_contract import (
 )
 
 
-class MigratableBackendHandle(BackendHandle, Protocol):
-    session_migration: SessionMigration
-
-
-MigratableBackendFactory = Callable[[str], MigratableBackendHandle]
+MigratableBackendFactory = Callable[[str], MigratableBackend]
 
 SESSION = SessionId("migrate")
 OTHER_SESSION = SessionId("migrate-other")
 
 
-class RecordingMigrator:
+class RecordingMigrator(SessionMigrator):
     """Stands in for the runner: keeps what it was handed, returns what it was
     told to, and never touches a store."""
 
@@ -88,7 +83,7 @@ class RecordingMigrator:
 
 
 async def _executions(
-    backend: BackendHandle, session_id: SessionId = SESSION
+    backend: Backend, session_id: SessionId = SESSION
 ) -> list[Execution]:
     return [execution async for execution in backend.repository.executions(session_id)]
 
@@ -103,7 +98,7 @@ class SessionMigrationContract:
         raise NotImplementedError
 
     async def _seeded(
-        self, backend: MigratableBackendHandle, *names: str, app_version: str = "v1"
+        self, backend: MigratableBackend, *names: str, app_version: str = "v1"
     ) -> list[Execution]:
         await backend.claim_session(SESSION, app_version)
         seeded = []

@@ -6,7 +6,9 @@ and what is being added.
 
 ## The contract
 
-A `Backend` (`_interfaces.py`) is:
+A `Backend` (`_interfaces.py`) is an ABC you subclass — glyff's extension seams
+are nominal, so a backend states what it implements rather than being taken for
+one because its attributes happen to line up. It is:
 
 | Piece | Role |
 | --- | --- |
@@ -59,8 +61,9 @@ report = await backend.session_migration.run(session_id, migrator)
 
 It is deliberately not part of `Backend`. Running a session needs none of it,
 and an ephemeral store has no old records to carry forward — the in-memory
-backend does not provide it. `MigratableBackend` in `glyff.migration` names the
-capability for anything that wants to require it.
+backend is a plain `Backend` and does not provide it. A backend that offers
+migration subclasses `MigratableBackend` (`glyff.migration`), which is itself a
+`Backend`, so the capability is claimed rather than inferred.
 
 The split is mechanism against policy. `SessionMigration` takes the session
 exclusively, reads its `SessionMetadata` and executions into a `StoredSession`,
@@ -71,9 +74,12 @@ become and is pure and synchronous by contract, because it runs while the
 backend holds the session: anything that waits there holds a lock, and anything
 with a side effect happens inside a transaction that may yet be undone.
 
-Exclusion is the store's own: SQLite takes `BEGIN IMMEDIATE` before the first
-read and holds it past the last write, and the file store holds the same lock
-ordinary commits take. Either way no other writer can act on the state being
+Exclusion is the store's own, and each backend has one primitive that every
+write goes through: SQLite's `run_immediate` runs an operation inside a single
+`BEGIN IMMEDIATE`, and the file store's `update_document` reads, changes and
+replaces the document with the store held — including past a cancellation, so a
+cancelled caller cannot hand the store to the next writer while its own worker
+is still replacing it. Either way no other writer can act on the state being
 replaced. A `StoredSession` refuses to hold two executions on one id, so a
 migrator that merges two histories is stopped before a store can silently keep
 whichever it wrote last.
@@ -88,7 +94,8 @@ whichever it wrote last.
 
 ## Writing your own
 
-Implement the pieces above and expose them as a bundle. Verify the
+Subclass `Backend` — or `MigratableBackend` if you offer migration — and expose
+the pieces above. Verify the
 implementation against the shared contract suite in `glyff.testing`: subclass
 the contract classes (`ExecutionBackendContract`, `DurableBackendContract`,
 `AppVersionContract`, and the text/binary-safety variants) and provide your

@@ -1,6 +1,5 @@
 from ._store import (
     FileExecutionRepository,
-    FileSessionMigration,
     FileTransactionProvider,
     JsonFileBackend,
 )
@@ -8,6 +7,5 @@ from ._store import (
 __all__ = [
     "JsonFileBackend",
     "FileExecutionRepository",
-    "FileSessionMigration",
     "FileTransactionProvider",
 ]

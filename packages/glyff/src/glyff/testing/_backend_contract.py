@@ -9,11 +9,11 @@ import asyncio
 import contextvars
 import json
 from collections.abc import AsyncIterator, Callable
-from typing import Protocol
 
 import pytest
 
 from glyff import (
+    Backend,
     CanonicalValue,
     CanonicalArguments,
     Execution,
@@ -30,14 +30,7 @@ from glyff.exceptions import SerializationError
 from glyff.serialization._utils import encode_canonical
 
 
-class BackendHandle(Protocol):
-    repository: ExecutionRepository
-    transaction_provider: TransactionProvider
-
-    async def claim_session(self, session_id: SessionId, app_version: str) -> str: ...
-
-
-BackendFactory = Callable[[str], BackendHandle]
+BackendFactory = Callable[[str], Backend]
 """Builds a backend over the named store. The same name reopens the same store."""
 
 
@@ -84,7 +77,7 @@ def serialized_value(raw: object = "value") -> SerializedValue:
 
 
 async def save_execution(
-    backend: BackendHandle, execution: Execution, session_id: SessionId = SESSION
+    backend: Backend, execution: Execution, session_id: SessionId = SESSION
 ) -> None:
     async with TransactionScope(backend.transaction_provider):
         await backend.repository.save(session_id, execution)

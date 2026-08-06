@@ -605,8 +605,10 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
 
     client = MemoryClient()
     backend = StubBackend(client)
-    backend.repository = FailingCompleteRepository(
-        backend._record, MemoryExecutionRepository(client, backend.staging)
+    backend.replace_repository(
+        FailingCompleteRepository(
+            backend._record, MemoryExecutionRepository(client, backend.staging)
+        )
     )
     ctx = Context(
         session_id=SESSION,

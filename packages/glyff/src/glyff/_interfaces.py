@@ -1,7 +1,7 @@
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterable
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 
 from ._models import (
     CanonicalValue,
@@ -102,15 +102,18 @@ class ArgumentCanonicalizer(ABC):
         ...
 
 
-class Backend(Protocol):
+class Backend(ABC):
     """A bundle of persistence-related collaborators."""
 
     @property
+    @abstractmethod
     def repository(self) -> ExecutionRepository: ...
 
     @property
+    @abstractmethod
     def transaction_provider(self) -> TransactionProvider: ...
 
+    @abstractmethod
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         """Records ``app_version`` for a session that carries none, and returns
         the version the session carries afterwards.

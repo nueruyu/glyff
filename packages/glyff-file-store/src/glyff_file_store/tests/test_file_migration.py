@@ -4,7 +4,9 @@ The shared contract covers a migrator that refuses. This is the failure only
 this backend can stage — the document replacement itself going wrong.
 """
 
+import asyncio
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,7 @@ from glyff.migration import (
     MigrationReport,
     SessionMetadata,
     SessionMigrationResult,
+    SessionMigrator,
     StoredSession,
 )
 from glyff.testing import canonical_arguments, make_execution_id
@@ -22,7 +25,7 @@ from glyff_file_store._file_client import _STORE_FILE, _TEMP_PREFIX
 SESSION = SessionId("migrate")
 
 
-class ReplacingMigrator:
+class ReplacingMigrator(SessionMigrator):
     def __init__(self, *executions: Execution, app_version: str = "v2") -> None:
         self._executions = executions
         self._app_version = app_version
@@ -41,6 +44,11 @@ class ReplacingMigrator:
 
 def started(name: str) -> Execution:
     return Execution.start(make_execution_id(name), canonical_arguments())
+
+
+async def _save(backend: JsonFileBackend, execution: Execution) -> None:
+    async with TransactionScope(backend.transaction_provider):
+        await backend.repository.save(SESSION, execution)
 
 
 async def seed(backend: JsonFileBackend, *names: str) -> list[Execution]:
@@ -98,6 +106,52 @@ async def test_a_failed_replacement_strands_no_temporary(
         )
 
     assert not list(tmp_path.glob(_TEMP_PREFIX + "*"))
+
+
+async def test_a_cancelled_migration_does_not_hand_the_store_on_early(
+    tmp_path: Path,
+):
+    # Cancelling the caller does not stop the worker thread. If the lock went
+    # with the cancellation, the next writer would take it, write, and then be
+    # overwritten by this migration's replacement of a document read before it.
+    migrating = JsonFileBackend(base_dir=tmp_path)
+    writing = JsonFileBackend(base_dir=tmp_path)
+    await seed(migrating, "before")
+    after = started("after")
+    intruder = started("intruder")
+
+    inside = threading.Event()
+    release = threading.Event()
+
+    class SlowMigrator(ReplacingMigrator):
+        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+            inside.set()
+            release.wait(5)
+            return super().migrate(source)
+
+    migration = asyncio.create_task(
+        migrating.session_migration.run(SESSION, SlowMigrator(after))
+    )
+    await asyncio.to_thread(inside.wait, 5)
+
+    migration.cancel()
+    await asyncio.sleep(0.05)
+    writer = asyncio.create_task(
+        _save(writing, intruder), name="writer-after-cancellation"
+    )
+    await asyncio.sleep(0.05)
+    assert not writer.done()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await migration
+    await writer
+
+    # The intruder went second, so it is the one still standing.
+    assert {e.id async for e in writing.repository.executions(SESSION)} == {
+        after.id,
+        intruder.id,
+    }
 
 
 async def test_a_migration_rewrites_the_session_in_place_in_the_document(

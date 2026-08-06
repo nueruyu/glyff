@@ -12,7 +12,7 @@ from glyff import (
     Transaction,
     TransactionProvider,
 )
-from glyff.migration import MigrationReport, SessionMigration, SessionMigrator
+from glyff.migration import MigratableBackend, SessionMigration
 from glyff.store.staging import (
     ExecutionMutation,
     ExecutionStaging,
@@ -21,6 +21,7 @@ from glyff.store.staging import (
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 from ._sqlite_client import SQLiteClient
+from ._sqlite_migration import SQLiteSessionMigration
 from ._transaction import _ClientTransaction
 
 
@@ -121,18 +122,6 @@ def _staged_execution(mutation: ExecutionMutation) -> Execution | None:
     )
 
 
-class SQLiteSessionMigration:
-    """Replaces one session wholesale, inside the transaction that holds it."""
-
-    def __init__(self, client: SQLiteClient):
-        self._client = client
-
-    async def run(
-        self, session_id: SessionId, migrator: SessionMigrator
-    ) -> MigrationReport:
-        return await self._client.migrate_session(session_id.value, migrator.migrate)
-
-
 class SQLiteTransactionProvider(TransactionProvider):
     def __init__(self, client: SQLiteClient, staging: ExecutionStaging):
         self._client = client
@@ -142,7 +131,7 @@ class SQLiteTransactionProvider(TransactionProvider):
         return await _ClientTransaction(self._client, self._staging).begin()
 
 
-class SQLiteBackend:
+class SQLiteBackend(MigratableBackend):
     """A durable, SQLite-backed backend for glyff.
 
     This backend stores each execution in a row in a SQLite database, providing
@@ -182,13 +171,21 @@ class SQLiteBackend:
         client._initialize_schema_sync()
         staging = ExecutionStaging()
         self._client = client
-        self.repository: ExecutionRepository = SQLiteExecutionRepository(
-            client, staging
-        )
-        self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(
-            client, staging
-        )
-        self.session_migration: SessionMigration = SQLiteSessionMigration(client)
+        self._repository = SQLiteExecutionRepository(client, staging)
+        self._transaction_provider = SQLiteTransactionProvider(client, staging)
+        self._session_migration = SQLiteSessionMigration(client)
+
+    @property
+    def repository(self) -> ExecutionRepository:
+        return self._repository
+
+    @property
+    def transaction_provider(self) -> TransactionProvider:
+        return self._transaction_provider
+
+    @property
+    def session_migration(self) -> SessionMigration:
+        return self._session_migration
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         return await self._client.claim_session(session_id.value, app_version)

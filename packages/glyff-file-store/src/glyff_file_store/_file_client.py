@@ -9,19 +9,13 @@ import time
 from contextlib import asynccontextmanager, contextmanager
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, TypeVar
 
 from filelock import AsyncFileLock, FileLock
-from glyff.exceptions import MigrationError, StoreFormatVersionError
-from glyff.migration import (
-    MigrationReport,
-    SessionMetadata,
-    SessionMigrationResult,
-    StoredSession,
-)
+from glyff.exceptions import StoreFormatVersionError
 from glyff.serialization.constants import DEFAULT_ENCODING
-from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
-from glyff.store.utils import execution_id_to_path, path_to_execution_id
+from glyff.store.aggregate_codec import execution_to_dict
+from glyff.store.utils import execution_id_to_path
 from glyff.store.staging import (
     DeleteExecution,
     ExecutionKey,
@@ -44,6 +38,8 @@ _EXECUTIONS_KEY = "executions"
 # Windows refuses to replace a file another handle has open; the reader releases
 # it in microseconds, so a short retry is enough.
 _PERMISSION_RETRY_DELAYS = (0.01, 0.025, 0.05, 0.1, 0.2)
+
+T = TypeVar("T")
 
 
 class FileClient:
@@ -69,7 +65,7 @@ class FileClient:
             yield
 
     @asynccontextmanager
-    async def exclusive(self) -> AsyncIterator[None]:
+    async def _exclusive(self) -> AsyncIterator[None]:
         """Store-wide exclusion for a read-modify-write.
 
         Both locks are needed: the file lock keeps other processes out, and the
@@ -155,105 +151,67 @@ class FileClient:
         if not mutations:
             return
 
-        async with self.exclusive():
-            await asyncio.to_thread(self._commit_mutations_sync, mutations)
+        def apply(document: dict[str, Any]) -> None:
+            sessions = document.setdefault(_SESSIONS_KEY, {})
+            for key, mutation in mutations.items():
+                session = sessions.setdefault(key.session_id.value, {})
+                executions = session.setdefault(_EXECUTIONS_KEY, {})
+                path = execution_id_to_path(key.execution_id)
 
-    def _commit_mutations_sync(
-        self, mutations: Mapping[ExecutionKey, ExecutionMutation]
-    ) -> None:
-        document = self._read_document_sync()
-        sessions = document.setdefault(_SESSIONS_KEY, {})
+                if isinstance(mutation, DeleteExecution):
+                    executions.pop(path, None)
+                else:
+                    executions[path] = execution_to_dict(
+                        mutation.snapshot.to_execution()
+                    )
 
-        for key, mutation in mutations.items():
-            session = sessions.setdefault(key.session_id.value, {})
-            executions = session.setdefault(_EXECUTIONS_KEY, {})
-            path = execution_id_to_path(key.execution_id)
+        await self.update_document(apply)
 
-            if isinstance(mutation, DeleteExecution):
-                executions.pop(path, None)
-            else:
-                executions[path] = execution_to_dict(mutation.snapshot.to_execution())
+    # -- The write primitive ---------------------------------------------------
 
-        self._write_document_sync(document)
+    async def update_document(self, operation: Callable[[dict[str, Any]], T]) -> T:
+        """Reads the document, hands it to ``operation`` to change in place, and
+        replaces it — all with the store held, and off the event loop.
 
-    # -- Session migration -----------------------------------------------------
-
-    async def migrate_session(
-        self,
-        session_id: str,
-        migrate: Callable[[StoredSession], SessionMigrationResult],
-    ) -> MigrationReport:
-        """Replaces one session's metadata and executions in a single write.
-
-        ``migrate`` runs with the store held, so it must not do I/O of its own.
+        Every write the store makes goes through here. Because one document
+        carries every session, a single replacement covers whatever ``operation``
+        touched.
         """
-        # The same exclusion ordinary commits take, held from the read through
-        # the replacement: no other writer can act on the state being replaced.
-        async with self.exclusive():
-            return await asyncio.to_thread(
-                self._migrate_session_sync, session_id, migrate
-            )
+        async with self._exclusive():
+            return await self._while_held(lambda: self._update_document_sync(operation))
 
-    def _migrate_session_sync(
-        self,
-        session_id: str,
-        migrate: Callable[[StoredSession], SessionMigrationResult],
-    ) -> MigrationReport:
+    def _update_document_sync(self, operation: Callable[[dict[str, Any]], T]) -> T:
         document = self._read_document_sync()
-        result = migrate(self._stored_session(document, session_id))
-
-        sessions = document.setdefault(_SESSIONS_KEY, {})
-        sessions[session_id] = {
-            _APP_VERSION_KEY: result.session.metadata.app_version,
-            _EXECUTIONS_KEY: {
-                execution_id_to_path(execution.id): execution_to_dict(execution)
-                for execution in result.session.executions
-            },
-        }
-        # Metadata and executions reach disk in the one replacement that carries
-        # the whole document, so neither can land without the other.
+        result = operation(document)
         self._write_document_sync(document)
-        return result.report
+        return result
 
-    def _stored_session(
-        self, document: dict[str, Any], session_id: str
-    ) -> StoredSession:
-        session = document.get(_SESSIONS_KEY, {}).get(session_id, {})
-        app_version = session.get(_APP_VERSION_KEY)
-        if app_version is None:
-            raise MigrationError(
-                f"Session {session_id!r} carries no application version in "
-                f"{self._base_path}, so there is no version to migrate from."
-            )
+    @staticmethod
+    async def _while_held(work: Callable[[], T]) -> T:
+        """Runs ``work`` on a worker thread, waiting for it even if cancelled.
 
-        executions = session.get(_EXECUTIONS_KEY, {})
-        return StoredSession(
-            metadata=SessionMetadata(app_version=app_version),
-            # Path order is ancestor-first: a parent's path is a prefix of its
-            # children's, and a prefix sorts before what extends it.
-            executions=tuple(
-                execution_from_dict(path_to_execution_id(path), executions[path])
-                for path in sorted(executions)
-            ),
-        )
+        A cancelled caller must not hand the store on while the worker is still
+        going: the next writer would take both locks, write, and then be
+        overwritten by this one's replacement of a document read before it.
+        """
+        worker = asyncio.ensure_future(asyncio.to_thread(work))
+        try:
+            await asyncio.wait([worker])
+        except asyncio.CancelledError:
+            await asyncio.wait([worker])
+            raise
+        return worker.result()
 
     # -- Application version ---------------------------------------------------
 
     async def claim_session(self, session_id: str, app_version: str) -> str:
-        async with self.exclusive():
-            return await asyncio.to_thread(
-                self._claim_session_sync, session_id, app_version
-            )
+        def claim(document: dict[str, Any]) -> str:
+            session = document.setdefault(_SESSIONS_KEY, {}).setdefault(session_id, {})
+            recorded = session.get(_APP_VERSION_KEY)
+            if recorded is not None:
+                return recorded
 
-    def _claim_session_sync(self, session_id: str, app_version: str) -> str:
-        document = self._read_document_sync()
-        sessions = document.setdefault(_SESSIONS_KEY, {})
-        session = sessions.setdefault(session_id, {})
+            session[_APP_VERSION_KEY] = app_version
+            return app_version
 
-        recorded = session.get(_APP_VERSION_KEY)
-        if recorded is not None:
-            return recorded
-
-        session[_APP_VERSION_KEY] = app_version
-        self._write_document_sync(document)
-        return app_version
+        return await self.update_document(claim)

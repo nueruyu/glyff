@@ -3,7 +3,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Iterable
 
-from .._interfaces import ExecutionRepository, Transaction, TransactionProvider
+from .._interfaces import (
+    Backend,
+    ExecutionRepository,
+    Transaction,
+    TransactionProvider,
+)
 from .._models import Execution, ExecutionId, ExecutionStatus, SessionId
 from ._memory_client import MemoryClient
 from .staging import (
@@ -125,18 +130,28 @@ class MemoryTransactionProvider(TransactionProvider):
         return await _MemoryTransaction(self._client, self._staging).begin()
 
 
-class MemoryBackend:
+class MemoryBackend(Backend):
+    """An ephemeral backend.
+
+    Not a `MigratableBackend`: nothing here outlives the process, so there are
+    never records from an older application version to carry across.
+    """
+
     def __init__(self) -> None:
         client = MemoryClient()
         staging = ExecutionStaging()
-        self.repository: ExecutionRepository = MemoryExecutionRepository(
-            client, staging
-        )
-        self.transaction_provider: TransactionProvider = MemoryTransactionProvider(
-            client, staging
-        )
+        self._repository = MemoryExecutionRepository(client, staging)
+        self._transaction_provider = MemoryTransactionProvider(client, staging)
         self._app_versions: dict[str, str] = {}
         self._claim_lock = asyncio.Lock()
+
+    @property
+    def repository(self) -> ExecutionRepository:
+        return self._repository
+
+    @property
+    def transaction_provider(self) -> TransactionProvider:
+        return self._transaction_provider
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         # Nothing here outlives the process, so the claim only has to hold for

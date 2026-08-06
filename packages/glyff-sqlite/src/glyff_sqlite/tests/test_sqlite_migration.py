@@ -15,6 +15,7 @@ from glyff.migration import (
     MigrationReport,
     SessionMetadata,
     SessionMigrationResult,
+    SessionMigrator,
     StoredSession,
 )
 from glyff.testing import canonical_arguments, make_execution_id
@@ -23,7 +24,7 @@ from glyff_sqlite import SQLiteBackend
 SESSION = SessionId("migrate")
 
 
-class ReplacingMigrator:
+class ReplacingMigrator(SessionMigrator):
     def __init__(self, *executions: Execution, app_version: str = "v2") -> None:
         self._executions = executions
         self._app_version = app_version
