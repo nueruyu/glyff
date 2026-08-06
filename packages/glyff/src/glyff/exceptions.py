@@ -102,3 +102,23 @@ class AppVersionMismatchError(GlyffError):
     """
 
     pass
+
+
+class MigrationError(GlyffError):
+    """
+    Base class for failures while carrying a session across a version change.
+    """
+
+    pass
+
+
+class MigrationCollisionError(MigrationError):
+    """
+    Raised when a migration would land two executions on one identity.
+
+    Two histories merged into one key cannot be told apart afterwards, and the
+    ordinals that would interleave them are not recoverable, so the migration is
+    refused rather than resolved by whichever record is written last.
+    """
+
+    pass

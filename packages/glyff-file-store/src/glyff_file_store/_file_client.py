@@ -7,15 +7,21 @@ import os
 import tempfile
 import time
 from contextlib import asynccontextmanager, contextmanager
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from filelock import AsyncFileLock, FileLock
-from glyff.exceptions import StoreFormatVersionError
+from glyff.exceptions import MigrationError, StoreFormatVersionError
+from glyff.migration import (
+    MigrationReport,
+    SessionMetadata,
+    SessionMigrationResult,
+    StoredSession,
+)
 from glyff.serialization.constants import DEFAULT_ENCODING
-from glyff.store.aggregate_codec import execution_to_dict
-from glyff.store.utils import execution_id_to_path
+from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
+from glyff.store.utils import execution_id_to_path, path_to_execution_id
 from glyff.store.staging import (
     DeleteExecution,
     ExecutionKey,
@@ -169,6 +175,67 @@ class FileClient:
                 executions[path] = execution_to_dict(mutation.snapshot.to_execution())
 
         self._write_document_sync(document)
+
+    # -- Session migration -----------------------------------------------------
+
+    async def migrate_session(
+        self,
+        session_id: str,
+        migrate: Callable[[StoredSession], SessionMigrationResult],
+    ) -> MigrationReport:
+        """Replaces one session's metadata and executions in a single write.
+
+        ``migrate`` runs with the store held, so it must not do I/O of its own.
+        """
+        # The same exclusion ordinary commits take, held from the read through
+        # the replacement: no other writer can act on the state being replaced.
+        async with self.exclusive():
+            return await asyncio.to_thread(
+                self._migrate_session_sync, session_id, migrate
+            )
+
+    def _migrate_session_sync(
+        self,
+        session_id: str,
+        migrate: Callable[[StoredSession], SessionMigrationResult],
+    ) -> MigrationReport:
+        document = self._read_document_sync()
+        result = migrate(self._stored_session(document, session_id))
+
+        sessions = document.setdefault(_SESSIONS_KEY, {})
+        sessions[session_id] = {
+            _APP_VERSION_KEY: result.session.metadata.app_version,
+            _EXECUTIONS_KEY: {
+                execution_id_to_path(execution.id): execution_to_dict(execution)
+                for execution in result.session.executions
+            },
+        }
+        # Metadata and executions reach disk in the one replacement that carries
+        # the whole document, so neither can land without the other.
+        self._write_document_sync(document)
+        return result.report
+
+    def _stored_session(
+        self, document: dict[str, Any], session_id: str
+    ) -> StoredSession:
+        session = document.get(_SESSIONS_KEY, {}).get(session_id, {})
+        app_version = session.get(_APP_VERSION_KEY)
+        if app_version is None:
+            raise MigrationError(
+                f"Session {session_id!r} carries no application version in "
+                f"{self._base_path}, so there is no version to migrate from."
+            )
+
+        executions = session.get(_EXECUTIONS_KEY, {})
+        return StoredSession(
+            metadata=SessionMetadata(app_version=app_version),
+            # Path order is ancestor-first: a parent's path is a prefix of its
+            # children's, and a prefix sorts before what extends it.
+            executions=tuple(
+                execution_from_dict(path_to_execution_id(path), executions[path])
+                for path in sorted(executions)
+            ),
+        )
 
     # -- Application version ---------------------------------------------------
 

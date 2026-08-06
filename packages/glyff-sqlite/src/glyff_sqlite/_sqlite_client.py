@@ -4,14 +4,20 @@ import asyncio
 import json
 import re
 import sqlite3
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from glyff import Execution, ExecutionId
-from glyff.exceptions import StoreFormatVersionError
+from glyff.exceptions import MigrationError, StoreFormatVersionError
+from glyff.migration import (
+    MigrationReport,
+    SessionMetadata,
+    SessionMigrationResult,
+    StoredSession,
+)
 from glyff.serialization.constants import JSON_SEPARATORS
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.staging import (
@@ -19,7 +25,7 @@ from glyff.store.staging import (
     ExecutionKey,
     ExecutionMutation,
 )
-from glyff.store.utils import execution_id_to_path
+from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 # Bump when the stored schema changes.
 FORMAT_VERSION = 1
@@ -257,15 +263,21 @@ class SQLiteClient:
         key: ExecutionKey,
         mutation: ExecutionMutation,
     ) -> None:
-        path = execution_id_to_path(key.execution_id)
         if isinstance(mutation, DeleteExecution):
             connection.execute(
                 f'DELETE FROM "{self._table_name}" WHERE session_id = ? AND path = ?',
-                (key.session_id.value, path),
+                (key.session_id.value, execution_id_to_path(key.execution_id)),
             )
             return
 
-        record = SQLiteExecutionRecord.from_execution(mutation.snapshot.to_execution())
+        self._upsert_execution(
+            connection, key.session_id.value, mutation.snapshot.to_execution()
+        )
+
+    def _upsert_execution(
+        self, connection: sqlite3.Connection, session_id: str, execution: Execution
+    ) -> None:
+        record = SQLiteExecutionRecord.from_execution(execution)
         connection.execute(
             f"""INSERT INTO "{self._table_name}"
                    (session_id, path, arguments, status, result, metadata)
@@ -276,8 +288,8 @@ class SQLiteClient:
                    result = excluded.result,
                    metadata = excluded.metadata""",
             (
-                key.session_id.value,
-                path,
+                session_id,
+                execution_id_to_path(execution.id),
                 record.arguments,
                 record.status,
                 record.result,
@@ -382,6 +394,83 @@ class SQLiteClient:
                 "WHERE session_id = ?",
                 (session_id,),
             ).fetchone()[0]
+
+    # -- Session migration -----------------------------------------------------
+
+    async def migrate_session(
+        self,
+        session_id: str,
+        migrate: Callable[[StoredSession], SessionMigrationResult],
+    ) -> MigrationReport:
+        """Replaces one session's metadata and executions in a single write.
+
+        ``migrate`` runs with the session held, so it must not do I/O of its own.
+        """
+        async with self._write_lock:
+            return await asyncio.to_thread(
+                self._migrate_session_sync, session_id, migrate
+            )
+
+    def _migrate_session_sync(
+        self,
+        session_id: str,
+        migrate: Callable[[StoredSession], SessionMigrationResult],
+    ) -> MigrationReport:
+        # SQLite has no row locks, so the exclusion is the transaction itself:
+        # BEGIN IMMEDIATE takes the write lock before the first read and holds it
+        # past the last write, which makes every other writer wait rather than
+        # act on the state this is replacing.
+        with self._immediate_transaction() as connection:
+            source = self._read_session(connection, session_id)
+            result = migrate(source)
+
+            connection.execute(
+                f'DELETE FROM "{self._table_name}" WHERE session_id = ?', (session_id,)
+            )
+            for execution in result.session.executions:
+                self._upsert_execution(connection, session_id, execution)
+
+            connection.execute(
+                f'INSERT INTO "{self._sessions_table_name}" '
+                "(session_id, app_version) VALUES (?, ?) "
+                "ON CONFLICT(session_id) DO UPDATE SET app_version = excluded.app_version",
+                (session_id, result.session.metadata.app_version),
+            )
+            return result.report
+
+    def _read_session(
+        self, connection: sqlite3.Connection, session_id: str
+    ) -> StoredSession:
+        row = connection.execute(
+            f'SELECT app_version FROM "{self._sessions_table_name}" '
+            "WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            raise MigrationError(
+                f"Session {session_id!r} carries no application version in "
+                f"{self._database_path}, so there is no version to migrate from."
+            )
+
+        rows = connection.execute(
+            "SELECT path, arguments, status, result, metadata "
+            f'FROM "{self._table_name}" WHERE session_id = ? ORDER BY path',
+            (session_id,),
+        ).fetchall()
+        return StoredSession(
+            metadata=SessionMetadata(app_version=row[0]),
+            # Path order is ancestor-first: a parent's path is a prefix of its
+            # children's, and a prefix sorts before what extends it.
+            executions=tuple(
+                SQLiteExecutionRecord(
+                    arguments=record[1],
+                    status=record[2],
+                    result=record[3],
+                    metadata=record[4],
+                ).to_execution(path_to_execution_id(record[0]))
+                for record in rows
+            ),
+        )
 
     # -- Direct SQL access (for initialization / inspection) -------------------
 

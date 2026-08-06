@@ -48,6 +48,36 @@ Serialized values pass through as bytes; the shipped file and SQLite backends
 store them as readable JSON text, so serializers used with them must produce
 JSON text.
 
+## Migration, an optional capability
+
+A durable backend also offers `session_migration`, which replaces one session's
+recorded state wholesale:
+
+```python
+report = await backend.session_migration.run(session_id, migrator)
+```
+
+It is deliberately not part of `Backend`. Running a session needs none of it,
+and an ephemeral store has no old records to carry forward — the in-memory
+backend does not provide it. `MigratableBackend` in `glyff.migration` names the
+capability for anything that wants to require it.
+
+The split is mechanism against policy. `SessionMigration` takes the session
+exclusively, reads its `SessionMetadata` and executions into a `StoredSession`,
+hands that to a `SessionMigrator`, and stores what comes back — metadata and
+executions in one atomic step, or neither. It knows nothing about
+transformations. `SessionMigrator.migrate` decides what the session should
+become and is pure and synchronous by contract, because it runs while the
+backend holds the session: anything that waits there holds a lock, and anything
+with a side effect happens inside a transaction that may yet be undone.
+
+Exclusion is the store's own: SQLite takes `BEGIN IMMEDIATE` before the first
+read and holds it past the last write, and the file store holds the same lock
+ordinary commits take. Either way no other writer can act on the state being
+replaced. A `StoredSession` refuses to hold two executions on one id, so a
+migrator that merges two histories is stopped before a store can silently keep
+whichever it wrote last.
+
 ## Shipped backends
 
 | Package | Backend | Intended use |

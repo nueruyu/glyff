@@ -4,6 +4,7 @@ from glyff.testing import (
     AppVersionContract,
     DurableBackendContract,
     ExecutionBackendContract,
+    SessionMigrationContract,
     TextBackendContract,
 )
 from glyff_file_store import JsonFileBackend
@@ -14,6 +15,7 @@ class TestJsonFileBackendContract(
     DurableBackendContract,
     TextBackendContract,
     AppVersionContract,
+    SessionMigrationContract,
 ):
     @pytest.fixture
     def backend_factory(self, tmp_path):

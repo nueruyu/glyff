@@ -15,6 +15,7 @@ from glyff import (
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
+from glyff.migration import MigrationReport, SessionMigration, SessionMigrator
 from glyff.store.staging import ExecutionStaging, SaveExecution
 
 from ._file_client import FileClient
@@ -85,6 +86,18 @@ class FileExecutionRepository(ExecutionRepository):
             stage.delete(session_id, execution_id)
 
 
+class FileSessionMigration:
+    """Replaces one session wholesale, inside the lock that holds the store."""
+
+    def __init__(self, client: FileClient):
+        self._client = client
+
+    async def run(
+        self, session_id: SessionId, migrator: SessionMigrator
+    ) -> MigrationReport:
+        return await self._client.migrate_session(session_id.value, migrator.migrate)
+
+
 class FileTransactionProvider(TransactionProvider):
     def __init__(self, client: FileClient, staging: ExecutionStaging):
         self._client = client
@@ -115,6 +128,7 @@ class JsonFileBackend:
         self.transaction_provider: TransactionProvider = FileTransactionProvider(
             client, staging
         )
+        self.session_migration: SessionMigration = FileSessionMigration(client)
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         return await self._client.claim_session(session_id.value, app_version)

@@ -12,6 +12,7 @@ from glyff import (
     Transaction,
     TransactionProvider,
 )
+from glyff.migration import MigrationReport, SessionMigration, SessionMigrator
 from glyff.store.staging import (
     ExecutionMutation,
     ExecutionStaging,
@@ -120,6 +121,18 @@ def _staged_execution(mutation: ExecutionMutation) -> Execution | None:
     )
 
 
+class SQLiteSessionMigration:
+    """Replaces one session wholesale, inside the transaction that holds it."""
+
+    def __init__(self, client: SQLiteClient):
+        self._client = client
+
+    async def run(
+        self, session_id: SessionId, migrator: SessionMigrator
+    ) -> MigrationReport:
+        return await self._client.migrate_session(session_id.value, migrator.migrate)
+
+
 class SQLiteTransactionProvider(TransactionProvider):
     def __init__(self, client: SQLiteClient, staging: ExecutionStaging):
         self._client = client
@@ -175,6 +188,7 @@ class SQLiteBackend:
         self.transaction_provider: TransactionProvider = SQLiteTransactionProvider(
             client, staging
         )
+        self.session_migration: SessionMigration = SQLiteSessionMigration(client)
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         return await self._client.claim_session(session_id.value, app_version)
