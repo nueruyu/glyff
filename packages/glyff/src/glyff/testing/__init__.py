@@ -33,6 +33,7 @@ from ._backend_contract import (
     save_execution,
     serialized_value,
 )
+from ._migration_contract import SessionMigrationContract
 from ._pruning import PruningEventHandler
 
 __all__ = [
@@ -42,6 +43,7 @@ __all__ = [
     "ExecutionBackendContract",
     "TextBackendContract",
     "PruningEventHandler",
+    "SessionMigrationContract",
     "canonical_arguments",
     "make_execution_id",
     "save_execution",

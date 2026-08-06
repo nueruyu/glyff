@@ -4,6 +4,7 @@ from glyff.testing import (
     AppVersionContract,
     DurableBackendContract,
     ExecutionBackendContract,
+    SessionMigrationContract,
     TextBackendContract,
 )
 from glyff_sqlite import SQLiteBackend
@@ -14,6 +15,7 @@ class TestSQLiteBackendContract(
     DurableBackendContract,
     TextBackendContract,
     AppVersionContract,
+    SessionMigrationContract,
 ):
     @pytest.fixture
     def backend_factory(self, tmp_path):

@@ -15,9 +15,11 @@ from glyff import (
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
+from glyff.migration import MigratableBackend, SessionMigration
 from glyff.store.staging import ExecutionStaging, SaveExecution
 
 from ._file_client import FileClient
+from ._file_migration import FileSessionMigration
 from ._transaction import _ClientTransaction
 
 # Bump when the stored layout changes.
@@ -94,7 +96,7 @@ class FileTransactionProvider(TransactionProvider):
         return await _ClientTransaction(self._client, self._staging).begin()
 
 
-class JsonFileBackend:
+class JsonFileBackend(MigratableBackend):
     """A file-backed backend for glyff, intended for debugging and inspection.
 
     Every session in the store lives in one pretty-printed JSON document under
@@ -111,10 +113,21 @@ class JsonFileBackend:
         client = FileClient(base_dir, format_version=FORMAT_VERSION)
         staging = ExecutionStaging()
         self._client = client
-        self.repository: ExecutionRepository = FileExecutionRepository(client, staging)
-        self.transaction_provider: TransactionProvider = FileTransactionProvider(
-            client, staging
-        )
+        self._repository = FileExecutionRepository(client, staging)
+        self._transaction_provider = FileTransactionProvider(client, staging)
+        self._session_migration = FileSessionMigration(client)
+
+    @property
+    def repository(self) -> ExecutionRepository:
+        return self._repository
+
+    @property
+    def transaction_provider(self) -> TransactionProvider:
+        return self._transaction_provider
+
+    @property
+    def session_migration(self) -> SessionMigration:
+        return self._session_migration
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         return await self._client.claim_session(session_id.value, app_version)

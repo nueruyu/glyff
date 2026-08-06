@@ -4,11 +4,11 @@ import asyncio
 import json
 import re
 import sqlite3
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from glyff import Execution, ExecutionId
 from glyff.exceptions import StoreFormatVersionError
@@ -20,6 +20,7 @@ from glyff.store.staging import (
     ExecutionMutation,
 )
 from glyff.store.utils import execution_id_to_path
+from glyff.store.workers import run_to_completion
 
 # Bump when the stored schema changes.
 FORMAT_VERSION = 1
@@ -31,6 +32,8 @@ _EXECUTIONS_SUFFIX = "_executions"
 _SESSIONS_SUFFIX = "_sessions"
 _META_SUFFIX = "_meta"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -233,6 +236,23 @@ class SQLiteClient:
                 "Refusing to open it."
             )
 
+    # -- The write primitive ---------------------------------------------------
+
+    async def run_immediate(self, operation: Callable[[sqlite3.Connection], T]) -> T:
+        """Runs ``operation`` inside one ``BEGIN IMMEDIATE``, off the event loop.
+
+        Every write goes through here, so writes serialize in this process and,
+        through SQLite's own write lock, across processes too. Whatever
+        ``operation`` does is committed together or not at all, and a cancelled
+        caller hears about it only once that has settled.
+        """
+        async with self._write_lock:
+            return await run_to_completion(lambda: self._run_immediate_sync(operation))
+
+    def _run_immediate_sync(self, operation: Callable[[sqlite3.Connection], T]) -> T:
+        with self._immediate_transaction() as connection:
+            return operation(connection)
+
     # -- Commit ----------------------------------------------------------------
 
     async def commit_mutations(
@@ -241,15 +261,11 @@ class SQLiteClient:
         if not mutations:
             return
 
-        async with self._write_lock:
-            await asyncio.to_thread(self._commit_mutations_sync, mutations)
-
-    def _commit_mutations_sync(
-        self, mutations: Mapping[ExecutionKey, ExecutionMutation]
-    ) -> None:
-        with self._immediate_transaction() as connection:
+        def apply(connection: sqlite3.Connection) -> None:
             for key, mutation in mutations.items():
                 self._apply_mutation(connection, key, mutation)
+
+        await self.run_immediate(apply)
 
     def _apply_mutation(
         self,
@@ -257,15 +273,22 @@ class SQLiteClient:
         key: ExecutionKey,
         mutation: ExecutionMutation,
     ) -> None:
-        path = execution_id_to_path(key.execution_id)
         if isinstance(mutation, DeleteExecution):
             connection.execute(
                 f'DELETE FROM "{self._table_name}" WHERE session_id = ? AND path = ?',
-                (key.session_id.value, path),
+                (key.session_id.value, execution_id_to_path(key.execution_id)),
             )
             return
 
-        record = SQLiteExecutionRecord.from_execution(mutation.snapshot.to_execution())
+        self.upsert_execution(
+            connection, key.session_id.value, mutation.snapshot.to_execution()
+        )
+
+    def upsert_execution(
+        self, connection: sqlite3.Connection, session_id: str, execution: Execution
+    ) -> None:
+        """Writes one execution over whatever is at its path."""
+        record = SQLiteExecutionRecord.from_execution(execution)
         connection.execute(
             f"""INSERT INTO "{self._table_name}"
                    (session_id, path, arguments, status, result, metadata)
@@ -276,8 +299,8 @@ class SQLiteClient:
                    result = excluded.result,
                    metadata = excluded.metadata""",
             (
-                key.session_id.value,
-                path,
+                session_id,
+                execution_id_to_path(execution.id),
                 record.arguments,
                 record.status,
                 record.result,
@@ -306,6 +329,32 @@ class SQLiteClient:
             return SQLiteExecutionRecord(
                 arguments=row[0], status=row[1], result=row[2], metadata=row[3]
             )
+
+    def read_session_executions(
+        self, connection: sqlite3.Connection, session_id: str
+    ) -> list[tuple[str, SQLiteExecutionRecord]]:
+        """Every row of one session, in path order."""
+        rows = connection.execute(
+            "SELECT path, arguments, status, result, metadata "
+            f'FROM "{self._table_name}" WHERE session_id = ? ORDER BY path',
+            (session_id,),
+        ).fetchall()
+        return [
+            (
+                row[0],
+                SQLiteExecutionRecord(
+                    arguments=row[1], status=row[2], result=row[3], metadata=row[4]
+                ),
+            )
+            for row in rows
+        ]
+
+    def delete_session_executions(
+        self, connection: sqlite3.Connection, session_id: str
+    ) -> None:
+        connection.execute(
+            f'DELETE FROM "{self._table_name}" WHERE session_id = ?', (session_id,)
+        )
 
     async def iter_committed(
         self, session_id: str, prefix: str = ""
@@ -361,27 +410,43 @@ class SQLiteClient:
 
     async def claim_session(self, session_id: str, app_version: str) -> str:
         """Records ``app_version`` for a session that carries none; returns the winner."""
-        async with self._write_lock:
-            return await asyncio.to_thread(
-                self._claim_session_sync, session_id, app_version
-            )
 
-    def _claim_session_sync(self, session_id: str, app_version: str) -> str:
-        # The insert and the read share one BEGIN IMMEDIATE: a concurrent claim
+        # The insert and the read share the one transaction: a concurrent claim
         # either waits for this commit and then reads the winner, or takes the
         # write lock first and makes this one read its version.
-        with self._immediate_transaction() as connection:
+        def claim(connection: sqlite3.Connection) -> str:
             connection.execute(
                 f'INSERT INTO "{self._sessions_table_name}" '
                 "(session_id, app_version) VALUES (?, ?) "
                 "ON CONFLICT(session_id) DO NOTHING",
                 (session_id, app_version),
             )
-            return connection.execute(
-                f'SELECT app_version FROM "{self._sessions_table_name}" '
-                "WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()[0]
+            recorded = self.read_app_version(connection, session_id)
+            assert recorded is not None
+            return recorded
+
+        return await self.run_immediate(claim)
+
+    def read_app_version(
+        self, connection: sqlite3.Connection, session_id: str
+    ) -> str | None:
+        row = connection.execute(
+            f'SELECT app_version FROM "{self._sessions_table_name}" '
+            "WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return None if row is None else row[0]
+
+    def write_app_version(
+        self, connection: sqlite3.Connection, session_id: str, app_version: str
+    ) -> None:
+        """Records ``app_version`` over whatever the session carried."""
+        connection.execute(
+            f'INSERT INTO "{self._sessions_table_name}" '
+            "(session_id, app_version) VALUES (?, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET app_version = excluded.app_version",
+            (session_id, app_version),
+        )
 
     # -- Direct SQL access (for initialization / inspection) -------------------
 
@@ -393,9 +458,4 @@ class SQLiteClient:
             return list(connection.execute(sql, params))
 
     async def execute(self, sql: str, *params: Any) -> None:
-        async with self._write_lock:
-            await asyncio.to_thread(self._execute_sync, sql, params)
-
-    def _execute_sync(self, sql: str, params: tuple[Any, ...]) -> None:
-        with self._immediate_transaction() as connection:
-            connection.execute(sql, params)
+        await self.run_immediate(lambda connection: connection.execute(sql, params))

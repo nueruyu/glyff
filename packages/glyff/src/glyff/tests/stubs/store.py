@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Callable, Iterable
 from typing import Any, NamedTuple
 
 from glyff import (
+    Backend,
     Execution,
     ExecutionId,
     ExecutionRepository,
@@ -89,18 +90,30 @@ class StubTransactionProvider(TransactionProvider):
         return StubTransaction(self._record, self.transaction_impl)
 
 
-class StubBackend:
+class StubBackend(Backend):
     def __init__(self, client: MemoryClient):
         self.calls: list[Call] = []
         self._client = client
         self._backend = MemoryBackend()
         self.staging = ExecutionStaging()
-        self.repository = StubExecutionRepository(
+        self._repository = StubExecutionRepository(
             self._record, MemoryExecutionRepository(client, self.staging)
         )
-        self.transaction_provider = StubTransactionProvider(
+        self._transaction_provider = StubTransactionProvider(
             self._record, MemoryTransactionProvider(client, self.staging)
         )
+
+    @property
+    def repository(self) -> StubExecutionRepository:
+        return self._repository
+
+    @property
+    def transaction_provider(self) -> StubTransactionProvider:
+        return self._transaction_provider
+
+    def replace_repository(self, repository: StubExecutionRepository) -> None:
+        """Swaps in a repository that fails where the real one would not."""
+        self._repository = repository
 
     async def claim_session(self, session_id: SessionId, app_version: str) -> str:
         self._record("claim_session", session_id, app_version)

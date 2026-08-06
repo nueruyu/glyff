@@ -102,3 +102,19 @@ class AppVersionMismatchError(GlyffError):
     """
 
     pass
+
+
+class MigrationError(GlyffError):
+    """
+    Base class for failures while carrying a session across a version change.
+    """
+
+    pass
+
+
+class MigrationCollisionError(MigrationError):
+    """
+    Raised when a migration produces duplicate execution identities.
+    """
+
+    pass

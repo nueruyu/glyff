@@ -6,7 +6,9 @@ and what is being added.
 
 ## The contract
 
-A `Backend` (`_interfaces.py`) is:
+A `Backend` (`_interfaces.py`) is an ABC you subclass — glyff's extension seams
+are nominal, so a backend states what it implements rather than being taken for
+one because its attributes happen to line up. It is:
 
 | Piece | Role |
 | --- | --- |
@@ -48,6 +50,21 @@ Serialized values pass through as bytes; the shipped file and SQLite backends
 store them as readable JSON text, so serializers used with them must produce
 JSON text.
 
+## Migration, an optional capability
+
+A backend that supports offline session migration subclasses `MigratableBackend`
+(`glyff.migration`) and exposes `session_migration`:
+
+```python
+report = await backend.session_migration.run(session_id, migrator)
+```
+
+`SessionMigration` loads one session exclusively and atomically stores the
+`StoredSession` a synchronous `SessionMigrator` returns in its place. The
+in-memory backend does not provide the capability: nothing there outlives the
+process, so there are no records from an older version to carry across. See
+[migration](./migration.md) for the policy.
+
 ## Shipped backends
 
 | Package | Backend | Intended use |
@@ -58,7 +75,8 @@ JSON text.
 
 ## Writing your own
 
-Implement the pieces above and expose them as a bundle. Verify the
+Subclass `Backend` — or `MigratableBackend` if you offer migration — and expose
+the pieces above. Verify the
 implementation against the shared contract suite in `glyff.testing`: subclass
 the contract classes (`ExecutionBackendContract`, `DurableBackendContract`,
 `AppVersionContract`, and the text/binary-safety variants) and provide your

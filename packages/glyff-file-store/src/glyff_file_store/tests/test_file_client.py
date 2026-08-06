@@ -189,6 +189,21 @@ async def test_a_claim_takes_an_unclaimed_session(client: FileClient):
     assert await client.claim_session(SESSION.value, "v2") == "v1"
 
 
+async def test_a_claim_on_a_claimed_session_writes_nothing(
+    client: FileClient, monkeypatch: pytest.MonkeyPatch
+):
+    # Reading the recorded version is the whole operation. Replacing the store
+    # to say so would re-serialize and fsync every session in it.
+    await client.claim_session(SESSION.value, "v1")
+
+    def refuse(document: dict) -> None:
+        raise AssertionError("a claim that changed nothing rewrote the store")
+
+    monkeypatch.setattr(client, "_write_document_sync", refuse)
+
+    assert await client.claim_session(SESSION.value, "v2") == "v1"
+
+
 async def test_a_claim_does_not_disturb_recorded_executions(client: FileClient):
     key, mutation = save("task")
     await client.commit_mutations({key: mutation})
