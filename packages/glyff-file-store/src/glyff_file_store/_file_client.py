@@ -45,8 +45,7 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class DocumentUpdate(Generic[T]):
-    """What an operation made of the document: its answer, and whether the
-    document now needs writing back."""
+    """An operation's answer, and whether the document needs writing back."""
 
     result: T
     changed: bool = True
@@ -188,14 +187,11 @@ class FileClient:
         self, operation: Callable[[dict[str, Any]], DocumentUpdate[T]]
     ) -> T:
         """Reads the document, hands it to ``operation`` to change in place, and
-        replaces it if the operation says it changed anything — all with the
-        store held, and off the event loop.
+        replaces it if the operation changed anything — with the store held, off
+        the event loop.
 
-        Every write the store makes goes through here. Because one document
-        carries every session, a single replacement covers whatever ``operation``
-        touched. An operation that decided to change nothing costs a read: a
-        whole store is re-serialized and fsynced on every replacement, so a
-        no-op must not pay for one.
+        Every write goes through here, and one document carries every session, so
+        a single replacement covers whatever ``operation`` touched.
         """
         async with self._exclusive():
             return await self._while_held(lambda: self._update_document_sync(operation))
@@ -214,12 +210,10 @@ class FileClient:
         """Runs ``work`` on a worker thread, waiting for it however many times
         the caller is cancelled.
 
-        Leaving early would hand the store on while the worker is still going:
-        the next writer would take both locks, write, and then be overwritten by
-        this one's replacement of a document read before it. So cancellation is
-        absorbed until the worker is done and then re-raised — including the
-        second cancellation, which would otherwise escape the wait that the
-        first one put us in.
+        Cancelling does not stop the thread. Leaving early would hand the store
+        on while it is still going: the next writer would take both locks, write,
+        and then be overwritten by this one's replacement of a document read
+        before it.
         """
         worker = asyncio.ensure_future(asyncio.to_thread(work))
         cancellation: asyncio.CancelledError | None = None
@@ -243,8 +237,8 @@ class FileClient:
             session = document.setdefault(_SESSIONS_KEY, {}).setdefault(session_id, {})
             recorded = session.get(_APP_VERSION_KEY)
             if recorded is not None:
-                # A session already has its version: reading it is the whole
-                # operation, and rewriting the store to say so is pure cost.
+                # Rewriting a whole store to report an unchanged version would
+                # re-serialize and fsync every session in it.
                 return DocumentUpdate.unchanged(recorded)
 
             session[_APP_VERSION_KEY] = app_version

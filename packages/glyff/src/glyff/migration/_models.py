@@ -8,19 +8,16 @@ from ..exceptions import MigrationCollisionError
 
 @dataclass(frozen=True)
 class SessionMetadata:
-    """What a store records about a session itself, rather than about its
-    executions."""
+    """What a store records about a session itself, not about its executions."""
 
     app_version: str
 
 
 @dataclass(frozen=True)
 class StoredSession:
-    """One session as a whole: its metadata and every execution under it.
+    """One session's snapshot: its metadata and its executions, unique by id.
 
-    Executions come in ancestor-first order and are unique by id, which is what
-    lets a migrator remap parents before the descendants that name them. The
-    uniqueness is checked here rather than at write time, so a migrator that
+    Uniqueness is checked here rather than at write time, so a migrator that
     lands two executions on one id is refused before a store can silently keep
     the last of them.
     """
@@ -40,11 +37,7 @@ class StoredSession:
 
 @dataclass(frozen=True)
 class MigrationReport:
-    """What one migration did.
-
-    The versions it went between are all the mechanism knows; a migrator that
-    understands the transformations records what it changed.
-    """
+    """The versions recorded before and after a migration."""
 
     from_version: str
     to_version: str
@@ -52,8 +45,7 @@ class MigrationReport:
 
 @dataclass(frozen=True)
 class SessionMigrationResult:
-    """A migrator's answer: the session to store in place of the one it was
-    given, and the report to hand back to the caller."""
+    """The session to store in place of the migrated one, and its report."""
 
     session: StoredSession
     report: MigrationReport

@@ -24,13 +24,7 @@ from ._file_client import (
 
 
 class FileSessionMigration(SessionMigration):
-    """Replaces one session inside the lock that holds the store.
-
-    The exclusion is the one ordinary commits take, held from the read through
-    the replacement, so no other writer can act on the state being replaced. One
-    document carries every session, so a single replacement covers both the
-    executions and the version they were written under.
-    """
+    """Stores a migrated session through an atomic document update."""
 
     def __init__(self, client: FileClient):
         self._client = client
@@ -65,8 +59,7 @@ class FileSessionMigration(SessionMigration):
         executions = session.get(_EXECUTIONS_KEY, {})
         return StoredSession(
             metadata=SessionMetadata(app_version=app_version),
-            # Path order is ancestor-first: a parent's path is a prefix of its
-            # children's, and a prefix sorts before what extends it.
+            # Lexicographic path order is ancestor-first.
             executions=tuple(
                 execution_from_dict(path_to_execution_id(path), executions[path])
                 for path in sorted(executions)

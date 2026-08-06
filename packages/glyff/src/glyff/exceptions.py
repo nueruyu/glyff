@@ -114,11 +114,7 @@ class MigrationError(GlyffError):
 
 class MigrationCollisionError(MigrationError):
     """
-    Raised when a migration would land two executions on one identity.
-
-    Two histories merged into one key cannot be told apart afterwards, and the
-    ordinals that would interleave them are not recoverable, so the migration is
-    refused rather than resolved by whichever record is written last.
+    Raised when a migration produces duplicate execution identities.
     """
 
     pass

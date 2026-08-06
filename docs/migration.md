@@ -53,11 +53,11 @@ glyff does not auto-migrate a paused session onto new code. Instead:
   The value is opaque to glyff: what counts as a new generation is yours to
   decide.
 - **Sessions you decide to carry across** are handled by a forward, offline
-  batch: a durable backend's `session_migration` takes the session exclusively,
-  hands its metadata and executions to a `SessionMigrator`, and stores what
-  comes back — the records and the version they were written under in one
-  atomic step, so "migrated but still stamped for the old version" is not a
-  state a store can be found in. Nothing is added to the resume path.
+  batch: a `MigratableBackend`'s `session_migration` takes the session
+  exclusively, hands its metadata and executions to a `SessionMigrator`, and
+  stores what comes back — the records and the version they were written under
+  in one atomic step, so "migrated but still stamped for the old version" is not
+  a state a store can be found in. Nothing is added to the resume path.
 
 What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),
@@ -65,10 +65,8 @@ byte-for-byte the preimage of its `arguments_digest`. Remapping an argument is
 therefore a transformation of recorded JSON, with no dead Python types to keep
 alive and no dependence on the canonicalizer that wrote the record.
 
-> **Planned** — the migrator itself. The mechanism that stores a migration
-> atomically is in place; what does not exist yet is the `SessionMigrator` that
-> works out what a session should become — migration chains, boundary
-> transformations, key remapping, sequence compaction
+> **Planned** — the `SessionMigrator` implementation, including migration
+> chains, identity remapping, and sequence compaction
 > ([#39](https://github.com/nueruyu/glyff/issues/39)). Until then, reproducing
 > glyff's canonical encoding yourself is not a supported surface, so pin paused
 > sessions to the code that started them.

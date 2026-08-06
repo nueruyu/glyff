@@ -52,39 +52,18 @@ JSON text.
 
 ## Migration, an optional capability
 
-A durable backend also offers `session_migration`, which replaces one session's
-recorded state wholesale:
+A backend that supports offline session migration subclasses `MigratableBackend`
+(`glyff.migration`) and exposes `session_migration`:
 
 ```python
 report = await backend.session_migration.run(session_id, migrator)
 ```
 
-It is deliberately not part of `Backend`. Running a session needs none of it,
-and an ephemeral store has no old records to carry forward — the in-memory
-backend is a plain `Backend` and does not provide it. A backend that offers
-migration subclasses `MigratableBackend` (`glyff.migration`), which is itself a
-`Backend`, so the capability is claimed rather than inferred.
-
-The split is mechanism against policy. `SessionMigration` takes the session
-exclusively, reads its `SessionMetadata` and executions into a `StoredSession`,
-hands that to a `SessionMigrator`, and stores what comes back — metadata and
-executions in one atomic step, or neither. It knows nothing about
-transformations. `SessionMigrator.migrate` decides what the session should
-become and is pure and synchronous by contract, because it runs while the
-backend holds the session: anything that waits there holds a lock, and anything
-with a side effect happens inside a transaction that may yet be undone.
-
-Exclusion is the store's own, and each backend has one primitive that every
-write goes through: SQLite's `run_immediate` runs an operation inside a single
-`BEGIN IMMEDIATE`, and the file store's `update_document` reads, changes and
-replaces the document with the store held — including past however many
-cancellations arrive, so a cancelled caller cannot hand the store to the next
-writer while its own worker is still replacing it. An operation that reports
-changing nothing skips the replacement, because rewriting a whole store to say
-so is pure cost. Either way no other writer can act on the state being
-replaced. A `StoredSession` refuses to hold two executions on one id, so a
-migrator that merges two histories is stopped before a store can silently keep
-whichever it wrote last.
+`SessionMigration` loads one session exclusively and atomically stores the
+`StoredSession` a synchronous `SessionMigrator` returns in its place. The
+in-memory backend does not provide the capability: nothing there outlives the
+process, so there are no records from an older version to carry across. See
+[migration](./migration.md) for the policy.
 
 ## Shipped backends
 

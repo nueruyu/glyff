@@ -240,9 +240,9 @@ class SQLiteClient:
     async def run_immediate(self, operation: Callable[[sqlite3.Connection], T]) -> T:
         """Runs ``operation`` inside one ``BEGIN IMMEDIATE``, off the event loop.
 
-        Every write the store makes goes through here, so they serialize in this
-        process and, through SQLite's own write lock, across processes too.
-        Whatever ``operation`` does is committed together or not at all.
+        Every write goes through here, so writes serialize in this process and,
+        through SQLite's own write lock, across processes too. Whatever
+        ``operation`` does is committed together or not at all.
         """
         async with self._write_lock:
             return await asyncio.to_thread(self._run_immediate_sync, operation)

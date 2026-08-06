@@ -8,46 +8,36 @@ from ._models import MigrationReport, SessionMigrationResult, StoredSession
 
 
 class SessionMigrator(ABC):
-    """Turns one stored session into the session that should replace it.
-
-    Pure and synchronous by contract: a backend calls this while holding the
-    session exclusively, so anything that waits here holds a lock — and anything
-    with a side effect happens inside a transaction that may yet be undone.
-    Transformations, remapping, sequence compaction and collision detection all
-    live behind this, and none of it knows how a session is stored.
-    """
+    """Computes the replacement state for one stored session."""
 
     @abstractmethod
     def migrate(self, source: StoredSession) -> SessionMigrationResult:
-        """Returns the migrated session, performing no I/O."""
+        """Returns a replacement without performing I/O.
+
+        ``source.executions`` comes in ancestor-first order, so a parent can be
+        remapped before whatever names it. A backend holds the session for the
+        duration of this call, so waiting here holds a lock and a side effect
+        here happens inside a transaction that may yet be undone.
+        """
         ...
 
 
 class SessionMigration(ABC):
-    """A backend's ability to replace one session's recorded state wholesale.
-
-    The mechanism half of migration, and only that: it takes the session
-    exclusively, reads it, hands it to a migrator, and stores what comes back —
-    metadata and executions in one atomic step, or neither of them.
-    """
+    """Atomically migrates one session in a backend."""
 
     @abstractmethod
     async def run(
         self, session_id: SessionId, migrator: SessionMigrator
     ) -> MigrationReport:
-        """Exclusively loads, migrates, and atomically replaces one session.
+        """Runs the migrator under exclusive access and stores its result.
 
-        Anything raised by the migrator propagates with the session unchanged.
+        Anything the migrator raises propagates with the session unchanged.
         """
         ...
 
 
 class MigratableBackend(Backend):
-    """A backend that offers migration on top of the `Backend` contract.
-
-    Separate because migration is not part of running a session: an ephemeral
-    store has no old records to carry forward and is not expected to provide it.
-    """
+    """A backend that can migrate a session between application versions."""
 
     @property
     @abstractmethod
