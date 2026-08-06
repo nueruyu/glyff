@@ -29,7 +29,11 @@ class SessionMigration(ABC):
     async def run(
         self, session_id: SessionId, migrator: SessionMigrator
     ) -> MigrationReport:
-        """Runs the migrator under exclusive access and stores its result.
+        """Runs the migrator under exclusive storage access and stores its result.
+
+        The caller must ensure the session is offline: exclusion lasts only for
+        this call, and nothing stops a worker on the previous application
+        version from writing to the session once it returns.
 
         Anything the migrator raises propagates with the session unchanged.
         """

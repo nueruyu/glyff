@@ -20,6 +20,7 @@ from glyff.store.staging import (
     ExecutionMutation,
 )
 from glyff.store.utils import execution_id_to_path
+from glyff.store.workers import run_to_completion
 
 # Bump when the stored schema changes.
 FORMAT_VERSION = 1
@@ -242,10 +243,11 @@ class SQLiteClient:
 
         Every write goes through here, so writes serialize in this process and,
         through SQLite's own write lock, across processes too. Whatever
-        ``operation`` does is committed together or not at all.
+        ``operation`` does is committed together or not at all, and a cancelled
+        caller hears about it only once that has settled.
         """
         async with self._write_lock:
-            return await asyncio.to_thread(self._run_immediate_sync, operation)
+            return await run_to_completion(lambda: self._run_immediate_sync(operation))
 
     def _run_immediate_sync(self, operation: Callable[[sqlite3.Connection], T]) -> T:
         with self._immediate_transaction() as connection:

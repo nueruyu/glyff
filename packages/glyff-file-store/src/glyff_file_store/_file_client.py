@@ -17,6 +17,7 @@ from glyff.exceptions import StoreFormatVersionError
 from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.store.aggregate_codec import execution_to_dict
 from glyff.store.utils import execution_id_to_path
+from glyff.store.workers import run_to_completion
 from glyff.store.staging import (
     DeleteExecution,
     ExecutionKey,
@@ -194,7 +195,9 @@ class FileClient:
         a single replacement covers whatever ``operation`` touched.
         """
         async with self._exclusive():
-            return await self._while_held(lambda: self._update_document_sync(operation))
+            return await run_to_completion(
+                lambda: self._update_document_sync(operation)
+            )
 
     def _update_document_sync(
         self, operation: Callable[[dict[str, Any]], DocumentUpdate[T]]
@@ -204,31 +207,6 @@ class FileClient:
         if update.changed:
             self._write_document_sync(document)
         return update.result
-
-    @staticmethod
-    async def _while_held(work: Callable[[], T]) -> T:
-        """Runs ``work`` on a worker thread, waiting for it however many times
-        the caller is cancelled.
-
-        Cancelling does not stop the thread. Leaving early would hand the store
-        on while it is still going: the next writer would take both locks, write,
-        and then be overwritten by this one's replacement of a document read
-        before it.
-        """
-        worker = asyncio.ensure_future(asyncio.to_thread(work))
-        cancellation: asyncio.CancelledError | None = None
-        while not worker.done():
-            try:
-                await asyncio.wait([worker])
-            except asyncio.CancelledError as cancelled:
-                cancellation = cancelled
-
-        if cancellation is not None:
-            # Collected so a worker that also failed is not reported as an
-            # exception nobody retrieved. The cancellation is what happened.
-            worker.exception()
-            raise cancellation
-        return worker.result()
 
     # -- Application version ---------------------------------------------------
 

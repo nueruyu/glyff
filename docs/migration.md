@@ -58,6 +58,8 @@ glyff does not auto-migrate a paused session onto new code. Instead:
   stores what comes back — the records and the version they were written under
   in one atomic step, so "migrated but still stamped for the old version" is not
   a state a store can be found in. Nothing is added to the resume path.
+  Taking the session offline is yours: the exclusion lasts for the call, and
+  glyff does not stop a worker on the old version from resuming afterwards.
 
 What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),

@@ -283,6 +283,44 @@ class SessionMigrationContract:
 
     # -- Exclusion -----------------------------------------------------------
 
+    async def test_cancellation_is_reported_only_once_the_migration_has_settled(
+        self, backend_factory: MigratableBackendFactory
+    ):
+        # Cancelling does not stop the worker the migration is running on, so
+        # reporting the cancellation before it has finished would leave the
+        # caller free to act while the store is still being replaced.
+        backend = backend_factory("cancellation")
+        await self._seeded(backend, "before")
+        after = Execution.start(make_execution_id("after"), canonical_arguments())
+
+        inside = threading.Event()
+        release = threading.Event()
+
+        def hold() -> None:
+            inside.set()
+            release.wait(5)
+
+        migration = asyncio.create_task(
+            backend.session_migration.run(
+                SESSION,
+                RecordingMigrator(
+                    app_version="v2", executions=(after,), before_return=hold
+                ),
+            )
+        )
+        await asyncio.to_thread(inside.wait, 5)
+
+        migration.cancel()
+        await asyncio.sleep(0.05)
+        assert not migration.done()
+
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await migration
+
+        assert [e.id for e in await _executions(backend)] == [after.id]
+        assert await backend.claim_session(SESSION, "v-later") == "v2"
+
     async def test_another_writer_cannot_land_while_a_migration_holds_the_session(
         self, backend_factory: MigratableBackendFactory
     ):
