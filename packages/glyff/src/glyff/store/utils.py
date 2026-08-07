@@ -1,18 +1,64 @@
 from __future__ import annotations
 
-from .._models import ExecutionId
+from urllib.parse import quote, unquote
+
+from .._models import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
+
+
+def _encode(value: str) -> str:
+    """Percent-encodes one frame component.
+
+    Every string component goes through this, including the digest: a component
+    is whatever its value object allows, and keeping the path safe is the
+    codec's job rather than a character restriction leaked into public
+    identifiers.
+    """
+    return quote(value, safe="")
+
+
+def _decode(encoded: str) -> str:
+    """Reverses :func:`_encode`, accepting only canonical encodings.
+
+    ``unquote`` is permissive — it leaves a malformed ``%`` sequence alone and
+    accepts escapes that need not have been escaped, so two different paths
+    could decode to one identity. Re-encoding and comparing refuses that.
+    """
+    decoded = unquote(encoded)
+    if _encode(decoded) != encoded:
+        raise ValueError(f"{encoded!r} is not a canonically encoded path component.")
+    return decoded
 
 
 def _format_frame(eid: ExecutionId) -> str:
     """Formats a single ExecutionId frame into a string component."""
-    return f"{eid.name}#{eid.sequence}:{eid.arguments_digest}"
+    return (
+        f"{_encode(eid.domain.value)}:{_encode(eid.name.value)}"
+        f"#{eid.sequence}:{_encode(eid.arguments_digest.value)}"
+    )
 
 
-def _parse_frame_components(frame_str: str) -> tuple[str, int, str]:
+def _parse_frame_components(
+    frame_str: str,
+) -> tuple[DomainId, ExecutionName, int, ArgumentsDigest]:
     """Parses a string component back into the parts of an ExecutionId frame."""
-    name, rest = frame_str.split("#", 1)
-    seq_str, arguments_digest = rest.split(":", 1)
-    return name, int(seq_str), arguments_digest
+    identity, _, ordinal = frame_str.partition("#")
+    if not ordinal:
+        raise ValueError(f"{frame_str!r} is not an execution path frame.")
+
+    domain, separator, name = identity.partition(":")
+    if not separator:
+        raise ValueError(f"{frame_str!r} is not an execution path frame.")
+
+    sequence, separator, digest = ordinal.partition(":")
+    if not separator:
+        raise ValueError(f"{frame_str!r} is not an execution path frame.")
+
+    return (
+        DomainId(_decode(domain)),
+        ExecutionName(_decode(name)),
+        int(sequence),
+        ArgumentsDigest(_decode(digest)),
+    )
 
 
 def execution_id_to_path(eid: ExecutionId) -> str:
@@ -38,12 +84,13 @@ def path_to_execution_id(path: str) -> ExecutionId:
     parent: ExecutionId | None = None
     eid: ExecutionId | None = None
     for frame_str in path.split("/"):
-        name, sequence, arguments_digest = _parse_frame_components(frame_str)
+        domain, name, sequence, digest = _parse_frame_components(frame_str)
         eid = ExecutionId(
             parent_id=parent,
+            domain=domain,
             name=name,
             sequence=sequence,
-            arguments_digest=arguments_digest,
+            arguments_digest=digest,
         )
         parent = eid
     if eid is None:
