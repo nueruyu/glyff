@@ -5,12 +5,15 @@ of a task's descendants once it completes, without changing replay."""
 from typing import cast
 
 import pytest
-from glyff import ArgumentCanonicalizer, EventEmitter, Session, SessionId, engrave
+from glyff import ArgumentCanonicalizer, Domain, EventEmitter, Session, SessionId
 from glyff.serialization import JsonSerializer
+from glyff.store.utils import path_to_execution_id
 from glyff.testing import PruningEventHandler
 
 from glyff_file_store import FileExecutionRepository, JsonFileBackend
 from glyff_file_store._file_client import Executions
+
+engrave = Domain("test", version="1").engrave
 
 
 class PruningPause(Exception):
@@ -24,7 +27,7 @@ async def _read_execution_map(backend: JsonFileBackend, session_id: str) -> Exec
 
 async def _leaf_names(backend: JsonFileBackend, session_id: str) -> list[str]:
     execution_map = await _read_execution_map(backend, session_id)
-    return [eid.split("/")[-1].split("#")[0] for eid in execution_map]
+    return [path_to_execution_id(path).name.value for path in execution_map]
 
 
 def _pruning_emitter(backend: JsonFileBackend) -> EventEmitter:
@@ -73,7 +76,6 @@ async def test_fresh_run_prunes_whole_subtree(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
         event_emitter=_pruning_emitter(backend),
     ):
         result = await pr_root()
@@ -96,7 +98,6 @@ async def test_disabled_flag_retains_descendants(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
     ):
         await pr_root()
 
@@ -115,7 +116,6 @@ async def test_replay_after_prune_is_correct(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
         event_emitter=_pruning_emitter(backend),
     ):
         first = await pr_root()
@@ -127,7 +127,6 @@ async def test_replay_after_prune_is_correct(
         backend=reopened,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
         event_emitter=_pruning_emitter(reopened),
     ):
         second = await pr_root()
@@ -197,7 +196,6 @@ async def test_nested_completion_prunes_mid_session(
             backend=backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,
-            app_version="test",
             event_emitter=_pruning_emitter(backend),
         ):
             await sc_root()
@@ -216,7 +214,6 @@ async def test_nested_completion_prunes_mid_session(
         backend=reopened,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
         event_emitter=_pruning_emitter(reopened),
     ):
         result = await sc_root()

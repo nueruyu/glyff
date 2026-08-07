@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from ._models import (
     CanonicalValue,
+    DomainId,
     Execution,
     ExecutionId,
     ExecutionStatus,
@@ -114,11 +115,13 @@ class Backend(ABC):
     def transaction_provider(self) -> TransactionProvider: ...
 
     @abstractmethod
-    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
-        """Records ``app_version`` for a session that carries none, and returns
-        the version the session carries afterwards.
+    async def claim_domain(
+        self, session_id: SessionId, domain: DomainId, version: str
+    ) -> str:
+        """Records ``version`` for a domain this session carries none for, and
+        returns the version the pair carries afterwards.
 
         One atomic step, holding across processes, so two of them declaring
-        different versions cannot both find the session unclaimed.
+        different versions cannot both find the domain unclaimed.
         """
         ...

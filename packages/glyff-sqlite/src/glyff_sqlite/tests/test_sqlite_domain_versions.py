@@ -1,27 +1,31 @@
-"""A durable store belongs to one generation of code, even under a race."""
+"""A durable store's records belong to one generation per domain, even under a race."""
 
 import asyncio
 from pathlib import Path
 
 import pytest
-from glyff import Session, SessionId
-from glyff.exceptions import AppVersionMismatchError
+from glyff import Domain, DomainId, Session, SessionId
+from glyff.exceptions import DomainVersionMismatchError
 
 from glyff_sqlite import SQLiteBackend
 
+PAYMENTS = DomainId("com.example.payments")
 
-async def _enter(
-    db: Path, app_version: str, serializer, argument_canonicalizer
-) -> None:
-    backend = SQLiteBackend(db)
+
+async def _enter(db: Path, version: str, serializer, argument_canonicalizer) -> None:
+    domain = Domain(PAYMENTS, version=version)
+
+    @domain.engrave
+    async def task() -> str:
+        return version
+
     async with Session(
         id=SessionId("orders"),
-        backend=backend,
+        backend=SQLiteBackend(db),
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version=app_version,
     ):
-        pass
+        await task()
 
 
 async def test_concurrent_entries_under_different_versions_admit_one(
@@ -37,7 +41,7 @@ async def test_concurrent_entries_under_different_versions_admit_one(
 
     failures = [o for o in outcomes if isinstance(o, BaseException)]
     assert len(failures) == 1
-    assert isinstance(failures[0], AppVersionMismatchError)
+    assert isinstance(failures[0], DomainVersionMismatchError)
 
 
 async def test_resuming_under_the_recorded_version_is_accepted(
@@ -47,5 +51,5 @@ async def test_resuming_under_the_recorded_version_is_accepted(
     await _enter(db, "v1", serializer, argument_canonicalizer)
     await _enter(db, "v1", serializer, argument_canonicalizer)
 
-    with pytest.raises(AppVersionMismatchError):
+    with pytest.raises(DomainVersionMismatchError):
         await _enter(db, "v2", serializer, argument_canonicalizer)

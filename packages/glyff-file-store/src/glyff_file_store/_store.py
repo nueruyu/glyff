@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
 
 from glyff import (
+    DomainId,
     Execution,
     ExecutionId,
     ExecutionRepository,
@@ -129,5 +130,7 @@ class JsonFileBackend(MigratableBackend):
     def session_migration(self) -> SessionMigration:
         return self._session_migration
 
-    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
-        return await self._client.claim_session(session_id.value, app_version)
+    async def claim_domain(
+        self, session_id: SessionId, domain: DomainId, version: str
+    ) -> str:
+        return await self._client.claim_domain(session_id.value, domain, version)

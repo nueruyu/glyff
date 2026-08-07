@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
-from glyff import Execution, SessionId
+from glyff import DomainId, Execution, SessionId
 from glyff.exceptions import StoreFormatVersionError
 from glyff.store.staging import (
     DeleteExecution,
@@ -19,6 +19,7 @@ from glyff.testing import canonical_arguments, make_execution_id
 from glyff_file_store._file_client import _STORE_FILE, _TEMP_PREFIX, FileClient
 
 SESSION = SessionId("test-session")
+DOMAIN = DomainId("test")
 FORMAT_VERSION = 1
 
 
@@ -184,31 +185,31 @@ async def test_concurrent_commits_do_not_lose_each_others_records(tmp_path: Path
     assert set(executions) == {path_of(f"task-{n}") for n in range(8)}
 
 
-async def test_a_claim_takes_an_unclaimed_session(client: FileClient):
-    assert await client.claim_session(SESSION.value, "v1") == "v1"
-    assert await client.claim_session(SESSION.value, "v2") == "v1"
+async def test_a_claim_takes_an_unclaimed_domain(client: FileClient):
+    assert await client.claim_domain(SESSION.value, DOMAIN, "v1") == "v1"
+    assert await client.claim_domain(SESSION.value, DOMAIN, "v2") == "v1"
 
 
-async def test_a_claim_on_a_claimed_session_writes_nothing(
+async def test_a_claim_on_a_claimed_domain_writes_nothing(
     client: FileClient, monkeypatch: pytest.MonkeyPatch
 ):
     # Reading the recorded version is the whole operation. Replacing the store
     # to say so would re-serialize and fsync every session in it.
-    await client.claim_session(SESSION.value, "v1")
+    await client.claim_domain(SESSION.value, DOMAIN, "v1")
 
     def refuse(document: dict) -> None:
         raise AssertionError("a claim that changed nothing rewrote the store")
 
     monkeypatch.setattr(client, "_write_document_sync", refuse)
 
-    assert await client.claim_session(SESSION.value, "v2") == "v1"
+    assert await client.claim_domain(SESSION.value, DOMAIN, "v2") == "v1"
 
 
 async def test_a_claim_does_not_disturb_recorded_executions(client: FileClient):
     key, mutation = save("task")
     await client.commit_mutations({key: mutation})
 
-    await client.claim_session(SESSION.value, "v1")
+    await client.claim_domain(SESSION.value, DOMAIN, "v1")
 
     assert set(await client.read_committed_executions(SESSION.value)) == {
         path_of("task")
@@ -218,9 +219,11 @@ async def test_a_claim_does_not_disturb_recorded_executions(client: FileClient):
 async def test_a_commit_does_not_disturb_a_claimed_version(
     client: FileClient, tmp_path: Path
 ):
-    await client.claim_session(SESSION.value, "v1")
+    await client.claim_domain(SESSION.value, DOMAIN, "v1")
 
     key, mutation = save("task")
     await client.commit_mutations({key: mutation})
 
-    assert document(tmp_path)["sessions"][SESSION.value]["app_version"] == "v1"
+    assert document(tmp_path)["sessions"][SESSION.value]["domain_versions"] == {
+        DOMAIN.value: "v1"
+    }

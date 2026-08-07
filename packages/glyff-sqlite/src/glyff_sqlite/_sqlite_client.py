@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from glyff import Execution, ExecutionId
+from glyff import DomainId, Execution, ExecutionId
 from glyff.exceptions import StoreFormatVersionError
 from glyff.serialization.constants import JSON_SEPARATORS
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
@@ -29,7 +29,7 @@ FORMAT_VERSION = 1
 # table glyff owns rather than the database-wide PRAGMA user_version.
 _DEFAULT_TABLE_PREFIX = "glyff"
 _EXECUTIONS_SUFFIX = "_executions"
-_SESSIONS_SUFFIX = "_sessions"
+_SESSION_DOMAINS_SUFFIX = "_session_domains"
 _META_SUFFIX = "_meta"
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -94,9 +94,9 @@ class SQLiteClient:
 
     Each execution is a row of ``<table_prefix>_executions`` (default prefix
     ``glyff``) keyed by ``(session_id, path)``. A sibling
-    ``<table_prefix>_sessions`` table records the application version behind each
-    session's records, and ``<table_prefix>_meta`` holds the store's own format
-    version in a single row.
+    ``<table_prefix>_session_domains`` table records the version one session
+    claimed for one domain, and ``<table_prefix>_meta`` holds the store's own
+    format version in a single row.
     """
 
     def __init__(
@@ -138,7 +138,7 @@ class SQLiteClient:
         self._busy_timeout_ms = busy_timeout_ms
         self._synchronous = synchronous
         self._table_name = table_prefix + _EXECUTIONS_SUFFIX
-        self._sessions_table_name = table_prefix + _SESSIONS_SUFFIX
+        self._session_domains_table_name = table_prefix + _SESSION_DOMAINS_SUFFIX
         self._meta_table_name = table_prefix + _META_SUFFIX
         self._write_lock = asyncio.Lock()
 
@@ -202,9 +202,11 @@ class SQLiteClient:
             )
             connection.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS "{self._sessions_table_name}" (
-                    session_id TEXT PRIMARY KEY,
-                    app_version TEXT NOT NULL
+                CREATE TABLE IF NOT EXISTS "{self._session_domains_table_name}" (
+                    session_id TEXT NOT NULL,
+                    domain_id TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    PRIMARY KEY (session_id, domain_id)
                 )
                 """
             )
@@ -406,46 +408,68 @@ class SQLiteClient:
             (session_id, prefix, _prefix_upper_bound(prefix)),
         )
 
-    # -- Application version ---------------------------------------------------
+    # -- Domain versions -------------------------------------------------------
 
-    async def claim_session(self, session_id: str, app_version: str) -> str:
-        """Records ``app_version`` for a session that carries none; returns the winner."""
+    async def claim_domain(
+        self, session_id: str, domain: DomainId, version: str
+    ) -> str:
+        """Records ``version`` for a pair that carries none; returns the winner."""
 
         # The insert and the read share the one transaction: a concurrent claim
         # either waits for this commit and then reads the winner, or takes the
         # write lock first and makes this one read its version.
         def claim(connection: sqlite3.Connection) -> str:
             connection.execute(
-                f'INSERT INTO "{self._sessions_table_name}" '
-                "(session_id, app_version) VALUES (?, ?) "
-                "ON CONFLICT(session_id) DO NOTHING",
-                (session_id, app_version),
+                f'INSERT INTO "{self._session_domains_table_name}" '
+                "(session_id, domain_id, version) VALUES (?, ?, ?) "
+                "ON CONFLICT(session_id, domain_id) DO NOTHING",
+                (session_id, domain.value, version),
             )
-            recorded = self.read_app_version(connection, session_id)
-            assert recorded is not None
-            return recorded
+            row = connection.execute(
+                f'SELECT version FROM "{self._session_domains_table_name}" '
+                "WHERE session_id = ? AND domain_id = ?",
+                (session_id, domain.value),
+            ).fetchone()
+            assert row is not None
+            return row[0]
 
         return await self.run_immediate(claim)
 
-    def read_app_version(
+    def read_domain_versions(
         self, connection: sqlite3.Connection, session_id: str
-    ) -> str | None:
-        row = connection.execute(
-            f'SELECT app_version FROM "{self._sessions_table_name}" '
-            "WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
-        return None if row is None else row[0]
+    ) -> dict[DomainId, str]:
+        """Every domain version this session records, as one mapping."""
+        return {
+            DomainId(domain_id): version
+            for domain_id, version in connection.execute(
+                f'SELECT domain_id, version FROM "{self._session_domains_table_name}" '
+                "WHERE session_id = ?",
+                (session_id,),
+            )
+        }
 
-    def write_app_version(
-        self, connection: sqlite3.Connection, session_id: str, app_version: str
+    def replace_domain_versions(
+        self,
+        connection: sqlite3.Connection,
+        session_id: str,
+        versions: Mapping[DomainId, str],
     ) -> None:
-        """Records ``app_version`` over whatever the session carried."""
+        """Makes ``versions`` the whole of what this session records.
+
+        A migration replaces a session outright, so a domain the result dropped
+        must not survive as a row an upsert would have left behind.
+        """
         connection.execute(
-            f'INSERT INTO "{self._sessions_table_name}" '
-            "(session_id, app_version) VALUES (?, ?) "
-            "ON CONFLICT(session_id) DO UPDATE SET app_version = excluded.app_version",
-            (session_id, app_version),
+            f'DELETE FROM "{self._session_domains_table_name}" WHERE session_id = ?',
+            (session_id,),
+        )
+        connection.executemany(
+            f'INSERT INTO "{self._session_domains_table_name}" '
+            "(session_id, domain_id, version) VALUES (?, ?, ?)",
+            [
+                (session_id, domain.value, version)
+                for domain, version in versions.items()
+            ],
         )
 
     # -- Direct SQL access (for initialization / inspection) -------------------
