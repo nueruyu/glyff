@@ -85,3 +85,17 @@ def test_a_non_canonical_encoding_is_refused(path: str):
     # become two identities — or worse, silently the same one.
     with pytest.raises(ValueError):
         path_to_execution_id(path)
+
+
+@pytest.mark.parametrize(
+    "ordinal", ["01", "+1", " 1", "1 ", "-0", "-1", "1_0", "0x1", ""]
+)
+def test_a_non_canonical_ordinal_is_refused(ordinal: str):
+    # int() takes signs, leading zeroes, whitespace and underscores, which would
+    # spell one ordinal several ways.
+    with pytest.raises(ValueError):
+        path_to_execution_id(f"domain:name#{ordinal}:digest")
+
+
+def test_the_ordinal_a_path_is_written_with_is_accepted():
+    assert path_to_execution_id("domain:name#10:digest").sequence == 10

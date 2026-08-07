@@ -19,8 +19,10 @@ when it first writes one, while a **domain's** version is recorded per session a
 per domain, by whichever process claims it first. A domain is the ownership
 boundary for a set of engraved functions (see
 [execution identity](./execution-identity.md#domains)), so a library on glyff
-versions and migrates its own records without the application it runs inside
-having a say.
+owns the version its records carry and the migration between generations of it,
+without needing the application it runs inside to own either. Running that
+migration stays the application's: it decides when a session goes offline and
+which migrations the run carries.
 
 ### glyff's store schema
 
@@ -65,8 +67,11 @@ glyff does not auto-migrate a paused session onto new code. Instead:
   and `current_version`, so a caller can route the session to migration without
   reading the message.
 
-  Only a session that already holds a domain's records is a migration candidate
-  at all.
+  Only a session that already records a version for the domain needs migrating
+  at all — which is not the same as one holding records in it. A domain is
+  claimed before arguments are canonicalized, so a session can carry a version
+  for a domain it has no execution under, and `StoredSession` allows exactly
+  that.
 
   The check moved from session entry to first use, which is what makes per-domain
   versions possible: a session has no single version to check on the way in. So a

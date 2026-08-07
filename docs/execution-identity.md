@@ -14,7 +14,7 @@ than a bare string:
 | --- | --- |
 | `parent_id` | The nearest engraved ancestor on the call stack, forming a chain up to the session root. |
 | `domain` | The `DomainId` of the [domain](#domains) whose `engrave` decorated the function. |
-| `name` | An `ExecutionName`: the engraved function's name — explicit `name=`/`version=` when given, derived from the function otherwise. |
+| `name` | An `ExecutionName`, derived from the engraved function's `__qualname__` ([explicit names are planned](#explicit-names-and-versions)). |
 | `arguments_digest` | An `ArgumentsDigest` over the canonical form of the bound arguments, produced by the session's `ArgumentCanonicalizer`. |
 | `sequence` | An ordinal from an independent counter per `(parent_id, domain, name, arguments_digest)` (`_sequencer.py`). |
 
@@ -63,8 +63,9 @@ Backends key records by a path built from the identity chain
 ```
 
 Each string component is percent-encoded, so any identifier round-trips and no
-character can end a frame early or fabricate a new one. Decoding accepts only the
-canonical encoding, so one identity has exactly one path. Lexicographic order on
+character can end a frame early or fabricate a new one. Decoding accepts only
+what encoding writes — canonical escapes, and the ordinal's plain decimal
+spelling — so one identity has exactly one path. Lexicographic order on
 these paths is ancestor-first, which is what makes
 `ExecutionRepository.executions` yield parents before children.
 
@@ -99,34 +100,27 @@ mismatches silently.
 
 ## Explicit names and versions
 
-Identity should come from your declaration, not from code shape. A domain's
-`engrave` accepts an explicit name and version:
+Today a name is derived from the function's `__qualname__` (`_domain.py`), so
+renaming an engraved function invalidates the history of paused sessions. And
+`ExecutionId.__str__` is a debug representation (`_models.py`) — not a key, and
+not to be persisted.
 
-```python
-@engrave
-async def step(...) -> ...: ...          # name derived from the function
-
-@engrave(name="chat.reply", version=2)
-async def reply(...) -> ...: ...         # stable across renames and moves
-```
-
-The pair is canonicalized into the stored name (e.g. `"chat.reply@2"`); the key
-stays an `ExecutionName`, built through `ExecutionName.explicit()`. Duplicate
-explicit names are rejected at decoration time. The resolved name is also what
-the canonicalizer sees, so a rename with a stable `name=` invalidates nothing.
-
-This is the *function's* version, and it is part of identity — unlike a
-[domain's version](#domains), which is not.
-
-`ExecutionId` also has a public canonical string encoding, stable across resumes,
-for use as an idempotency key when
-[projecting into an application database](./events.md#projecting-into-an-application-database).
-
-> **Planned** — [#40](https://github.com/nueruyu/glyff/issues/40), covering both.
-> Today the name is derived from `__qualname__` (`_engrave.py`), so renaming an
-> engraved function invalidates the history of paused sessions, and
-> `ExecutionId.__str__` is a debug representation that must not be persisted
-> (`_models.py`).
+> **Planned** — [#40](https://github.com/nueruyu/glyff/issues/40), covering
+> both. Identity should come from your declaration, not from code shape, so a
+> domain's `engrave` is to accept an explicit name and version:
+>
+> ```python
+> @engrave(name="chat.reply", version=2)
+> async def reply(...) -> ...: ...
+> ```
+>
+> The pair would be canonicalized into the stored name (e.g. `"chat.reply@2"`)
+> through `ExecutionName.explicit()`, with duplicates rejected at decoration
+> time. That version is the *function's* and would be part of identity — unlike
+> a [domain's version](#domains), which is not. The same issue covers a public
+> canonical string encoding of an `ExecutionId`, stable across resumes, for use
+> as an idempotency key when
+> [projecting into an application database](./events.md#projecting-into-an-application-database).
 
 ## Canonical arguments
 

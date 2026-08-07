@@ -29,6 +29,22 @@ def _decode(encoded: str) -> str:
     return decoded
 
 
+def _decode_sequence(spelling: str) -> int:
+    """Reads an ordinal, accepting only the spelling :func:`_format_frame` writes.
+
+    ``int`` takes a sign, leading zeroes, surrounding whitespace and underscore
+    separators, so ``#1``, ``#01`` and ``#+1`` would be three paths for one
+    identity. Formatting the result back and comparing leaves exactly one.
+    """
+    try:
+        sequence = int(spelling)
+    except ValueError:
+        raise ValueError(f"{spelling!r} is not an execution ordinal.") from None
+    if sequence < 0 or str(sequence) != spelling:
+        raise ValueError(f"{spelling!r} is not a canonical execution ordinal.")
+    return sequence
+
+
 def _format_frame(eid: ExecutionId) -> str:
     """Formats a single ExecutionId frame into a string component."""
     return (
@@ -56,7 +72,7 @@ def _parse_frame_components(
     return (
         DomainId(_decode(domain)),
         ExecutionName(_decode(name)),
-        int(sequence),
+        _decode_sequence(sequence),
         ArgumentsDigest(_decode(digest)),
     )
 
