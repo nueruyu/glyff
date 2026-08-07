@@ -9,7 +9,8 @@ from .._interfaces import (
     Transaction,
     TransactionProvider,
 )
-from .._models import DomainId, Execution, ExecutionId, ExecutionStatus, SessionId
+from .._execution import Execution, ExecutionStatus
+from .._identity import DomainId, ExecutionId, SessionId
 from ._memory_client import MemoryClient
 from .staging import (
     ExecutionKey,

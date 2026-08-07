@@ -1,6 +1,15 @@
 from ._context import MetadataAccessor, TransactionScope, get_context
 from ._domain import Domain
 from ._event_system import Event, EventEmitter, EventHandler
+from ._execution import (
+    CanonicalArguments,
+    CanonicalValue,
+    Execution,
+    ExecutionStatus,
+    Metadata,
+    SerializedValue,
+)
+from ._identity import ArgumentsDigest, DomainId, ExecutionId, ExecutionName, SessionId
 from ._interfaces import (
     ArgumentCanonicalizer,
     Backend,
@@ -8,19 +17,6 @@ from ._interfaces import (
     Serializer,
     Transaction,
     TransactionProvider,
-)
-from ._models import (
-    ArgumentsDigest,
-    CanonicalValue,
-    CanonicalArguments,
-    DomainId,
-    ExecutionName,
-    Execution,
-    ExecutionId,
-    ExecutionStatus,
-    Metadata,
-    SerializedValue,
-    SessionId,
 )
 from ._session import Session
 

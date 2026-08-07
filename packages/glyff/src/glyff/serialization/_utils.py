@@ -8,7 +8,7 @@ import math
 from abc import ABC, abstractmethod
 from typing import Any, Callable, TypeAlias
 
-from .._models import CanonicalValue
+from .._execution import CanonicalValue
 from ..exceptions import ArgumentCanonicalizationError
 from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 

@@ -1,7 +1,7 @@
 import asyncio
 from collections import defaultdict
 
-from ._models import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
+from ._identity import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
 
 _SequenceKey = tuple[ExecutionId | None, DomainId, ExecutionName, ArgumentsDigest]
 

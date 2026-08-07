@@ -4,7 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from .._models import DomainId, Execution, ExecutionId
+from .._execution import Execution
+from .._identity import DomainId, ExecutionId
 from ..exceptions import MigrationCollisionError, MigrationError
 
 

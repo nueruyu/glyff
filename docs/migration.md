@@ -50,11 +50,9 @@ on top.
 
 ### In-flight sessions across code changes
 
-glyff does not auto-migrate a paused session onto new code. Instead:
-
 - **A session records the version of every domain it has entered.** Calling a
-  domain-bound function lazily claims or verifies that domain's version — and
-  never migrates. There are three outcomes, and only three:
+  domain-bound function lazily claims or verifies that domain's version. There
+  are three outcomes, and only three:
 
   | The session records | What happens |
   | --- | --- |
@@ -67,11 +65,9 @@ glyff does not auto-migrate a paused session onto new code. Instead:
   and `current_version`, so a caller can route the session to migration without
   reading the message.
 
-  Only a session that already records a version for the domain needs migrating
-  at all — which is not the same as one holding records in it. A domain is
-  claimed before arguments are canonicalized, so a session can carry a version
-  for a domain it has no execution under, and `StoredSession` allows exactly
-  that.
+  Only a session that already records a version for the domain needs migrating —
+  which is not the same as one holding records in it, since a claim lands before
+  call identity is resolved.
 
   The check moved from session entry to first use, which is what makes per-domain
   versions possible: a session has no single version to check on the way in. So a

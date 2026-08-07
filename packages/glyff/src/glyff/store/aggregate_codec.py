@@ -11,14 +11,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .._models import (
+from .._execution import (
     CanonicalArguments,
     Execution,
-    ExecutionId,
     ExecutionStatus,
     Metadata,
     SerializedValue,
 )
+from .._identity import ExecutionId
 from ..exceptions import SerializationError
 from ..serialization._utils import stable_json_dumps
 from ..serialization.constants import DEFAULT_ENCODING

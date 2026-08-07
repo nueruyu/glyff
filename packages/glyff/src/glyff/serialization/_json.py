@@ -3,7 +3,7 @@ import json
 from typing import Any, Callable
 
 from .._interfaces import ArgumentCanonicalizer, Serializer
-from .._models import CanonicalValue
+from .._execution import CanonicalValue
 from ..exceptions import ArgumentCanonicalizationError, SerializationError
 from .constants import DEFAULT_ENCODING
 from ._utils import (

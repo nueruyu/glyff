@@ -2,17 +2,11 @@ from __future__ import annotations
 
 from urllib.parse import quote, unquote
 
-from .._models import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
+from .._identity import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
 
 
 def _encode(value: str) -> str:
-    """Percent-encodes one frame component.
-
-    Every string component goes through this, including the digest: a component
-    is whatever its value object allows, and keeping the path safe is the
-    codec's job rather than a character restriction leaked into public
-    identifiers.
-    """
+    """Percent-encodes one frame component."""
     return quote(value, safe="")
 
 

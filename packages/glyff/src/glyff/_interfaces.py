@@ -3,14 +3,8 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterable
 from typing import Any, Callable
 
-from ._models import (
-    CanonicalValue,
-    DomainId,
-    Execution,
-    ExecutionId,
-    ExecutionStatus,
-    SessionId,
-)
+from ._execution import CanonicalValue, Execution, ExecutionStatus
+from ._identity import DomainId, ExecutionId, SessionId
 
 
 class Transaction(ABC):

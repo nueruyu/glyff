@@ -1,7 +1,4 @@
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from ._models import DomainId
+from ._identity import DomainId
 
 
 class GlyffException(Exception):
@@ -111,7 +108,7 @@ class DomainVersionMismatchError(GlyffError):
         self,
         message: str,
         *,
-        domain_id: "DomainId",
+        domain_id: DomainId,
         recorded_version: str,
         current_version: str,
     ) -> None:

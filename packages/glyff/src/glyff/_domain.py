@@ -7,7 +7,8 @@ from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
 from ._executor import execute
-from ._models import CanonicalArguments, DomainId, ExecutionId, ExecutionName
+from ._execution import CanonicalArguments
+from ._identity import DomainId, ExecutionId, ExecutionName
 from .exceptions import MissingTypeHintError, TypeHintResolutionError
 from .serialization._utils import encode_canonical
 
@@ -65,10 +66,9 @@ class Domain:
     """A versioned ownership boundary for engraved functions.
 
     A library owning engraved functions declares one, so its recorded executions
-    carry its identifier and can be versioned — and migrated — without the
-    application it runs inside having a say. Only the identifier is part of an
-    execution's identity; the version says which generation of the owner's code
-    the records belong to.
+    carry its identifier and can be versioned independently of the application's
+    own version. Only the identifier is part of an execution's identity; the
+    version says which generation of the owner's code the records belong to.
     """
 
     id: DomainId
@@ -114,7 +114,7 @@ class Domain:
             ctx = get_context()
             # Before identity is resolved, so a recorded result is never replayed
             # against a generation of code that has not been agreed with.
-            await ctx.domain_claims.ensure(domain)
+            await ctx.domain_claims.ensure(domain.id, domain.version)
             execution_id, canonical_arguments = await _resolve_call_identity(
                 ctx, domain.id, func, sig, task_name, args, kwargs
             )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from .._interfaces import Backend
-from .._models import SessionId
+from .._identity import SessionId
 from ._models import MigrationReport, SessionMigrationResult, StoredSession
 
 

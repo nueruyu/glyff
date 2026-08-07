@@ -27,9 +27,7 @@ held to a reverse-DNS shape: lowercase ASCII segments of letters, digits,
 underscores and hyphens, joined by dots. `ExecutionName` is deliberately
 permissive — an inferred name is a `__qualname__` and looks like
 `Outer.<locals>.task`, and a migration has to hold whatever an older version
-wrote. Names a caller *declares* go through `ExecutionName.explicit()`, which is
-where a grammar is insisted on. `ArgumentsDigest` is opaque: nothing in glyff
-reads it.
+wrote. `ArgumentsDigest` is opaque: nothing in glyff reads it.
 
 ## Domains
 
@@ -115,8 +113,10 @@ not to be persisted.
 > ```
 >
 > The pair would be canonicalized into the stored name (e.g. `"chat.reply@2"`)
-> through `ExecutionName.explicit()`, with duplicates rejected at decoration
-> time. That version is the *function's* and would be part of identity — unlike
+> through `ExecutionName.explicit()` — the strict counterpart to the permissive
+> constructor, allowing letters, digits, dots, underscores and hyphens — with
+> duplicates rejected at decoration time. That version is the *function's* and
+> would be part of identity — unlike
 > a [domain's version](#domains), which is not. The same issue covers a public
 > canonical string encoding of an `ExecutionId`, stable across resumes, for use
 > as an idempotency key when
