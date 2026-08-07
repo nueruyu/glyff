@@ -4,7 +4,7 @@ import hashlib
 
 import pytest
 
-from glyff import CanonicalValue, CanonicalArguments
+from glyff import ArgumentsDigest, CanonicalArguments, CanonicalValue
 from glyff.exceptions import ArgumentCanonicalizationError
 from glyff.serialization import OpaqueByTypeQualname
 from glyff.serialization._utils import (
@@ -168,4 +168,6 @@ def test_encode_canonical_rejects_values_outside_the_json_data_model():
 
 def test_encoded_arguments_digest_is_sha256_of_their_bytes():
     data = encode_canonical({"a": 1})
-    assert CanonicalArguments(data).digest == hashlib.sha256(data).hexdigest()
+    assert CanonicalArguments(data).digest == ArgumentsDigest(
+        hashlib.sha256(data).hexdigest()
+    )

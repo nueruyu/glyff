@@ -3,14 +3,20 @@ import inspect
 import json
 
 from glyff import (
+    ArgumentsDigest,
     ArgumentCanonicalizer,
     CanonicalArguments,
     ExecutionId,
+    ExecutionName,
     SessionId,
-    engrave,
+    Domain,
+    DomainId,
 )
 from glyff.serialization._utils import encode_canonical
 from glyff.tests.types import BackendFactory, make_session
+
+DOMAIN = DomainId("test")
+engrave = Domain(DOMAIN, version="1").engrave
 
 
 @engrave
@@ -27,7 +33,8 @@ def _expected_id(
     )
     return ExecutionId(
         parent_id=None,
-        name=greet.__qualname__,
+        domain=DOMAIN,
+        name=ExecutionName(greet.__qualname__),
         sequence=0,
         arguments_digest=encoded.digest,
     )
@@ -48,9 +55,8 @@ async def test_recorded_args_are_the_digest_preimage(
         SessionId("recorded-args"), _expected_id(argument_canonicalizer, "world")
     )
     assert execution is not None
-    assert (
-        execution.id.arguments_digest
-        == hashlib.sha256(execution.arguments.data).hexdigest()
+    assert execution.id.arguments_digest == ArgumentsDigest(
+        hashlib.sha256(execution.arguments.data).hexdigest()
     )
     # Defaults participate, so the recorded form shows what the call was keyed by.
     assert json.loads(execution.arguments.data) == {"name": "world", "times": 1}
@@ -71,8 +77,7 @@ async def test_recorded_args_keep_non_ascii_readable(
         SessionId("recorded-args-unicode"), _expected_id(argument_canonicalizer, "世界")
     )
     assert execution is not None
-    assert (
-        execution.id.arguments_digest
-        == hashlib.sha256(execution.arguments.data).hexdigest()
+    assert execution.id.arguments_digest == ArgumentsDigest(
+        hashlib.sha256(execution.arguments.data).hexdigest()
     )
     assert "世界".encode() in execution.arguments.data

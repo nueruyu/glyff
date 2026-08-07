@@ -7,8 +7,10 @@ import asyncio
 
 import pytest
 
-from glyff import ArgumentCanonicalizer, engrave
+from glyff import ArgumentCanonicalizer, Domain
 from glyff.tests.types import BackendFactory, make_session
+
+engrave = Domain("test", version="1").engrave
 
 _ran: set[int] = set()
 _interrupt_root: bool = False

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from glyff import engrave
+from glyff import Domain
 from glyff.exceptions import MissingTypeHintError, TypeHintResolutionError
+
+engrave = Domain("test", version="1").engrave
 
 
 class _MyClass:

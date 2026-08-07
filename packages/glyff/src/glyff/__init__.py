@@ -1,5 +1,5 @@
 from ._context import MetadataAccessor, TransactionScope, get_context
-from ._engrave import engrave
+from ._domain import Domain
 from ._event_system import Event, EventEmitter, EventHandler
 from ._interfaces import (
     ArgumentCanonicalizer,
@@ -10,8 +10,11 @@ from ._interfaces import (
     TransactionProvider,
 )
 from ._models import (
+    ArgumentsDigest,
     CanonicalValue,
     CanonicalArguments,
+    DomainId,
+    ExecutionName,
     Execution,
     ExecutionId,
     ExecutionStatus,
@@ -22,7 +25,8 @@ from ._models import (
 from ._session import Session
 
 __all__ = [
-    "engrave",
+    "Domain",
+    "DomainId",
     "Session",
     "Event",
     "EventHandler",
@@ -34,10 +38,12 @@ __all__ = [
     "TransactionProvider",
     "TransactionScope",
     "ExecutionRepository",
+    "ArgumentsDigest",
     "CanonicalValue",
     "CanonicalArguments",
     "Execution",
     "ExecutionId",
+    "ExecutionName",
     "ExecutionStatus",
     "Metadata",
     "MetadataAccessor",

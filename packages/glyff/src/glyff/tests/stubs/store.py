@@ -5,6 +5,7 @@ from typing import Any, NamedTuple
 
 from glyff import (
     Backend,
+    DomainId,
     Execution,
     ExecutionId,
     ExecutionRepository,
@@ -115,9 +116,11 @@ class StubBackend(Backend):
         """Swaps in a repository that fails where the real one would not."""
         self._repository = repository
 
-    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
-        self._record("claim_session", session_id, app_version)
-        return await self._backend.claim_session(session_id, app_version)
+    async def claim_domain(
+        self, session_id: SessionId, domain: DomainId, version: str
+    ) -> str:
+        self._record("claim_domain", session_id, domain, version)
+        return await self._backend.claim_domain(session_id, domain, version)
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append(Call(name, args, kwargs))
