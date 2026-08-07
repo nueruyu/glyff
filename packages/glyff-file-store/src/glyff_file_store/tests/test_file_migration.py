@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from glyff import Execution, SessionId, TransactionScope
+from glyff import DomainId, Execution, SessionId, TransactionScope
 from glyff.migration import (
     MigrationReport,
     SessionMetadata,
@@ -18,32 +18,38 @@ from glyff.migration import (
     SessionMigrator,
     StoredSession,
 )
+from glyff.store.utils import path_to_execution_id
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff_file_store import JsonFileBackend
 from glyff_file_store._file_client import _STORE_FILE, _TEMP_PREFIX
 
 SESSION = SessionId("migrate")
+DOMAIN = DomainId("test")
 
 
 class ReplacingMigrator(SessionMigrator):
-    def __init__(self, *executions: Execution, app_version: str = "v2") -> None:
+    def __init__(self, *executions: Execution, version: str = "v2") -> None:
         self._executions = executions
-        self._app_version = app_version
+        self._version = version
 
     def migrate(self, source: StoredSession) -> SessionMigrationResult:
+        versions = {DOMAIN: self._version}
         return SessionMigrationResult(
             session=StoredSession(
-                metadata=SessionMetadata(app_version=self._app_version),
+                metadata=SessionMetadata(domain_versions=versions),
                 executions=self._executions,
             ),
             report=MigrationReport(
-                from_version=source.metadata.app_version, to_version=self._app_version
+                from_domain_versions=source.metadata.domain_versions,
+                to_domain_versions=versions,
             ),
         )
 
 
 def started(name: str) -> Execution:
-    return Execution.start(make_execution_id(name), canonical_arguments())
+    return Execution.start(
+        make_execution_id(name, domain=DOMAIN), canonical_arguments()
+    )
 
 
 async def _save(backend: JsonFileBackend, execution: Execution) -> None:
@@ -52,7 +58,7 @@ async def _save(backend: JsonFileBackend, execution: Execution) -> None:
 
 
 async def seed(backend: JsonFileBackend, *names: str) -> list[Execution]:
-    await backend.claim_session(SESSION, "v1")
+    await backend.claim_domain(SESSION, DOMAIN, "v1")
     seeded = []
     for name in names:
         execution = started(name)
@@ -86,7 +92,7 @@ async def test_a_failed_replacement_changes_neither_half(
     assert [e.id async for e in backend.repository.executions(SESSION)] == [
         e.id for e in seeded
     ]
-    assert await backend.claim_session(SESSION, "v-later") == "v1"
+    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
 
 
 async def test_a_failed_replacement_strands_no_temporary(
@@ -243,5 +249,7 @@ async def test_a_migration_rewrites_the_session_in_place_in_the_document(
 
     document = json.loads((tmp_path / _STORE_FILE).read_text())
     session = document["sessions"][SESSION.value]
-    assert session["app_version"] == "v2"
-    assert [path.split("#")[0] for path in session["executions"]] == ["after"]
+    assert session["domain_versions"] == {DOMAIN.value: "v2"}
+    assert [
+        path_to_execution_id(path).name.value for path in session["executions"]
+    ] == ["after"]

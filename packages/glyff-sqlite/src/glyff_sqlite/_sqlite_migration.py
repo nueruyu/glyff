@@ -35,23 +35,23 @@ class SQLiteSessionMigration(SessionMigration):
             self._client.delete_session_executions(connection, session_id.value)
             for execution in result.session.executions:
                 self._client.upsert_execution(connection, session_id.value, execution)
-            self._client.write_app_version(
-                connection, session_id.value, result.session.metadata.app_version
+            self._client.replace_domain_versions(
+                connection, session_id.value, result.session.metadata.domain_versions
             )
             return result.report
 
         return await self._client.run_immediate(migrate)
 
     def _read(self, connection: sqlite3.Connection, session_id: str) -> StoredSession:
-        app_version = self._client.read_app_version(connection, session_id)
-        if app_version is None:
+        domain_versions = self._client.read_domain_versions(connection, session_id)
+        if not domain_versions:
             raise MigrationError(
-                f"Session {session_id!r} carries no application version, so there "
-                "is no version to migrate it from."
+                f"Session {session_id!r} has claimed no domain, so there is no "
+                "version to migrate it from."
             )
 
         return StoredSession(
-            metadata=SessionMetadata(app_version=app_version),
+            metadata=SessionMetadata(domain_versions=domain_versions),
             # Lexicographic path order is ancestor-first.
             executions=tuple(
                 record.to_execution(path_to_execution_id(path))
