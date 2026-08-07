@@ -47,7 +47,9 @@ Everything the store holds lives in one pretty-printed, key-sorted document at
   "format_version": 1,
   "sessions": {
     "orders": {
-      "app_version": "v1",
+      "domain_versions": {
+        "com.example.payments": "3"
+      },
       "executions": {}
     }
   }
@@ -55,8 +57,8 @@ Everything the store holds lives in one pretty-printed, key-sorted document at
 ```
 
 `format_version` is glyff's own, so a store written by an incompatible build is
-refused rather than misread; `app_version` is the application's, claimed by
-whichever process opens the session first.
+refused rather than misread; `domain_versions` holds one version per domain the
+session has entered, each claimed by whichever process entered it first.
 
 Execution results and metadata are stored as embedded JSON values, so
 serializers used with this backend must produce JSON text. Canonical arguments

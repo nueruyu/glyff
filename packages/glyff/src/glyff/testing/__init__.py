@@ -23,7 +23,7 @@ The contracts are pytest test classes, so importing this module needs pytest
 """
 
 from ._backend_contract import (
-    AppVersionContract,
+    DomainVersionContract,
     BinarySafeBackendContract,
     DurableBackendContract,
     ExecutionBackendContract,
@@ -37,7 +37,7 @@ from ._migration_contract import SessionMigrationContract
 from ._pruning import PruningEventHandler
 
 __all__ = [
-    "AppVersionContract",
+    "DomainVersionContract",
     "BinarySafeBackendContract",
     "DurableBackendContract",
     "ExecutionBackendContract",

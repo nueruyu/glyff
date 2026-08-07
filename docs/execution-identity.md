@@ -7,17 +7,66 @@ boundaries.
 
 ## What the key is made of
 
-An `ExecutionId` (`_models.py`) has four components:
+An `ExecutionId` (`_models.py`) has five components, each a value object rather
+than a bare string:
 
 | Component | Where it comes from |
 | --- | --- |
 | `parent_id` | The nearest engraved ancestor on the call stack, forming a chain up to the session root. |
-| `name` | The engraved function's name — explicit `name=`/`version=` when given, derived from the function otherwise. |
-| `arguments_digest` | A digest over the canonical form of the bound arguments, produced by the session's `ArgumentCanonicalizer`. |
-| `sequence` | An ordinal from an independent counter per `(parent_id, name, arguments_digest)` (`_sequencer.py`). |
+| `domain` | The `DomainId` of the [domain](#domains) whose `engrave` decorated the function. |
+| `name` | An `ExecutionName`: the engraved function's name — explicit `name=`/`version=` when given, derived from the function otherwise. |
+| `arguments_digest` | An `ArgumentsDigest` over the canonical form of the bound arguments, produced by the session's `ArgumentCanonicalizer`. |
+| `sequence` | An ordinal from an independent counter per `(parent_id, domain, name, arguments_digest)` (`_sequencer.py`). |
 
 Keys are **content-addressed, not positional**: the sequence counter is scoped to
-the exact `(parent, name, args)` identity, not to a session-wide step number.
+the exact `(parent, domain, name, args)` identity, not to a session-wide step
+number.
+
+`DomainId` is a machine identifier that outlives the code declaring it, so it is
+held to a reverse-DNS shape: lowercase ASCII segments of letters, digits,
+underscores and hyphens, joined by dots. `ExecutionName` is deliberately
+permissive — an inferred name is a `__qualname__` and looks like
+`Outer.<locals>.task`, and a migration has to hold whatever an older version
+wrote. Names a caller *declares* go through `ExecutionName.explicit()`, which is
+where a grammar is insisted on. `ArgumentsDigest` is opaque: nothing in glyff
+reads it.
+
+## Domains
+
+Every engraved function belongs to exactly one domain, fixed where it is
+decorated:
+
+```python
+from glyff import Domain
+
+domain = Domain("com.example.payment-library", version="3")
+engrave = domain.engrave
+
+@engrave
+async def authorize(...) -> ...: ...
+```
+
+The domain identifier is part of an execution's identity, so a library's records
+are recognizable as its own and two libraries may name a function the same thing
+without colliding or sharing an ordinal counter. The domain *version* is not part
+of identity — it says which generation of the owner's code the records belong to,
+and is [claimed per session](./migration.md#in-flight-sessions-across-code-changes)
+the first time one of the domain's functions is entered.
+
+## How a key is stored
+
+Backends key records by a path built from the identity chain
+(`store/utils.py`), frames joined by `/`:
+
+```
+{domain}:{name}#{sequence}:{arguments_digest}
+```
+
+Each string component is percent-encoded, so any identifier round-trips and no
+character can end a frame early or fabricate a new one. Decoding accepts only the
+canonical encoding, so one identity has exactly one path. Lexicographic order on
+these paths is ancestor-first, which is what makes
+`ExecutionRepository.executions` yield parents before children.
 
 ## Refactor compatibility guarantees
 
@@ -50,21 +99,24 @@ mismatches silently.
 
 ## Explicit names and versions
 
-Identity should come from your declaration, not from code shape. `engrave`
-accepts an explicit name and version:
+Identity should come from your declaration, not from code shape. A domain's
+`engrave` accepts an explicit name and version:
 
 ```python
-@glyff.engrave
+@engrave
 async def step(...) -> ...: ...          # name derived from the function
 
-@glyff.engrave(name="chat.reply", version=2)
+@engrave(name="chat.reply", version=2)
 async def reply(...) -> ...: ...         # stable across renames and moves
 ```
 
 The pair is canonicalized into the stored name (e.g. `"chat.reply@2"`); the key
-stays a `str`. Duplicate explicit names are rejected at decoration time. The
-resolved name is also what the canonicalizer sees, so a rename with a stable
-`name=` invalidates nothing.
+stays an `ExecutionName`, built through `ExecutionName.explicit()`. Duplicate
+explicit names are rejected at decoration time. The resolved name is also what
+the canonicalizer sees, so a rename with a stable `name=` invalidates nothing.
+
+This is the *function's* version, and it is part of identity — unlike a
+[domain's version](#domains), which is not.
 
 `ExecutionId` also has a public canonical string encoding, stable across resumes,
 for use as an idempotency key when
