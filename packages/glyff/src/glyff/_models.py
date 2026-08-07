@@ -8,13 +8,10 @@ from typing import TypeAlias
 
 from .exceptions import InvalidExecutionError
 
-# Reverse-DNS style: lowercase ASCII segments joined by dots. A domain id is a
-# machine identifier that outlives the code that declared it, so it is kept to
-# the character set that reads the same everywhere.
+# A domain id outlives the code that declared it, so it is kept to a character
+# set that reads the same everywhere.
 _DOMAIN_ID = re.compile(r"[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*")
 
-# What an explicitly declared execution name may look like. Inferred names are
-# not held to this — see :class:`ExecutionName`.
 _EXPLICIT_EXECUTION_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 

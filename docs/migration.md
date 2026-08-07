@@ -1,8 +1,8 @@
 # Migration & versioning
 
 "Migration" is three problems with different owners. glyff migrates its own
-store, defines the contract for your recorded payloads, and refuses a session
-whose application version has changed — it does not rewrite your in-flight
+store, defines the contract for your recorded payloads, and refuses a call into
+a domain whose version has changed — it does not rewrite your in-flight
 sessions.
 
 ## The three layers
@@ -65,9 +65,8 @@ glyff does not auto-migrate a paused session onto new code. Instead:
   and `current_version`, so a caller can route the session to migration without
   reading the message.
 
-  A new session, and an existing one that has never used the domain, need no
-  migration at all — the first call simply records the current version. Only a
-  session that already holds that domain's records is a migration candidate.
+  Only a session that already holds a domain's records is a migration candidate
+  at all.
 
   The check moved from session entry to first use, which is what makes per-domain
   versions possible: a session has no single version to check on the way in. So a

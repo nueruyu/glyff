@@ -81,7 +81,6 @@ async def test_a_different_version_is_refused(serializer, argument_canonicalizer
 
 
 async def test_a_mismatch_leaves_the_session_alone(serializer, argument_canonicalizer):
-    # The refusal is a claim that disagreed, not the first step of a migration.
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
         await _task(Domain(PAYMENTS, version="v1"))()
@@ -107,7 +106,6 @@ async def test_a_mismatch_is_raised_on_entering_the_domain_not_the_session(
     shipping = _task(Domain(SHIPPING, version="v1"))
     payments = _task(Domain(PAYMENTS, version="v2"))
 
-    # Entering the session is not where this fails: another domain runs first.
     async with _session(backend, serializer, argument_canonicalizer):
         await shipping()
         with pytest.raises(DomainVersionMismatchError):
@@ -165,8 +163,6 @@ async def test_concurrent_first_calls_claim_once(serializer, argument_canonicali
 async def test_a_mismatch_is_observed_without_a_second_round_trip(
     serializer, argument_canonicalizer
 ):
-    # The version a refused claim reported is worth keeping: a process that goes
-    # on to carry it should not have to ask again.
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
         await _task(Domain(PAYMENTS, version="v1"))()

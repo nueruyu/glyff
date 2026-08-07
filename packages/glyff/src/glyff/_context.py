@@ -13,8 +13,8 @@ from ._interfaces import (
     Transaction,
     TransactionProvider,
 )
-from ._models import ExecutionId, SerializedValue, SessionId
 from ._domain_claims import DomainClaims
+from ._models import ExecutionId, SerializedValue, SessionId
 from ._sequencer import Sequencer
 from .exceptions import ContextNotSetError, NoCurrentExecutionError
 

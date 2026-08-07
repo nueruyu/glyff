@@ -14,17 +14,16 @@ if TYPE_CHECKING:
 class DomainClaims:
     """The domain versions this session has observed in the store.
 
-    A domain is claimed the first time one of its functions is entered, and
-    verified on every entry afterwards. Claiming is all this does: a version it
-    disagrees with is reported, never migrated.
+    Claiming is all this does: a version it disagrees with is reported, never
+    migrated.
     """
 
     def __init__(self, *, backend: Backend, session_id: SessionId) -> None:
         self._backend = backend
         self._session_id = session_id
         # What the store said, not what was agreed: a version read while
-        # refusing a mismatch is still worth keeping, so a process that goes on
-        # to carry the right one needs no second round trip.
+        # refusing a mismatch still spares the round trip for a process that
+        # goes on to carry the right one.
         self._observed: dict[DomainId, str] = {}
         self._locks: dict[DomainId, asyncio.Lock] = {}
         self._meta_lock = asyncio.Lock()

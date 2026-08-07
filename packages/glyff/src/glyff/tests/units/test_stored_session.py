@@ -39,8 +39,6 @@ def test_an_execution_whose_domain_has_no_version_is_refused():
 
 
 def test_a_domain_that_only_appears_as_an_ancestor_is_still_required():
-    # The parent's domain is part of its descendants' keys, so dropping its
-    # version would leave records nothing has agreed a generation for.
     parent = started("parent", domain=PAYMENTS)
     child = started("child", domain=SHIPPING, parent=parent.id)
 
