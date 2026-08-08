@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from glyff import Domain
-from glyff.exceptions import MissingTypeHintError, TypeHintResolutionError
+from glyff import Domain, Session, SessionId
+from glyff.exceptions import (
+    ArgumentCanonicalizationError,
+    MissingTypeHintError,
+    TypeHintResolutionError,
+)
+from glyff.store import MemoryBackend
 
 engrave = Domain("test", version="1").engrave
 
@@ -105,3 +110,23 @@ def test_engrave_succeeds_with_string_annotation_resolved_from_module_scope():
         return _MyClass()
 
     assert func is not None
+
+
+async def test_an_uncanonicalizable_argument_names_the_function_it_was_passed_to(
+    serializer, argument_canonicalizer
+):
+    # The canonicalizer is handed values, not the call they came from, so this
+    # context exists only if the engraved wrapper adds it.
+    @engrave
+    async def send(payload: object) -> None: ...
+
+    session = Session(
+        id=SessionId("uncanonicalizable"),
+        backend=MemoryBackend(),
+        serializer=serializer,
+        argument_canonicalizer=argument_canonicalizer,
+    )
+
+    async with session:
+        with pytest.raises(ArgumentCanonicalizationError, match="'.*send'"):
+            await send(object())

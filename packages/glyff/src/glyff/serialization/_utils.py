@@ -2,7 +2,6 @@
 
 import dataclasses
 import functools
-import inspect
 import json
 import math
 from abc import ABC, abstractmethod
@@ -204,14 +203,3 @@ def stable_json_dumps(
         default=default or to_serializable,
         separators=JSON_SEPARATORS if indent is None else None,
     )
-
-
-def bind_arguments(sig: inspect.Signature, args: tuple, kwargs: dict) -> dict[str, Any]:
-    """Binds arguments into a name->value dict, including *args/**kwargs.
-
-    Variadic parameters appear as a tuple (var-positional) and dict (var-keyword),
-    both of which canonicalize, so they contribute to identity.
-    """
-    bound = sig.bind(*args, **kwargs)
-    bound.apply_defaults()
-    return dict(bound.arguments)

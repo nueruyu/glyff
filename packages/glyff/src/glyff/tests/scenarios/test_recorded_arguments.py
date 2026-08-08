@@ -1,5 +1,4 @@
 import hashlib
-import inspect
 import json
 
 from glyff import (
@@ -12,6 +11,7 @@ from glyff import (
     Domain,
     DomainId,
 )
+from glyff._function import FunctionDefinition
 from glyff.serialization._utils import encode_canonical
 from glyff.tests.types import BackendFactory, make_session
 
@@ -27,9 +27,12 @@ async def greet(name: str, times: int = 1) -> str:
 def _expected_id(
     argument_canonicalizer: ArgumentCanonicalizer, *args, **kwargs
 ) -> ExecutionId:
-    sig = inspect.signature(greet)
     encoded = CanonicalArguments(
-        encode_canonical(argument_canonicalizer.canonicalize(greet, sig, args, kwargs))
+        encode_canonical(
+            argument_canonicalizer.canonicalize(
+                FunctionDefinition.from_callable(greet).bind(args, kwargs)
+            )
+        )
     )
     return ExecutionId(
         parent_id=None,

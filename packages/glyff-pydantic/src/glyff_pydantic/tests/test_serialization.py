@@ -53,13 +53,23 @@ def argument_canonicalizer() -> ArgumentCanonicalizer:
     return PydanticArgumentCanonicalizer()
 
 
+def bound(func, *args, **kwargs) -> dict:
+    """The name-to-value mapping one call binds to.
+
+    Scaffolding only: what binding itself guarantees is
+    ``FunctionDefinition.bind``'s to prove.
+    """
+    arguments = inspect.signature(func).bind(*args, **kwargs)
+    arguments.apply_defaults()
+    return dict(arguments.arguments)
+
+
 def test_canonicalize_args_positional_vs_keyword_are_equal(
     argument_canonicalizer: ArgumentCanonicalizer,
 ):
-    sig = inspect.signature(sample_func)
-    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {"b": "test"})
+    first = argument_canonicalizer.canonicalize(bound(sample_func, 1, b="test"))
     second = argument_canonicalizer.canonicalize(
-        sample_func, sig, (), {"a": 1, "b": "test"}
+        bound(sample_func, **{"a": 1, "b": "test"})
     )
     assert first == second
 
@@ -67,10 +77,9 @@ def test_canonicalize_args_positional_vs_keyword_are_equal(
 def test_canonicalize_args_defaults_are_included(
     argument_canonicalizer: ArgumentCanonicalizer,
 ):
-    sig = inspect.signature(sample_func)
-    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {})
+    first = argument_canonicalizer.canonicalize(bound(sample_func, 1))
     second = argument_canonicalizer.canonicalize(
-        sample_func, sig, (), {"a": 1, "b": "default"}
+        bound(sample_func, **{"a": 1, "b": "default"})
     )
     assert first == second
 
@@ -78,20 +87,16 @@ def test_canonicalize_args_defaults_are_included(
 def test_canonicalize_args_different_values_differ(
     argument_canonicalizer: ArgumentCanonicalizer,
 ):
-    sig = inspect.signature(sample_func)
-    first = argument_canonicalizer.canonicalize(sample_func, sig, (1,), {})
-    second = argument_canonicalizer.canonicalize(sample_func, sig, (2,), {})
+    first = argument_canonicalizer.canonicalize(bound(sample_func, 1))
+    second = argument_canonicalizer.canonicalize(bound(sample_func, 2))
     assert first != second
 
 
 def test_canonicalize_args_is_deterministic(
     argument_canonicalizer: ArgumentCanonicalizer,
 ):
-    sig = inspect.signature(sample_func)
-    first = argument_canonicalizer.canonicalize(sample_func, sig, (42,), {"b": "hello"})
-    second = argument_canonicalizer.canonicalize(
-        sample_func, sig, (42,), {"b": "hello"}
-    )
+    first = argument_canonicalizer.canonicalize(bound(sample_func, 42, b="hello"))
+    second = argument_canonicalizer.canonicalize(bound(sample_func, 42, b="hello"))
     assert first == second
 
 
@@ -159,10 +164,8 @@ def test_canonical_opaque_arg_raises_by_default(
     def func_with_obj(a: object):
         pass
 
-    sig = inspect.signature(func_with_obj)
-
     with pytest.raises(ArgumentCanonicalizationError):
-        argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainA(),), {})
+        argument_canonicalizer.canonicalize(bound(func_with_obj, PlainA()))
 
 
 def test_canonical_opaque_arg_by_class_with_qualname_policy():
@@ -177,14 +180,12 @@ def test_canonical_opaque_arg_by_class_with_qualname_policy():
     def func_with_obj(a: object):
         pass
 
-    sig = inspect.signature(func_with_obj)
-
     argument_canonicalizer = PydanticArgumentCanonicalizer(
         opaque_policy=OpaqueByTypeQualname()
     )
-    first = argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainA(),), {})
-    second = argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainA(),), {})
-    different = argument_canonicalizer.canonicalize(func_with_obj, sig, (PlainB(),), {})
+    first = argument_canonicalizer.canonicalize(bound(func_with_obj, PlainA()))
+    second = argument_canonicalizer.canonicalize(bound(func_with_obj, PlainA()))
+    different = argument_canonicalizer.canonicalize(bound(func_with_obj, PlainB()))
 
     # With the opt-in qualname policy, opaque values are identified by their class
     assert first == second
@@ -203,30 +204,25 @@ def test_canonical_nested_dataclass_type_and_callable_values(
     def func(container: Container):
         pass
 
-    sig = inspect.signature(func)
     first = argument_canonicalizer.canonicalize(
-        func,
-        sig,
-        (
+        bound(
+            func,
             Container(
                 data=MyDataClass(id="id1", value=100),
                 cls=MyPlainClass,
                 callback=helper_func,
             ),
-        ),
-        {},
+        )
     )
     second = argument_canonicalizer.canonicalize(
-        func,
-        sig,
-        (
+        bound(
+            func,
             Container(
                 data=MyDataClass(id="id1", value=100),
                 cls=MyPlainClass,
                 callback=helper_func,
             ),
-        ),
-        {},
+        )
     )
 
     assert first == second
@@ -238,12 +234,9 @@ def test_canonical_callable_values_by_qualified_name(
     def func(callback):
         pass
 
-    sig = inspect.signature(func)
-    first = argument_canonicalizer.canonicalize(func, sig, (helper_func,), {})
-    second = argument_canonicalizer.canonicalize(func, sig, (helper_func,), {})
-    different = argument_canonicalizer.canonicalize(
-        func, sig, (another_helper_func,), {}
-    )
+    first = argument_canonicalizer.canonicalize(bound(func, helper_func))
+    second = argument_canonicalizer.canonicalize(bound(func, helper_func))
+    different = argument_canonicalizer.canonicalize(bound(func, another_helper_func))
 
     assert first == second
     assert first != different
@@ -255,10 +248,9 @@ def test_method_identity_differs_for_different_pydantic_instances(
     inst1 = MyModel(x=1, y="a")
     inst2 = MyModel(x=2, y="a")
     func = MyModel.method
-    sig = inspect.signature(func)
 
-    first = argument_canonicalizer.canonicalize(func, sig, (inst1, 10), {})
-    second = argument_canonicalizer.canonicalize(func, sig, (inst2, 10), {})
+    first = argument_canonicalizer.canonicalize(bound(func, inst1, 10))
+    second = argument_canonicalizer.canonicalize(bound(func, inst2, 10))
 
     assert first != second
 
@@ -269,10 +261,9 @@ def test_method_identity_is_same_for_identical_pydantic_instances(
     inst1 = MyModel(x=1, y="a")
     inst2 = MyModel(x=1, y="a")
     func = MyModel.method
-    sig = inspect.signature(func)
 
-    first = argument_canonicalizer.canonicalize(func, sig, (inst1, 10), {})
-    second = argument_canonicalizer.canonicalize(func, sig, (inst2, 10), {})
+    first = argument_canonicalizer.canonicalize(bound(func, inst1, 10))
+    second = argument_canonicalizer.canonicalize(bound(func, inst2, 10))
 
     assert first == second
 
@@ -289,16 +280,15 @@ def test_canonical_ignores_compare_false_dataclass_fields(
             pass
 
     func = AgentWithDep.run
-    sig = inspect.signature(func)
 
     first = argument_canonicalizer.canonicalize(
-        func, sig, (AgentWithDep("a", counter=1), "q"), {}
+        bound(func, AgentWithDep("a", counter=1), "q")
     )
     second = argument_canonicalizer.canonicalize(
-        func, sig, (AgentWithDep("a", counter=99), "q"), {}
+        bound(func, AgentWithDep("a", counter=99), "q")
     )
     other = argument_canonicalizer.canonicalize(
-        func, sig, (AgentWithDep("b", counter=1), "q"), {}
+        bound(func, AgentWithDep("b", counter=1), "q")
     )
 
     assert first == second
@@ -331,11 +321,10 @@ def test_canonical_model_with_opaque_member_raises_by_default(
 
     Agent, Tool = _agent_model_with_opaque_member()
     func = Agent.run
-    sig = inspect.signature(func)
     a1 = Agent(name="researcher", tool=Tool(1))
 
     with pytest.raises(ArgumentCanonicalizationError):
-        argument_canonicalizer.canonicalize(func, sig, (a1, "hi"), {})
+        argument_canonicalizer.canonicalize(bound(func, a1, "hi"))
 
 
 def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
@@ -348,7 +337,6 @@ def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
 
     Agent, Tool = _agent_model_with_opaque_member()
     func = Agent.run
-    sig = inspect.signature(func)
 
     a1 = Agent(name="researcher", tool=Tool(1))
     a2 = Agent(name="researcher", tool=Tool(2))
@@ -357,9 +345,9 @@ def test_canonical_model_with_opaque_member_by_class_with_qualname_policy():
     argument_canonicalizer = PydanticArgumentCanonicalizer(
         opaque_policy=OpaqueByTypeQualname()
     )
-    first = argument_canonicalizer.canonicalize(func, sig, (a1, "hi"), {})
-    second = argument_canonicalizer.canonicalize(func, sig, (a2, "hi"), {})
-    other = argument_canonicalizer.canonicalize(func, sig, (a3, "hi"), {})
+    first = argument_canonicalizer.canonicalize(bound(func, a1, "hi"))
+    second = argument_canonicalizer.canonicalize(bound(func, a2, "hi"))
+    other = argument_canonicalizer.canonicalize(bound(func, a3, "hi"))
 
     # Opaque tool identified by class (first == second), serializable state differentiates.
     assert first == second
@@ -376,7 +364,7 @@ def test_model_set_field_is_sorted_for_a_stable_canonical_form(
         pass
 
     canonical = argument_canonicalizer.canonicalize(
-        f, inspect.signature(f), (M(tags={"gamma", "alpha", "beta"}),), {}
+        bound(f, M(tags={"gamma", "alpha", "beta"}))
     )
     assert canonical == {"a": {"tags": ["alpha", "beta", "gamma"]}}
 
@@ -392,10 +380,7 @@ def test_scalars_pydantic_knows_are_represented_by_value(
         pass
 
     canonical = argument_canonicalizer.canonicalize(
-        f,
-        inspect.signature(f),
-        (M(at=datetime.datetime(2024, 1, 1), ref=uuid.UUID(int=0)),),
-        {},
+        bound(f, M(at=datetime.datetime(2024, 1, 1), ref=uuid.UUID(int=0)))
     )
     assert canonical == {
         "a": {
@@ -417,9 +402,7 @@ def test_mapping_valued_enums_keep_distinct_identity(
         pass
 
     with pytest.raises(ArgumentCanonicalizationError, match="canonicalize to"):
-        argument_canonicalizer.canonicalize(
-            f, inspect.signature(f), (Colliding.VALUE,), {}
-        )
+        argument_canonicalizer.canonicalize(bound(f, Colliding.VALUE))
 
 
 def test_scalar_valued_enums_are_represented_by_value(
@@ -431,9 +414,7 @@ def test_scalar_valued_enums_are_represented_by_value(
     def f(a: object):
         pass
 
-    canonical = argument_canonicalizer.canonicalize(
-        f, inspect.signature(f), (Colour.RED,), {}
-    )
+    canonical = argument_canonicalizer.canonicalize(bound(f, Colour.RED))
     assert canonical == {"a": {"__glyff_opaque__": "red"}}
 
 
@@ -450,7 +431,7 @@ def test_non_scalars_are_left_to_the_opaque_policy(
 
     values = gen()
     with pytest.raises(ArgumentCanonicalizationError):
-        argument_canonicalizer.canonicalize(f, inspect.signature(f), (values,), {})
+        argument_canonicalizer.canonicalize(bound(f, values))
     assert len(list(values)) == 1
 
 
@@ -467,7 +448,7 @@ def test_model_mapping_keys_that_collide_are_rejected(
 
     with pytest.raises(ArgumentCanonicalizationError, match="canonicalize to"):
         argument_canonicalizer.canonicalize(
-            f, inspect.signature(f), (M(data={1: "integer", "1": "string"}),), {}
+            bound(f, M(data={1: "integer", "1": "string"}))
         )
 
 
@@ -480,10 +461,9 @@ def test_model_set_field_is_content_based(
     def f(a: object):
         pass
 
-    sig = inspect.signature(f)
-    first = argument_canonicalizer.canonicalize(f, sig, (M(tags={1, 2, 3}),), {})
-    second = argument_canonicalizer.canonicalize(f, sig, (M(tags={3, 2, 1}),), {})
-    other = argument_canonicalizer.canonicalize(f, sig, (M(tags={4, 5, 6}),), {})
+    first = argument_canonicalizer.canonicalize(bound(f, M(tags={1, 2, 3})))
+    second = argument_canonicalizer.canonicalize(bound(f, M(tags={3, 2, 1})))
+    other = argument_canonicalizer.canonicalize(bound(f, M(tags={4, 5, 6})))
 
     assert first == second
     assert first != other

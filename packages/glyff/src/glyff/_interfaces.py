@@ -1,7 +1,6 @@
-import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterable
-from typing import Any, Callable
+from collections.abc import AsyncIterator, Iterable, Mapping
+from typing import Any
 
 from ._execution import CanonicalValue, Execution, ExecutionStatus
 from ._identity import DomainId, ExecutionId, SessionId
@@ -90,9 +89,7 @@ class ArgumentCanonicalizer(ABC):
     """
 
     @abstractmethod
-    def canonicalize(
-        self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
-    ) -> CanonicalValue:
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalValue:
         """Normalizes a call's bound arguments into the JSON data model."""
         ...
 

@@ -44,7 +44,7 @@ pip install glyff
 | `Transaction`         | Active transaction boundary.                                    |
 | `TransactionProvider` | Provider used by `TransactionScope`.                            |
 | `Serializer`          | Protocol for value serialization.                               |
-| `ArgumentCanonicalizer`   | Contract for normalizing call arguments into a canonical form.  |
+| `ArgumentCanonicalizer`   | Contract for normalizing bound call arguments into a canonical form. |
 | `CanonicalValue`      | The JSON data model value a canonicalizer returns.              |
 | `SessionId`           | The name a session's records are stored under.                  |
 

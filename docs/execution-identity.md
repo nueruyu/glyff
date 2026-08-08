@@ -124,9 +124,11 @@ not to be persisted.
 
 ## Canonical arguments
 
-Identity runs through a **canonical form**, not directly through a hash. The
-session's `ArgumentCanonicalizer` normalizes the bound arguments into the JSON
-data model; glyff encodes that once, and those bytes are both digested into
+Identity runs through a **canonical form**, not directly through a hash. A call
+is bound to a name-to-value mapping first (`_function.py`, the one place that
+reads Python's reflection API), and the session's `ArgumentCanonicalizer`
+normalizes that mapping into the JSON data model — it never sees the callable or
+its signature. glyff encodes the result once, and those bytes are both digested into
 `arguments_digest` and recorded on the execution. So for every recorded
 execution:
 

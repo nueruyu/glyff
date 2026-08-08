@@ -1,60 +1,46 @@
 from __future__ import annotations
 
 import functools
-import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
-from ._executor import execute
 from ._execution import CanonicalArguments
-from ._identity import DomainId, ExecutionId, ExecutionName
-from .exceptions import MissingTypeHintError, TypeHintResolutionError
+from ._executor import execute
+from ._function import FunctionDefinition
+from ._identity import DomainId, ExecutionId
+from .exceptions import ArgumentCanonicalizationError
 from .serialization._utils import encode_canonical
 
 P = ParamSpec("P")
 R = TypeVar("R")
 
 
-def _missing_required_type_hints(
-    sig: inspect.Signature, type_hints: dict[str, Any]
-) -> list[str]:
-    missing: list[str] = []
-    if "return" not in type_hints:
-        missing.append("return")
-
-    for name, param in sig.parameters.items():
-        if name in ("self", "cls"):
-            continue
-        if param.kind in (
-            inspect.Parameter.VAR_POSITIONAL,
-            inspect.Parameter.VAR_KEYWORD,
-        ):
-            continue
-        if name not in type_hints:
-            missing.append(name)
-
-    return missing
-
-
 async def _resolve_call_identity(
     ctx: Context,
     domain: DomainId,
-    func: Callable[..., Any],
-    sig: inspect.Signature,
-    task_name: ExecutionName,
+    definition: FunctionDefinition,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> tuple[ExecutionId, CanonicalArguments]:
     """Return the execution id for one call and the canonical arguments it is keyed by."""
     parent_id = ctx.current_execution_id
-    canonical = ctx.argument_canonicalizer.canonicalize(func, sig, args, kwargs)
+    arguments = definition.bind(args, kwargs)
+    try:
+        canonical = ctx.argument_canonicalizer.canonicalize(arguments)
+    except ArgumentCanonicalizationError as e:
+        # The canonicalizer sees values, not the call they came from, so the
+        # function is named here or nowhere.
+        raise ArgumentCanonicalizationError(
+            f"Arguments to '{definition.name}' could not be canonicalized. "
+            f"Ensure all arguments have a value representation. Original error: {e}"
+        ) from e
     encoded = CanonicalArguments(encode_canonical(canonical))
-    seq = await ctx.sequencer.next(parent_id, domain, task_name, encoded.digest)
+    seq = await ctx.sequencer.next(parent_id, domain, definition.name, encoded.digest)
     execution_id = ExecutionId(
         parent_id=parent_id,
         domain=domain,
-        name=task_name,
+        name=definition.name,
         sequence=seq,
         arguments_digest=encoded.digest,
     )
@@ -86,27 +72,7 @@ class Domain:
         The domain is fixed here, at decoration: a recorded execution's owner is
         a property of the definition, not of whatever was in scope when it ran.
         """
-        sig = inspect.signature(func)
-        task_name = ExecutionName(getattr(func, "__qualname__", func.__name__))
-
-        unevaluated_type_hints = inspect.get_annotations(func, eval_str=False)
-        missing_type_hints = _missing_required_type_hints(sig, unevaluated_type_hints)
-        if missing_type_hints:
-            missing = ", ".join(missing_type_hints)
-            raise MissingTypeHintError(
-                f"Engraved function '{task_name}' is missing required type hints: "
-                f"{missing}."
-            )
-
-        try:
-            type_hints = inspect.get_annotations(func, eval_str=True)
-        except Exception as e:
-            raise TypeHintResolutionError(
-                f"Could not resolve type hints for {task_name}. "
-                f"Please ensure all types are correctly defined and imported. Error: {e}"
-            ) from e
-
-        return_type = type_hints["return"]
+        definition = FunctionDefinition.from_callable(func)
         domain = self
 
         @functools.wraps(func)
@@ -116,16 +82,16 @@ class Domain:
             # against a generation of code that has not been agreed with.
             await ctx.domain_claims.ensure(domain.id, domain.version)
             execution_id, canonical_arguments = await _resolve_call_identity(
-                ctx, domain.id, func, sig, task_name, args, kwargs
+                ctx, domain.id, definition, args, kwargs
             )
             result = await execute(
                 ctx=ctx,
                 execution_id=execution_id,
                 canonical_arguments=canonical_arguments,
-                func=func,
+                func=definition.func,
                 args=args,
                 kwargs=kwargs,
-                return_type=return_type,
+                return_type=definition.return_type,
             )
             return cast(R, result)
 
