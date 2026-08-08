@@ -1,4 +1,10 @@
-"""Committed document I/O: stamping, atomic replacement, and locking."""
+"""Committed document I/O: stamping, atomic replacement, and locking.
+
+The stamping tests look like the SQLite ones restated, and are kept separate on
+purpose: both writing a stamp and forging a bad one go through the store's own
+representation, so sharing them would need a per-backend hook for the only part
+that differs.
+"""
 
 import asyncio
 import json

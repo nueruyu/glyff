@@ -76,15 +76,30 @@ process, so there are no records from an older version to carry across. See
 ## Writing your own
 
 Subclass `Backend` — or `MigratableBackend` if you offer migration — and expose
-the pieces above. Verify the
-implementation against the shared contract suite in `glyff.testing`: subclass
-the contract classes (`ExecutionBackendContract`, `DurableBackendContract`,
-`DomainVersionContract`, and the text/binary-safety variants) and provide your
-backend factory — the factory names a *store*, and the same name reopens it. The
-shipped backends run the same suite. It also exports the reference
-`PruningEventHandler` and the helpers `save_execution`, `serialized_value`, and
-the pair `make_execution_id` / `canonical_arguments`, which build an execution
-that satisfies the `arguments_digest` invariant.
+the pieces above. Verify the implementation against the shared contract suite in
+`glyff.testing`: subclass the contract classes and provide your backend factory —
+the factory names a *store*, and the same name reopens it. The shipped backends
+run the same suite.
+
+| Contract | Drives |
+| --- | --- |
+| `ExecutionBackendContract` | The repository and transaction provider directly. |
+| `DurableBackendContract` | The same, across a reopened store. |
+| `DomainVersionContract` | `claim_domain`, including a race between handles. |
+| `TextBackendContract` / `BinarySafeBackendContract` | Whichever the store promises about the bytes it is handed. |
+| `SessionMigrationContract` | `session_migration`, for a `MigratableBackend`. |
+| `EngravedCallContract`, `ResumeContract`, `ParallelContract`, `PruningContract` | Whole engraved calls through a `Session`. |
+
+The last four are worth running even once the repository contract passes: a
+backend can satisfy every operation in isolation and still lose a sibling's
+staged writes under `asyncio.gather`, or hand a reopened store records the first
+handle never flushed.
+
+`glyff.testing` also exports the reference `PruningEventHandler`, `make_session`,
+and the helpers `save_execution`, `serialized_value`, and the pair
+`make_execution_id` / `canonical_arguments`, which build an execution that
+satisfies the `arguments_digest` invariant. `ArgumentCanonicalizerContract` and
+`SerializerContract` do the same job for the other two extension points.
 
 `glyff.store.staging` is there if you want it. A backend holds one
 `ExecutionStaging`; a transaction calls `begin()` for its own `ExecutionStage`,

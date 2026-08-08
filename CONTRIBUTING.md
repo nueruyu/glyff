@@ -22,9 +22,25 @@ uv run pytest --cov           # tests with branch coverage (what CI runs)
 ```
 
 Each package's tests are split into `units/` (per-module) and `scenarios/`
-(behavioral); backend packages also run the shared backend contract suite. Add
-tests next to the layer you change, and run new backends against the contract
-suite rather than hand-writing store semantics tests.
+(behavioral); backend packages also run the shared contract suites from
+`glyff.testing`.
+
+**Prove a behavior once, at the narrowest thing that owns it.** A caller tests
+only what its own composition adds. So a value's canonical form belongs to
+`to_canonical`'s tests, not to every canonicalizer that walks with it; a store's
+semantics belong to the contract suite, not to each backend restating them. A
+useful check: if breaking something already fails its own focused test, a second
+test failing for exactly the same reason is earning nothing.
+
+Three things still deserve their own tests even when they look like a
+restatement, and each says so where it lives: a store's *mechanism* (file
+replacement, locking, transaction atomicity, schema), anything that has to go
+through a store's own representation (the format-version stamp), and a
+regression for a failure mode that was distinct in practice.
+
+Never build an expected value by running the same production adapter or codec
+the system under test runs — the same bug then lands on both sides of the
+assertion. Observe what was persisted instead.
 
 > **Planned** — [#36](https://github.com/nueruyu/glyff/issues/36) moves the test
 > trees from inside the source packages (`packages/*/src/*/tests/`) to plain

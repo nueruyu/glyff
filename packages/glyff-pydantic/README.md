@@ -27,6 +27,11 @@ represents the scalars pydantic knows (`datetime`, `UUID`, `Decimal`), while
 every container is walked by glyff's shared canonicalization so mappings, sets
 and opaque values follow one set of rules.
 
+Both satisfy the `SerializerContract` and `ArgumentCanonicalizerContract` in
+`glyff.testing`, which is where the behaviour they share with the stdlib JSON
+implementations is proved; this package's own tests cover only what Pydantic
+changes.
+
 Canonical arguments are part of an execution's identity, so they must stay stable
 across code changes — see
 [execution identity](https://github.com/nueruyu/glyff/blob/main/docs/execution-identity.md)

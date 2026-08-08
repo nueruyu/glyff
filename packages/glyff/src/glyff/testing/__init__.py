@@ -1,22 +1,33 @@
 """Public test helpers for building against glyff.
 
-A supported surface: applications on glyff — and third parties implementing
-their own :class:`~glyff.Backend` — can use it in their own test suites, as the
-workspace packages' tests do. A backend checks it honours the glyff contract by
-subclassing the relevant contract bases and supplying a ``backend_factory``
-fixture::
+A supported surface: applications on glyff — and third parties implementing a
+:class:`~glyff.Backend`, a :class:`~glyff.Serializer` or an
+:class:`~glyff.ArgumentCanonicalizer` — can use it in their own test suites, as
+the workspace packages' tests do. An implementation checks it honours the glyff
+contract by subclassing the relevant bases and supplying a factory fixture::
 
     import pytest
 
-    from glyff.testing import DurableBackendContract, ExecutionBackendContract
+    from glyff.testing import (
+        DurableBackendContract,
+        EngravedCallContract,
+        ExecutionBackendContract,
+    )
 
-    class TestMyBackend(ExecutionBackendContract, DurableBackendContract):
+    class TestMyBackend(
+        ExecutionBackendContract, DurableBackendContract, EngravedCallContract
+    ):
         @pytest.fixture
         def backend_factory(self):
-            def factory(session_id: str):
+            def factory(store: str):
                 return MyBackend(...)
 
             return factory
+
+The factory names a *store*, and the same name reopens it. The session-level
+contracts (`EngravedCallContract` and its siblings) drive whole engraved calls
+rather than the repository, so they catch what only shows up once a `Session` is
+composing the pieces.
 
 The contracts are pytest test classes, so importing this module needs pytest
 (install ``glyff[testing]``).

@@ -1,3 +1,11 @@
+"""Format-version stamping, as this store spells it.
+
+The file store makes the same promise and proves it separately on purpose:
+both stamping a store and forging a bad stamp go through the store's own
+representation, so a shared contract would need a per-backend hook for the one
+thing that differs. Kept apart rather than parameterized.
+"""
+
 import sqlite3
 from pathlib import Path
 
