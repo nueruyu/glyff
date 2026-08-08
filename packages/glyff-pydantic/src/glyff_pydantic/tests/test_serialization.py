@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 from glyff import ArgumentCanonicalizer, Serializer
-from glyff.exceptions import ArgumentCanonicalizationError
+from glyff.exceptions import ArgumentCanonicalizationError, SerializationError
 from glyff.serialization import OpaqueByTypeQualname
 from pydantic import BaseModel, ConfigDict
 
@@ -57,6 +57,13 @@ async def test_a_list_of_models_survives_a_round_trip(serializer: Serializer):
         )
         == models
     )
+
+
+async def test_a_value_pydantic_cannot_carry_is_refused(serializer: Serializer):
+    # `PydanticSerializer` overrides `serialize` and wraps the failure itself,
+    # so this is its own error path rather than the JSON serializer's.
+    with pytest.raises(SerializationError, match="could not be serialized"):
+        await serializer.serialize(object(), object)
 
 
 # -- Models as identity -------------------------------------------------------

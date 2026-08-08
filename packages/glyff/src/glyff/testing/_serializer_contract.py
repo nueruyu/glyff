@@ -2,11 +2,10 @@
 
 Re-exported from :mod:`glyff.testing`, the public entry point.
 
-Only what a serializer must promise for a store to keep results and metadata:
-a value declared as a type comes back as that value, the bytes do not depend on
-the order a mapping happened to be built in, and a value it cannot carry says so
-rather than writing something lossy. Which *types* an implementation accepts is
-its own business and is tested beside it.
+Only what the interface promises: a value declared as a type comes back as that
+value. What the bytes in between look like — whether they are stable across
+mapping orders, which values are refused and how — is each implementation's own,
+and is proved beside it.
 """
 
 from __future__ import annotations
@@ -14,11 +13,6 @@ from __future__ import annotations
 import pytest
 
 from .._interfaces import Serializer
-from ..exceptions import SerializationError
-
-
-class Unserializable:
-    """A value no serializer can be expected to carry."""
 
 
 class SerializerContract:
@@ -44,16 +38,3 @@ class SerializerContract:
             await serializer.deserialize(await serializer.serialize("v", str), str)
             == "v"
         )
-
-    async def test_the_bytes_do_not_depend_on_mapping_order(
-        self, serializer: Serializer
-    ):
-        # Otherwise a recorded result would depend on how its value happened
-        # to be assembled.
-        assert await serializer.serialize({"b": 2, "a": 1}, dict) == (
-            await serializer.serialize({"a": 1, "b": 2}, dict)
-        )
-
-    async def test_a_value_it_cannot_carry_is_refused(self, serializer: Serializer):
-        with pytest.raises(SerializationError):
-            await serializer.serialize(Unserializable(), Unserializable)

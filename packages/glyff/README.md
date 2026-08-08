@@ -76,8 +76,9 @@ the name from the function's `__qualname__`.
   [the backends doc](https://github.com/nueruyu/glyff/blob/main/docs/backends.md).
 - `glyff.testing` carries a conformance suite for each extension point — the
   backend, the serializer, and the argument canonicalizer — plus contracts that
-  drive whole engraved calls through a `Session`. Subclass the ones that apply
-  and supply a factory; the shipped packages run the same suites (*planned:*
+  drive whole engraved calls through a `Session`. Each checks what its interface
+  promises and no more. Subclass the ones that apply and supply a factory; the
+  shipped packages run the same suites (*planned:*
   [#36](https://github.com/nueruyu/glyff/issues/36)).
 
 ## Status

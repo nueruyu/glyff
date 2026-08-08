@@ -38,6 +38,11 @@ replacement, locking, transaction atomicity, schema), anything that has to go
 through a store's own representation (the format-version stamp), and a
 regression for a failure mode that was distinct in practice.
 
+A shared contract in `glyff.testing` is a public promise, so it checks only what
+its interface promises. Behaviour that all the shipped implementations happen to
+have — a particular error type, a byte layout — belongs beside them, not in the
+contract, or a third party inherits a requirement glyff never made.
+
 Never build an expected value by running the same production adapter or codec
 the system under test runs — the same bug then lands on both sides of the
 assertion. Observe what was persisted instead.

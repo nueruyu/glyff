@@ -9,7 +9,7 @@ import dataclasses
 
 import pytest
 
-from glyff.exceptions import ArgumentCanonicalizationError
+from glyff.exceptions import ArgumentCanonicalizationError, SerializationError
 from glyff.serialization import (
     JsonArgumentCanonicalizer,
     JsonSerializer,
@@ -166,7 +166,20 @@ async def test_serializing_keeps_a_field_canonicalizing_drops(
     assert b"7" in data
 
 
-# -- Formatting ---------------------------------------------------------------
+# -- The bytes it writes ------------------------------------------------------
+
+
+async def test_the_bytes_do_not_depend_on_mapping_order(serializer: JsonSerializer):
+    # `stable_json_dumps` sorts keys, and this is what wires the serializer to
+    # it: two equal mappings must reach a store as one value.
+    assert await serializer.serialize({"b": 2, "a": 1}, dict) == (
+        await serializer.serialize({"a": 1, "b": 2}, dict)
+    )
+
+
+async def test_a_value_json_cannot_carry_is_refused(serializer: JsonSerializer):
+    with pytest.raises(SerializationError, match="could not be serialized to JSON"):
+        await serializer.serialize(object(), object)
 
 
 async def test_serialized_output_defaults_to_compact_readable_json():

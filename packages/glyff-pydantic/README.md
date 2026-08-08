@@ -28,9 +28,9 @@ every container is walked by glyff's shared canonicalization so mappings, sets
 and opaque values follow one set of rules.
 
 Both satisfy the `SerializerContract` and `ArgumentCanonicalizerContract` in
-`glyff.testing`, which is where the behaviour they share with the stdlib JSON
-implementations is proved; this package's own tests cover only what Pydantic
-changes.
+`glyff.testing`, which check what the `Serializer` and `ArgumentCanonicalizer`
+interfaces promise. Everything inherited from the stdlib JSON implementations is
+proved beside those; this package's own tests cover what Pydantic changes.
 
 Canonical arguments are part of an execution's identity, so they must stay stable
 across code changes — see

@@ -98,8 +98,14 @@ handle never flushed.
 `glyff.testing` also exports the reference `PruningEventHandler`, `make_session`,
 and the helpers `save_execution`, `serialized_value`, and the pair
 `make_execution_id` / `canonical_arguments`, which build an execution that
-satisfies the `arguments_digest` invariant. `ArgumentCanonicalizerContract` and
-`SerializerContract` do the same job for the other two extension points.
+satisfies the `arguments_digest` invariant.
+
+`ArgumentCanonicalizerContract` and `SerializerContract` cover the other two
+extension points, and are deliberately thin: they check only what those ABCs
+promise — an encodable canonical form, determinism, a value that round-trips.
+How an implementation handles a value it has no representation for, and what its
+bytes look like, is its own business and is not a requirement of implementing the
+interface.
 
 `glyff.store.staging` is there if you want it. A backend holds one
 `ExecutionStaging`; a transaction calls `begin()` for its own `ExecutionStage`,
