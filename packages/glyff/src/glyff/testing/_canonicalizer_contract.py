@@ -117,8 +117,6 @@ class ArgumentCanonicalizerContract:
     def test_a_policy_reaches_a_value_nested_inside_another(
         self, canonicalizer_factory: CanonicalizerFactory
     ):
-        # Arguments are rarely the opaque value itself; the policy has to hold
-        # wherever the walk finds one.
         canonicalizer = canonicalizer_factory(opaque_policy=ByMarker())
 
         assert canonicalizer.canonicalize(

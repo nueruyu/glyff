@@ -1,11 +1,8 @@
 """What the JSON implementations add on top of the contracts they satisfy.
 
-The contracts themselves run in `test_json_serialization_contract.py`, and which
-Python value becomes which canonical form is `to_canonical`'s to promise — see
-`test_serialization_helpers.py`. What is left here is this package's own: the
-shipped `OpaquePolicy` implementations, how `JsonArgumentCanonicalizer` holds the
-policy it was given, and the places serializing and canonicalizing deliberately
-disagree.
+The contracts run in `test_json_serialization_contract.py`, and which Python
+value becomes which canonical form is `to_canonical`'s to promise — see
+`test_serialization_helpers.py`.
 """
 
 import dataclasses

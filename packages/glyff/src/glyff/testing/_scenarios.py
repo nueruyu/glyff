@@ -3,11 +3,9 @@
 Re-exported from :mod:`glyff.testing`, the public entry point.
 
 Where :mod:`._backend_contract` drives a `Backend` directly, these drive whole
-engraved calls through `Session`: recording, replay, resumption after an
-interruption, and pruning. A backend that satisfies the repository contract can
-still fail these — by losing a sibling's staged writes under `gather`, or by
-handing a reopened store records the first one never flushed — so they are worth
-running against every backend rather than once against the in-memory one.
+engraved calls through `Session`, which is where a backend that satisfies every
+operation in isolation can still come apart. `docs/backends.md` says what those
+failures look like.
 """
 
 from __future__ import annotations
@@ -248,8 +246,6 @@ class EngravedCallContract(_SessionScenario):
         argument_canonicalizer: ArgumentCanonicalizer,
         serializer: Serializer,
     ):
-        # An exception is non-terminal: it propagates unwrapped, but does not
-        # poison the call permanently.
         backend = backend_factory("scenario-retry")
         _state.fail = True
         with pytest.raises(Interrupted):

@@ -1,9 +1,7 @@
-"""What Pydantic adds on top of the contracts these implementations satisfy.
+"""What Pydantic changes about canonicalizing and serializing.
 
-The contracts run in `test_serialization_contract.py`, and everything inherited
-from the JSON implementations is proved beside those. What is left here is what
-Pydantic changes: models becoming values, the types Pydantic can represent that
-plain JSON cannot, and the places its own encoder had to be kept out of the walk.
+The contracts run in `test_serialization_contract.py`; everything inherited from
+the JSON implementations is proved beside those, in `glyff`.
 """
 
 import dataclasses
@@ -98,8 +96,8 @@ def test_a_model_holding_an_opaque_member_is_refused_by_default(
 
 
 def test_a_policy_reaches_an_opaque_member_of_a_model():
-    # The member folds to its class while the model's own state still separates
-    # two calls — the shape an agent object usually has.
+    # The shape an agent object usually has: identity is the model's state,
+    # carried alongside a dependency that has none.
     Agent, Tool = _agent_model_with_opaque_member()
     canonicalizer = PydanticArgumentCanonicalizer(opaque_policy=OpaqueByTypeQualname())
 

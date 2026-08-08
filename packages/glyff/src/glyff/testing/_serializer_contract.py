@@ -48,8 +48,8 @@ class SerializerContract:
     async def test_the_bytes_do_not_depend_on_mapping_order(
         self, serializer: Serializer
     ):
-        # Two equal mappings must reach the store as one value; anything else
-        # would make a recorded result depend on how it was assembled.
+        # Otherwise a recorded result would depend on how its value happened
+        # to be assembled.
         assert await serializer.serialize({"b": 2, "a": 1}, dict) == (
             await serializer.serialize({"a": 1, "b": 2}, dict)
         )

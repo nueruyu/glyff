@@ -65,7 +65,6 @@ def test_canonical_normalizes_containers():
 
 
 def test_canonical_gives_a_frozenset_the_form_of_its_set():
-    # Which of the two an argument happens to be is not an identity difference.
     assert canonical(frozenset({2, 1})) == canonical({1, 2})
 
 
