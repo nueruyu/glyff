@@ -76,3 +76,14 @@ def test_a_reports_versions_are_not_the_callers_mappings():
 
     assert report.from_domain_versions == {PAYMENTS: "v1"}
     assert report.to_domain_versions == {PAYMENTS: "v2"}
+
+
+def test_an_empty_domain_version_is_refused():
+    # `Domain` refuses one at declaration; migration is the only other way in.
+    with pytest.raises(MigrationError, match="com.example.payments"):
+        session({PAYMENTS: ""}, started("task"))
+
+
+def test_a_report_with_an_empty_version_is_refused():
+    with pytest.raises(MigrationError):
+        MigrationReport(from_domain_versions={PAYMENTS: ""}, to_domain_versions={})

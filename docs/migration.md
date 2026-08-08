@@ -93,7 +93,9 @@ on top.
   A `StoredSession` refuses to be built unless it records a version for every
   domain named anywhere in its executions' identity chains, ancestors included.
   Dropping a domain's version therefore means remapping the descendants that
-  still name it.
+  still name it. The versions themselves are held to what a `Domain` could
+  declare — non-empty — so a migration cannot leave behind a version no running
+  process could ever match.
 
 What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),

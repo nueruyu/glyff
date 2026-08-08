@@ -1,7 +1,7 @@
 """What the pieces of an execution identity accept, and what they refuse."""
 
 import pytest
-from glyff import ArgumentsDigest, DomainId, ExecutionName
+from glyff import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
 
 
 @pytest.mark.parametrize(
@@ -74,3 +74,30 @@ def test_a_digest_is_opaque():
 def test_an_empty_digest_is_refused():
     with pytest.raises(ValueError):
         ArgumentsDigest("")
+
+
+@pytest.mark.parametrize("sequence", [-1, -0.0, 1.0, True, False, "0", None])
+def test_a_sequence_no_path_could_carry_is_refused(sequence):
+    # The codec is closed over what this accepts: anything constructible here has
+    # a path that reads back as the same identity.
+    with pytest.raises(ValueError):
+        ExecutionId(
+            parent_id=None,
+            domain=DomainId("com.example.payments"),
+            name=ExecutionName("task"),
+            sequence=sequence,  # type: ignore[arg-type]
+            arguments_digest=ArgumentsDigest("d"),
+        )
+
+
+def test_the_first_sequence_is_accepted():
+    assert (
+        ExecutionId(
+            parent_id=None,
+            domain=DomainId("com.example.payments"),
+            name=ExecutionName("task"),
+            sequence=0,
+            arguments_digest=ArgumentsDigest("d"),
+        ).sequence
+        == 0
+    )

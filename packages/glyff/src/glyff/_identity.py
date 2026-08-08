@@ -111,6 +111,16 @@ class ExecutionId:
     sequence: int
     arguments_digest: ArgumentsDigest
 
+    def __post_init__(self) -> None:
+        # An ordinal a store could not read back is not an identity. ``bool`` is
+        # an ``int`` subclass whose spelling no decoder accepts, so the type is
+        # checked exactly rather than with ``isinstance``.
+        if type(self.sequence) is not int or self.sequence < 0:
+            raise ValueError(
+                f"{self.sequence!r} is not an execution sequence: expected a "
+                "non-negative int."
+            )
+
     def __str__(self) -> str:
         """
         Generates a human-readable representation for debugging purposes only.

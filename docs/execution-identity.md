@@ -7,7 +7,7 @@ boundaries.
 
 ## What the key is made of
 
-An `ExecutionId` (`_models.py`) has five components, each a value object rather
+An `ExecutionId` (`_identity.py`) has five components, each a value object rather
 than a bare string:
 
 | Component | Where it comes from |
@@ -27,7 +27,10 @@ held to a reverse-DNS shape: lowercase ASCII segments of letters, digits,
 underscores and hyphens, joined by dots. `ExecutionName` is deliberately
 permissive — an inferred name is a `__qualname__` and looks like
 `Outer.<locals>.task`, and a migration has to hold whatever an older version
-wrote. `ArgumentsDigest` is opaque: nothing in glyff reads it.
+wrote. `ArgumentsDigest` is opaque: nothing in glyff reads it. `sequence` is a
+non-negative `int`, which is what keeps the [path codec](#how-a-key-is-stored)
+closed: every identity that can be constructed has a path that reads back as the
+same identity.
 
 ## Domains
 
@@ -98,9 +101,9 @@ mismatches silently.
 
 ## Explicit names and versions
 
-Today a name is derived from the function's `__qualname__` (`_domain.py`), so
+Today a name is derived from the function's `__qualname__` (`_function.py`), so
 renaming an engraved function invalidates the history of paused sessions. And
-`ExecutionId.__str__` is a debug representation (`_models.py`) — not a key, and
+`ExecutionId.__str__` is a debug representation (`_identity.py`) — not a key, and
 not to be persisted.
 
 > **Planned** — [#40](https://github.com/nueruyu/glyff/issues/40), covering
@@ -116,10 +119,9 @@ not to be persisted.
 > through `ExecutionName.explicit()` — the strict counterpart to the permissive
 > constructor, allowing letters, digits, dots, underscores and hyphens — with
 > duplicates rejected at decoration time. That version is the *function's* and
-> would be part of identity — unlike
-> a [domain's version](#domains), which is not. The same issue covers a public
-> canonical string encoding of an `ExecutionId`, stable across resumes, for use
-> as an idempotency key when
+> would be part of identity — unlike a [domain's version](#domains), which is
+> not. The same issue covers a public canonical string encoding of an
+> `ExecutionId`, stable across resumes, for use as an idempotency key when
 > [projecting into an application database](./events.md#projecting-into-an-application-database).
 
 ## Canonical arguments

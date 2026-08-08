@@ -10,6 +10,15 @@ from ..exceptions import MigrationCollisionError, MigrationError
 
 
 def _read_only(versions: Mapping[DomainId, str]) -> Mapping[DomainId, str]:
+    # A version no `Domain` could ever declare is one nothing would match again,
+    # and migration is the only way into this mapping that does not go through
+    # one.
+    empty = sorted(domain.value for domain, version in versions.items() if not version)
+    if empty:
+        raise MigrationError(
+            f"Domains {', '.join(empty)} carry an empty version. A domain "
+            "version cannot be empty."
+        )
     return MappingProxyType(dict(versions))
 
 
