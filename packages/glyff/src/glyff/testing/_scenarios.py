@@ -13,11 +13,12 @@ from collections.abc import Callable
 import pytest
 
 from .._domain import Domain
-from .._event_system import EventEmitter
+from .._event_system import EventEmitter, EventHandler
 from .._execution import Execution
 from .._identity import SessionId
 from .._interfaces import ArgumentCanonicalizer, Backend, Serializer
 from .._session import Session
+from ..events import ExecutionCompleted
 from ..serialization import JsonArgumentCanonicalizer, JsonSerializer
 from ._pruning import PruningEventHandler
 
@@ -57,6 +58,10 @@ class _Recorder:
         self.calls: list[str] = []
         self.fail = False
         self.interrupt = False
+        # Set once a sibling's COMPLETE has been committed. `ExecutionCompleted`
+        # is emitted after the transaction closes, so this orders one branch
+        # against another without leaning on how long anything takes.
+        self.sibling_committed = asyncio.Event()
 
 
 _state = _Recorder()
@@ -64,6 +69,13 @@ _state = _Recorder()
 
 class Interrupted(Exception):
     """Stands in for the application exception that pauses a session."""
+
+
+class ReleaseOnCompletion(EventHandler[ExecutionCompleted]):
+    """Lets a waiting branch move once another branch's record is committed."""
+
+    async def handle(self, event: ExecutionCompleted) -> None:
+        _state.sibling_committed.set()
 
 
 # -- Engraved bodies ---------------------------------------------------------
@@ -129,6 +141,30 @@ async def fan_out() -> list[int]:
     if _state.interrupt:
         raise Interrupted()
     return branches
+
+
+@engrave
+async def completing_sibling() -> str:
+    _state.calls.append("completing_sibling")
+    return "completing_sibling"
+
+
+@engrave
+async def failing_sibling() -> str:
+    if _state.fail:
+        # Wait for the sibling's COMPLETE to be committed, so the failure is
+        # concurrent with a committed sibling rather than racing it. The timeout
+        # is only a failsafe: a backend that never commits should fail, not hang.
+        await asyncio.wait_for(_state.sibling_committed.wait(), timeout=5)
+        raise Interrupted()
+    _state.calls.append("failing_sibling")
+    return "failing_sibling"
+
+
+@engrave
+async def two_siblings() -> str:
+    done = await asyncio.gather(completing_sibling(), failing_sibling())
+    return "/".join(done)
 
 
 @engrave
@@ -459,6 +495,42 @@ class ParallelContract(_SessionScenario):
         # Not one of them ran again: every branch came back from a record this
         # handle did not write.
         assert _state.calls == []
+
+    async def test_a_failed_parallel_child_is_retried_without_rerunning_completed_siblings(
+        self,
+        backend_factory: BackendFactory,
+        argument_canonicalizer: ArgumentCanonicalizer,
+        serializer: Serializer,
+    ):
+        # One sibling commits, the other fails while that record is already
+        # written — a rollback landing next to a committed sibling, not next to
+        # one still in flight.
+        backend = backend_factory("scenario-parallel-partial")
+        _state.fail = True
+        with pytest.raises(Interrupted):
+            async with make_session(
+                "scenario-parallel-partial",
+                backend,
+                argument_canonicalizer,
+                serializer,
+                EventEmitter([ReleaseOnCompletion()]),
+            ):
+                await two_siblings()
+        assert _state.calls == ["completing_sibling"]
+
+        _state.calls.clear()
+        _state.fail = False
+        async with make_session(
+            "scenario-parallel-partial",
+            backend_factory("scenario-parallel-partial"),
+            argument_canonicalizer,
+            serializer,
+        ):
+            assert await two_siblings() == "completing_sibling/failing_sibling"
+
+        # The one that committed came back from its record; only the one that
+        # rolled back ran a second time.
+        assert _state.calls == ["failing_sibling"]
 
 
 class PruningContract(_SessionScenario):
