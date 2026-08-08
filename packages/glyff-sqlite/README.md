@@ -48,9 +48,9 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 - `arguments` holds the canonical arguments verbatim — the row's key is their
   digest, so the column is stored and returned byte-for-byte rather than
   re-encoded.
-- Records are keyed by `(session_id, path)`; a `<prefix>_sessions` row carries
-  the application version behind each session, and a single `<prefix>_meta` row
-  the store's format version.
+- Records are keyed by `(session_id, path)`; a `<prefix>_session_domains` row
+  carries the version one session claimed for one domain, and a single
+  `<prefix>_meta` row the store's format version.
 - Per-execution metadata (see the
   [glyff README](https://pypi.org/project/glyff/)) commits atomically with the
   execution's `COMPLETED` status and result, and is removed with the execution's

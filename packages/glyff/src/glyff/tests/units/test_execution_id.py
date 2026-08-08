@@ -1,19 +1,26 @@
-from glyff import ExecutionId
+from glyff import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
+
+DOMAIN = DomainId("test")
+
+
+def make(name: str, sequence: int, digest: str, parent=None) -> ExecutionId:
+    return ExecutionId(
+        parent_id=parent,
+        domain=DOMAIN,
+        name=ExecutionName(name),
+        sequence=sequence,
+        arguments_digest=ArgumentsDigest(digest),
+    )
 
 
 def test_str_representation_no_parent():
-    eid = ExecutionId(
-        parent_id=None, name="my.func", sequence=0, arguments_digest="hash1"
-    )
-    assert str(eid) == "ExecutionId(name='my.func', sequence=0)"
+    eid = make("my.func", 0, "hash1")
+    assert str(eid) == "ExecutionId(domain='test', name='my.func', sequence=0)"
 
 
 def test_str_representation_with_parent():
-    parent = ExecutionId(
-        parent_id=None, name="root", sequence=1, arguments_digest="hash_p"
+    eid = make("child.func", 0, "hash_c", parent=make("root", 1, "hash_p"))
+    expected = (
+        "ExecutionId(domain='test', name='child.func', sequence=0, parent='root#1')"
     )
-    eid = ExecutionId(
-        parent_id=parent, name="child.func", sequence=0, arguments_digest="hash_c"
-    )
-    expected = "ExecutionId(name='child.func', sequence=0, parent='root#1')"
     assert str(eid) == expected

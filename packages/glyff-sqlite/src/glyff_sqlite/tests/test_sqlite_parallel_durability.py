@@ -7,9 +7,11 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from glyff import ArgumentCanonicalizer, Session, SessionId, engrave
+from glyff import ArgumentCanonicalizer, Domain, Session, SessionId
 from glyff.serialization import JsonSerializer
 from glyff_sqlite import SQLiteBackend
+
+engrave = Domain("test", version="1").engrave
 
 _ran: set[int] = set()
 _interrupt_root: bool = False
@@ -62,7 +64,6 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
             backend=backend,
             serializer=serializer,
             argument_canonicalizer=argument_canonicalizer,
-            app_version="test",
         ):
             await sqp_root()
     assert _ran == set(range(_N))
@@ -77,7 +78,6 @@ async def test_sqlite_parallel_children_durable_after_root_interrupt(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
     ):
         total = await sqp_root()
 

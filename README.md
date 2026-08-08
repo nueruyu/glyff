@@ -17,7 +17,10 @@ class UserInputRequired(Exception):
     pass
 
 
-@glyff.engrave
+engrave = glyff.Domain("com.example.greeter", version="1").engrave
+
+
+@engrave
 async def ask_user(question: str, answer: str | None = None) -> str:
     """Ask the user a question. Pauses if no answer has been provided."""
     if answer is None:
@@ -26,7 +29,7 @@ async def ask_user(question: str, answer: str | None = None) -> str:
     return answer
 
 
-@glyff.engrave
+@engrave
 async def greet(name: str, answer: str | None = None) -> str:
     nickname = await ask_user(f"What should I call you, {name}?", answer=answer)
     return f"Hello, {nickname}!"
@@ -41,7 +44,6 @@ async def main(session_id: str, answer: str | None = None):
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=PydanticArgumentCanonicalizer(),
-        app_version="1",
     )
 
     try:
@@ -92,7 +94,7 @@ engraved function body commits — or rolls back — together with that executio
 `COMPLETED` status and result.
 
 ```python
-@glyff.engrave
+@engrave
 async def step() -> str:
     ctx = glyff.get_context()
     await ctx.metadata.set("trace_id", "abc-123")

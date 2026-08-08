@@ -4,6 +4,7 @@ import pytest
 
 from glyff import Execution, SessionId
 from glyff.store.staging import ExecutionStaging
+from glyff.store.utils import execution_id_to_path
 from glyff.testing import canonical_arguments, make_execution_id
 
 from glyff_sqlite import SQLiteExecutionRepository, SQLiteTransactionProvider
@@ -17,11 +18,9 @@ def _started() -> Execution:
 
 
 async def _committed(client: SQLiteClient) -> object:
-    return await client.read_committed(SESSION.value, "task#0:" + _digest())
-
-
-def _digest() -> str:
-    return make_execution_id("task").arguments_digest
+    return await client.read_committed(
+        SESSION.value, execution_id_to_path(make_execution_id("task"))
+    )
 
 
 def _client(database_path: Path) -> SQLiteClient:

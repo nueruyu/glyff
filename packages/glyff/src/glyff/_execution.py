@@ -1,3 +1,5 @@
+"""The aggregate a recorded execution is, and the values it holds."""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TypeAlias
 
+from ._identity import ArgumentsDigest, ExecutionId
 from .exceptions import InvalidExecutionError
 
 # A value in the JSON data model. Canonicalizing a call's arguments produces one of
@@ -26,47 +29,8 @@ class CanonicalArguments:
     data: bytes
 
     @property
-    def digest(self) -> str:
-        return hashlib.sha256(self.data).hexdigest()
-
-
-@dataclass(frozen=True)
-class SessionId:
-    """A non-empty, application-defined session identifier."""
-
-    value: str
-
-    def __post_init__(self) -> None:
-        if not self.value:
-            raise ValueError("A session id cannot be empty.")
-
-    def __str__(self) -> str:
-        return self.value
-
-
-@dataclass(frozen=True)
-class ExecutionId:
-    """
-    A unique, deterministic identifier for a task call.
-    It forms a hierarchy through the 'parent_id' attribute.
-    """
-
-    parent_id: ExecutionId | None
-    name: str
-    sequence: int
-    arguments_digest: str
-
-    def __str__(self) -> str:
-        """
-        Generates a human-readable representation for debugging purposes only.
-        This format is NOT guaranteed to be stable or suitable for use as a persistence key.
-        """
-        parent_info = (
-            f", parent='{self.parent_id.name}#{self.parent_id.sequence}'"
-            if self.parent_id
-            else ""
-        )
-        return f"ExecutionId(name='{self.name}', sequence={self.sequence}{parent_info})"
+    def digest(self) -> ArgumentsDigest:
+        return ArgumentsDigest(hashlib.sha256(self.data).hexdigest())
 
 
 class ExecutionStatus(Enum):

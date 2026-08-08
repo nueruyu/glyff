@@ -1,15 +1,9 @@
-import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterable
-from typing import Any, Callable
+from collections.abc import AsyncIterator, Iterable, Mapping
+from typing import Any
 
-from ._models import (
-    CanonicalValue,
-    Execution,
-    ExecutionId,
-    ExecutionStatus,
-    SessionId,
-)
+from ._execution import CanonicalValue, Execution, ExecutionStatus
+from ._identity import DomainId, ExecutionId, SessionId
 
 
 class Transaction(ABC):
@@ -95,9 +89,7 @@ class ArgumentCanonicalizer(ABC):
     """
 
     @abstractmethod
-    def canonicalize(
-        self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
-    ) -> CanonicalValue:
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalValue:
         """Normalizes a call's bound arguments into the JSON data model."""
         ...
 
@@ -114,11 +106,13 @@ class Backend(ABC):
     def transaction_provider(self) -> TransactionProvider: ...
 
     @abstractmethod
-    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
-        """Records ``app_version`` for a session that carries none, and returns
-        the version the session carries afterwards.
+    async def claim_domain(
+        self, session_id: SessionId, domain: DomainId, version: str
+    ) -> str:
+        """Records ``version`` for a domain this session carries none for, and
+        returns the version the pair carries afterwards.
 
         One atomic step, holding across processes, so two of them declaring
-        different versions cannot both find the session unclaimed.
+        different versions cannot both find the domain unclaimed.
         """
         ...

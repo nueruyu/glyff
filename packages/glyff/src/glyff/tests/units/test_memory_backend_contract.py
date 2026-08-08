@@ -2,14 +2,14 @@ import pytest
 
 from glyff.store import MemoryBackend
 from glyff.testing import (
-    AppVersionContract,
+    DomainVersionContract,
     BinarySafeBackendContract,
     ExecutionBackendContract,
 )
 
 
 class TestMemoryBackendContract(
-    ExecutionBackendContract, BinarySafeBackendContract, AppVersionContract
+    ExecutionBackendContract, BinarySafeBackendContract, DomainVersionContract
 ):
     @pytest.fixture
     def backend_factory(self):

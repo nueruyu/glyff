@@ -1,3 +1,6 @@
+from ._identity import DomainId
+
+
 class GlyffException(Exception):
     """
     Base class for all glyff-specific exceptions.
@@ -91,17 +94,28 @@ class StoreFormatVersionError(GlyffError):
     pass
 
 
-class AppVersionMismatchError(GlyffError):
+class DomainVersionMismatchError(GlyffError):
     """
-    Raised when a session's records were written under a different
-    ``app_version`` than the one now opening it.
+    Raised when a session's records for a domain were written under a different
+    version than the one now entering it.
 
     Recorded results are replayed into the current code, so a generation change
-    is refused instead of resumed. Migrate the session forward, pin it to the
-    code that started it, or start a new one.
+    is refused instead of resumed. Carries the versions so a caller can route
+    the session to an offline migration rather than parse the message.
     """
 
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        domain_id: DomainId,
+        recorded_version: str,
+        current_version: str,
+    ) -> None:
+        super().__init__(message)
+        self.domain_id = domain_id
+        self.recorded_version = recorded_version
+        self.current_version = current_version
 
 
 class MigrationError(GlyffError):

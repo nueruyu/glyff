@@ -1,15 +1,16 @@
 import asyncio
 from collections import defaultdict
 
-from ._models import ExecutionId
+from ._identity import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
 
-_SequenceKey = tuple[ExecutionId | None, str, str]
+_SequenceKey = tuple[ExecutionId | None, DomainId, ExecutionName, ArgumentsDigest]
 
 
 class Sequencer:
     """
     Generates sequential integers for ExecutionIds in a concurrency-safe manner.
-    Each (parent_id, name, arguments_digest) tuple has its own independent sequence.
+    Each (parent_id, domain, name, arguments_digest) tuple has its own independent
+    sequence.
     """
 
     def __init__(self):
@@ -18,10 +19,14 @@ class Sequencer:
         self._meta_lock = asyncio.Lock()
 
     async def next(
-        self, parent: ExecutionId | None, name: str, arguments_digest: str
+        self,
+        parent: ExecutionId | None,
+        domain: DomainId,
+        name: ExecutionName,
+        arguments_digest: ArgumentsDigest,
     ) -> int:
         """Returns the next sequence number for the given content scope."""
-        key = (parent, name, arguments_digest)
+        key = (parent, domain, name, arguments_digest)
 
         async with self._meta_lock:
             if key not in self._locks:

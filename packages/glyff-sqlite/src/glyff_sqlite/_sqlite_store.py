@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
 
 from glyff import (
+    DomainId,
     Execution,
     ExecutionId,
     ExecutionRepository,
@@ -143,12 +144,13 @@ class SQLiteBackend(MigratableBackend):
     are stored as JSON text columns for readability and queryability.
 
     One database holds any number of sessions: records are keyed by
-    ``(session_id, path)``, and each session's application version lives in a
-    row of its own.
+    ``(session_id, path)``, and each domain version a session has claimed lives
+    in a row of its own.
 
     ``table_prefix`` (default ``glyff``) names the three tables the store owns:
-    ``<prefix>_executions`` for the records, ``<prefix>_sessions`` for their
-    application versions, and ``<prefix>_meta`` for the store's format version.
+    ``<prefix>_executions`` for the records, ``<prefix>_session_domains`` for the
+    domain versions they were written under, and ``<prefix>_meta`` for the
+    store's format version.
     Set it to cohabit an application's database; a store written by an
     incompatible build is refused, and ``PRAGMA user_version`` is left to the
     application.
@@ -187,5 +189,7 @@ class SQLiteBackend(MigratableBackend):
     def session_migration(self) -> SessionMigration:
         return self._session_migration
 
-    async def claim_session(self, session_id: SessionId, app_version: str) -> str:
-        return await self._client.claim_session(session_id.value, app_version)
+    async def claim_domain(
+        self, session_id: SessionId, domain: DomainId, version: str
+    ) -> str:
+        return await self._client.claim_domain(session_id.value, domain, version)

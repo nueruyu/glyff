@@ -4,8 +4,10 @@ reused (not re-executed) on resume."""
 
 import pytest
 
-from glyff import ArgumentCanonicalizer, engrave
+from glyff import ArgumentCanonicalizer, Domain
 from glyff.tests.types import BackendFactory, make_session
+
+engrave = Domain("test", version="1").engrave
 
 _calls: list[str] = []
 _interrupt_root: bool = False

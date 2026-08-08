@@ -1,15 +1,14 @@
-import inspect
 import json
-from typing import Any, Callable
+from collections.abc import Mapping
+from typing import Any
 
+from .._execution import CanonicalValue
 from .._interfaces import ArgumentCanonicalizer, Serializer
-from .._models import CanonicalValue
-from ..exceptions import ArgumentCanonicalizationError, SerializationError
+from ..exceptions import SerializationError
 from .constants import DEFAULT_ENCODING
 from ._utils import (
     OpaquePolicy,
     RejectOpaque,
-    bind_arguments,
     stable_json_dumps,
     to_canonical,
     to_serializable,
@@ -69,14 +68,5 @@ class JsonArgumentCanonicalizer(ArgumentCanonicalizer):
         """
         return to_canonical(obj, self._opaque_policy, self.canonicalize_value)
 
-    def canonicalize(
-        self, func: Callable, sig: inspect.Signature, args: tuple, kwargs: dict
-    ) -> CanonicalValue:
-        try:
-            return self.canonicalize_value(bind_arguments(sig, args, kwargs))
-        except ArgumentCanonicalizationError as e:
-            func_name = getattr(func, "__qualname__", func.__name__)
-            raise ArgumentCanonicalizationError(
-                f"Arguments to '{func_name}' could not be canonicalized. "
-                f"Ensure all arguments have a value representation. Original error: {e}"
-            ) from e
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalValue:
+        return self.canonicalize_value(dict(arguments))

@@ -35,7 +35,10 @@ suite rather than hand-writing store semantics tests.
 
 | Area | Where |
 | --- | --- |
-| `engrave` decorator, call identity, sequencing | `packages/glyff/src/glyff/_engrave.py`, `_sequencer.py`, `_models.py` |
+| Domains, the `engrave` decorator, version claims | `packages/glyff/src/glyff/_domain.py`, `_domain_claims.py` |
+| Call identity and sequencing | `packages/glyff/src/glyff/_identity.py`, `_sequencer.py`, `store/utils.py` |
+| The execution aggregate | `packages/glyff/src/glyff/_execution.py` |
+| Reading an engraved Python function (signatures, hints, binding) | `packages/glyff/src/glyff/_function.py` |
 | Execution orchestration (cache check, transactions, event emission) | `packages/glyff/src/glyff/_executor.py` |
 | Session lifecycle and context | `packages/glyff/src/glyff/_session.py`, `_context.py` |
 | Events and handler dispatch | `packages/glyff/src/glyff/events.py`, `_event_system.py` |

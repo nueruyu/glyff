@@ -9,7 +9,7 @@ from glyff import (
     MetadataAccessor,
     SerializedValue,
     SessionId,
-    engrave,
+    Domain,
     get_context,
 )
 from glyff._context import Context, reset_context, set_context
@@ -20,6 +20,8 @@ from glyff.exceptions import NoCurrentExecutionError
 from glyff.serialization import JsonArgumentCanonicalizer, JsonSerializer
 from glyff.store import MemoryBackend
 from glyff.tests.types import BackendFactory, make_session
+
+engrave = Domain("test", version="1").engrave
 
 SESSION = SessionId("test")
 

@@ -1,16 +1,18 @@
 import hashlib
-import inspect
 import json
 
 from glyff import (
     ArgumentCanonicalizer,
-    CanonicalArguments,
-    ExecutionId,
+    ArgumentsDigest,
+    Domain,
+    DomainId,
+    Execution,
     SessionId,
-    engrave,
 )
-from glyff.serialization._utils import encode_canonical
 from glyff.tests.types import BackendFactory, make_session
+
+DOMAIN = DomainId("test")
+engrave = Domain(DOMAIN, version="1").engrave
 
 
 @engrave
@@ -18,19 +20,13 @@ async def greet(name: str, times: int = 1) -> str:
     return " ".join([f"hello {name}"] * times)
 
 
-def _expected_id(
-    argument_canonicalizer: ArgumentCanonicalizer, *args, **kwargs
-) -> ExecutionId:
-    sig = inspect.signature(greet)
-    encoded = CanonicalArguments(
-        encode_canonical(argument_canonicalizer.canonicalize(greet, sig, args, kwargs))
-    )
-    return ExecutionId(
-        parent_id=None,
-        name=greet.__qualname__,
-        sequence=0,
-        arguments_digest=encoded.digest,
-    )
+async def _only_execution(backend, session_id: str) -> Execution:
+    # Read back what was stored rather than rebuilding the key: deriving the
+    # expected id through the same adapter production uses would find the record
+    # a binding bug wrote just as happily as the right one.
+    executions = [e async for e in backend.repository.executions(SessionId(session_id))]
+    assert len(executions) == 1
+    return executions[0]
 
 
 async def test_recorded_args_are_the_digest_preimage(
@@ -44,13 +40,9 @@ async def test_recorded_args_are_the_digest_preimage(
     ):
         await greet("world")
 
-    execution = await backend.repository.get(
-        SessionId("recorded-args"), _expected_id(argument_canonicalizer, "world")
-    )
-    assert execution is not None
-    assert (
-        execution.id.arguments_digest
-        == hashlib.sha256(execution.arguments.data).hexdigest()
+    execution = await _only_execution(backend, "recorded-args")
+    assert execution.id.arguments_digest == ArgumentsDigest(
+        hashlib.sha256(execution.arguments.data).hexdigest()
     )
     # Defaults participate, so the recorded form shows what the call was keyed by.
     assert json.loads(execution.arguments.data) == {"name": "world", "times": 1}
@@ -67,12 +59,8 @@ async def test_recorded_args_keep_non_ascii_readable(
     ):
         await greet("世界")
 
-    execution = await backend.repository.get(
-        SessionId("recorded-args-unicode"), _expected_id(argument_canonicalizer, "世界")
-    )
-    assert execution is not None
-    assert (
-        execution.id.arguments_digest
-        == hashlib.sha256(execution.arguments.data).hexdigest()
+    execution = await _only_execution(backend, "recorded-args-unicode")
+    assert execution.id.arguments_digest == ArgumentsDigest(
+        hashlib.sha256(execution.arguments.data).hexdigest()
     )
     assert "世界".encode() in execution.arguments.data

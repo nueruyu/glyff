@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Generic, TypeVar
 
 from filelock import AsyncFileLock, FileLock
+from glyff import DomainId
 from glyff.exceptions import StoreFormatVersionError
 from glyff.serialization.constants import DEFAULT_ENCODING
 from glyff.store.aggregate_codec import execution_to_dict
@@ -34,7 +35,7 @@ _TEMP_PREFIX = ".glyff-write-"
 
 _FORMAT_VERSION_KEY = "format_version"
 _SESSIONS_KEY = "sessions"
-_APP_VERSION_KEY = "app_version"
+_DOMAIN_VERSIONS_KEY = "domain_versions"
 _EXECUTIONS_KEY = "executions"
 
 # Windows refuses to replace a file another handle has open; the reader releases
@@ -208,18 +209,21 @@ class FileClient:
             self._write_document_sync(document)
         return update.result
 
-    # -- Application version ---------------------------------------------------
+    # -- Domain versions -------------------------------------------------------
 
-    async def claim_session(self, session_id: str, app_version: str) -> str:
+    async def claim_domain(
+        self, session_id: str, domain: DomainId, version: str
+    ) -> str:
         def claim(document: dict[str, Any]) -> DocumentUpdate[str]:
             session = document.setdefault(_SESSIONS_KEY, {}).setdefault(session_id, {})
-            recorded = session.get(_APP_VERSION_KEY)
+            versions = session.setdefault(_DOMAIN_VERSIONS_KEY, {})
+            recorded = versions.get(domain.value)
             if recorded is not None:
                 # Rewriting a whole store to report an unchanged version would
                 # re-serialize and fsync every session in it.
                 return DocumentUpdate.unchanged(recorded)
 
-            session[_APP_VERSION_KEY] = app_version
-            return DocumentUpdate(app_version)
+            versions[domain.value] = version
+            return DocumentUpdate(version)
 
         return await self.update_document(claim)

@@ -1,7 +1,9 @@
-from glyff import ArgumentCanonicalizer, Session, SessionId, engrave
+from glyff import ArgumentCanonicalizer, Domain, Session, SessionId
 from glyff.serialization import JsonSerializer
 
 from glyff_file_store import JsonFileBackend
+
+engrave = Domain("test", version="1").engrave
 
 _json_runs: list[int] = []
 
@@ -26,7 +28,6 @@ async def test_completed_record_replays_across_instances(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
     ):
         first = await json_func(7)
     assert first == 14
@@ -39,7 +40,6 @@ async def test_completed_record_replays_across_instances(
         backend=reopened,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
     ):
         second = await json_func(7)
     assert second == 14
@@ -69,7 +69,6 @@ async def test_multiple_completed_records_replay_across_instances(
         backend=backend,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
     ):
         a = await multi_payload(0)
         b = await multi_payload(1000)
@@ -83,7 +82,6 @@ async def test_multiple_completed_records_replay_across_instances(
         backend=reopened,
         serializer=serializer,
         argument_canonicalizer=argument_canonicalizer,
-        app_version="test",
     ):
         a2 = await multi_payload(0)
         b2 = await multi_payload(1000)

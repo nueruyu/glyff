@@ -29,9 +29,12 @@ pip install glyff
 
 | Name                  | Description                                                     |
 | --------------------- | --------------------------------------------------------------- |
-| `engrave`             | Decorator that marks an async function for recording.           |
+| `Domain`              | Versioned ownership boundary; its `engrave` marks a function.   |
 | `Session`             | Async context manager that scopes a sequence of engraved calls. |
 | `ExecutionId`         | Identifier for a recorded function execution.                   |
+| `DomainId`            | A domain's persistent machine identifier.                       |
+| `ExecutionName`       | The recorded name of an engraved function.                      |
+| `ArgumentsDigest`     | Digest of a call's canonical arguments.                         |
 | `Execution`           | Aggregate Root for a recorded function execution.               |
 | `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`.                                   |
 | `SerializedValue`     | Serializer-neutral persisted value (results, metadata).         |
@@ -41,15 +44,26 @@ pip install glyff
 | `Transaction`         | Active transaction boundary.                                    |
 | `TransactionProvider` | Provider used by `TransactionScope`.                            |
 | `Serializer`          | Protocol for value serialization.                               |
-| `ArgumentCanonicalizer`   | Contract for normalizing call arguments into a canonical form.  |
+| `ArgumentCanonicalizer`   | Contract for normalizing bound call arguments into a canonical form. |
 | `CanonicalValue`      | The JSON data model value a canonicalizer returns.              |
 | `SessionId`           | The name a session's records are stored under.                  |
 
-`engrave` also takes an explicit identity —
-`@engrave(name="chat.reply", version=2)` — so recorded histories survive
-renames. *Planned:*
-[#40](https://github.com/nueruyu/glyff/issues/40); released versions derive the
-name from the function's `__qualname__`.
+Every engraved function belongs to a domain, which owns and versions its
+records:
+
+```python
+engrave = glyff.Domain("com.example.payments", version="3").engrave
+```
+
+The first call into a domain records that version for the session, and a later
+call under a different one raises `DomainVersionMismatchError` rather than
+migrating. See
+[migration](https://github.com/nueruyu/glyff/blob/main/docs/migration.md).
+
+*Planned:* an explicit identity — `@engrave(name="chat.reply", version=2)` — so
+recorded histories survive renames
+([#40](https://github.com/nueruyu/glyff/issues/40)); released versions derive
+the name from the function's `__qualname__`.
 
 ## Extending
 
@@ -58,7 +72,7 @@ name from the function's `__qualname__`.
   [`glyff-file-store`](https://pypi.org/project/glyff-file-store/) (debug).
 - For Pydantic-typed serialization, see [`glyff-pydantic`](https://pypi.org/project/glyff-pydantic/).
 - Custom backends provide an `ExecutionRepository`, a `TransactionProvider` and
-  `claim_session`, usually through a small backend bundle, and are verified
+  `claim_domain`, usually through a small backend bundle, and are verified
   against the shared contract suite in `glyff.testing` (*planned:*
   [#36](https://github.com/nueruyu/glyff/issues/36)). See
   [the backends doc](https://github.com/nueruyu/glyff/blob/main/docs/backends.md).

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from glyff import SessionId
+from glyff import DomainId, SessionId
 from glyff.exceptions import MigrationError
 from glyff.migration import (
     MigrationReport,
@@ -15,7 +15,7 @@ from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 from ._file_client import (
-    _APP_VERSION_KEY,
+    _DOMAIN_VERSIONS_KEY,
     _EXECUTIONS_KEY,
     _SESSIONS_KEY,
     DocumentUpdate,
@@ -37,7 +37,10 @@ class FileSessionMigration(SessionMigration):
             result = migrator.migrate(source)
 
             document.setdefault(_SESSIONS_KEY, {})[session_id.value] = {
-                _APP_VERSION_KEY: result.session.metadata.app_version,
+                _DOMAIN_VERSIONS_KEY: {
+                    domain.value: version
+                    for domain, version in result.session.metadata.domain_versions.items()
+                },
                 _EXECUTIONS_KEY: {
                     execution_id_to_path(execution.id): execution_to_dict(execution)
                     for execution in result.session.executions
@@ -49,16 +52,20 @@ class FileSessionMigration(SessionMigration):
 
     def _read(self, document: dict[str, Any], session_id: str) -> StoredSession:
         session = document.get(_SESSIONS_KEY, {}).get(session_id, {})
-        app_version = session.get(_APP_VERSION_KEY)
-        if app_version is None:
+        versions = session.get(_DOMAIN_VERSIONS_KEY) or {}
+        if not versions:
             raise MigrationError(
-                f"Session {session_id!r} carries no application version, so there "
-                "is no version to migrate it from."
+                f"Session {session_id!r} has claimed no domain, so there is no "
+                "version to migrate it from."
             )
 
         executions = session.get(_EXECUTIONS_KEY, {})
         return StoredSession(
-            metadata=SessionMetadata(app_version=app_version),
+            metadata=SessionMetadata(
+                domain_versions={
+                    DomainId(domain): version for domain, version in versions.items()
+                }
+            ),
             # Lexicographic path order is ancestor-first.
             executions=tuple(
                 execution_from_dict(path_to_execution_id(path), executions[path])

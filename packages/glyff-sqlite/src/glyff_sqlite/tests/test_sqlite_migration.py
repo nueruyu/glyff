@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from glyff import Execution, SessionId, TransactionScope
+from glyff import DomainId, Execution, SessionId, TransactionScope
 from glyff.migration import (
     MigrationReport,
     SessionMetadata,
@@ -22,21 +22,24 @@ from glyff.testing import canonical_arguments, make_execution_id
 from glyff_sqlite import SQLiteBackend
 
 SESSION = SessionId("migrate")
+DOMAIN = DomainId("test")
 
 
 class ReplacingMigrator(SessionMigrator):
-    def __init__(self, *executions: Execution, app_version: str = "v2") -> None:
+    def __init__(self, *executions: Execution, version: str = "v2") -> None:
         self._executions = executions
-        self._app_version = app_version
+        self._version = version
 
     def migrate(self, source: StoredSession) -> SessionMigrationResult:
+        versions = {DOMAIN: self._version}
         return SessionMigrationResult(
             session=StoredSession(
-                metadata=SessionMetadata(app_version=self._app_version),
+                metadata=SessionMetadata(domain_versions=versions),
                 executions=self._executions,
             ),
             report=MigrationReport(
-                from_version=source.metadata.app_version, to_version=self._app_version
+                from_domain_versions=source.metadata.domain_versions,
+                to_domain_versions=versions,
             ),
         )
 
@@ -61,7 +64,9 @@ class RefusingConnection:
 
 
 def started(name: str) -> Execution:
-    return Execution.start(make_execution_id(name), canonical_arguments())
+    return Execution.start(
+        make_execution_id(name, domain=DOMAIN), canonical_arguments()
+    )
 
 
 @pytest.fixture
@@ -70,7 +75,7 @@ def backend(tmp_path: Path) -> SQLiteBackend:
 
 
 async def seed(backend: SQLiteBackend, *names: str) -> list[Execution]:
-    await backend.claim_session(SESSION, "v1")
+    await backend.claim_domain(SESSION, DOMAIN, "v1")
     seeded = []
     for name in names:
         execution = started(name)
@@ -103,14 +108,14 @@ async def test_a_failed_execution_write_leaves_the_version_alone(
 
     monkeypatch.undo()
     assert [e.id for e in await stored(backend)] == [e.id for e in seeded]
-    assert await backend.claim_session(SESSION, "v-later") == "v1"
+    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
 
 
 async def test_a_failed_version_write_leaves_the_executions_alone(
     backend: SQLiteBackend, monkeypatch: pytest.MonkeyPatch
 ):
     seeded = await seed(backend, "before")
-    refuse(backend, monkeypatch, "glyff_sessions")
+    refuse(backend, monkeypatch, "glyff_session_domains")
 
     with pytest.raises(sqlite3.OperationalError):
         await backend.session_migration.run(
@@ -119,7 +124,7 @@ async def test_a_failed_version_write_leaves_the_executions_alone(
 
     monkeypatch.undo()
     assert [e.id for e in await stored(backend)] == [e.id for e in seeded]
-    assert await backend.claim_session(SESSION, "v-later") == "v1"
+    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
 
 
 async def test_a_failed_migration_leaves_nothing_behind_on_disk(
@@ -128,7 +133,7 @@ async def test_a_failed_migration_leaves_nothing_behind_on_disk(
     database = tmp_path / "migration.sqlite3"
     backend = SQLiteBackend(database)
     seeded = await seed(backend, "before")
-    refuse(backend, monkeypatch, "glyff_sessions")
+    refuse(backend, monkeypatch, "glyff_session_domains")
 
     with pytest.raises(sqlite3.OperationalError):
         await backend.session_migration.run(
@@ -140,4 +145,4 @@ async def test_a_failed_migration_leaves_nothing_behind_on_disk(
     assert [e.id async for e in reopened.repository.executions(SESSION)] == [
         e.id for e in seeded
     ]
-    assert await reopened.claim_session(SESSION, "v-later") == "v1"
+    assert await reopened.claim_domain(SESSION, DOMAIN, "v-later") == "v1"

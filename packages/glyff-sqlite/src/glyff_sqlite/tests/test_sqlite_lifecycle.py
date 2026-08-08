@@ -9,8 +9,11 @@ import pytest
 
 from glyff_sqlite._sqlite_client import SQLiteClient
 
-_INSERT = "INSERT INTO glyff_sessions (session_id, app_version) VALUES ('s', 'v1')"
-_SELECT = "SELECT app_version FROM glyff_sessions WHERE session_id = 's'"
+_INSERT = (
+    "INSERT INTO glyff_session_domains (session_id, domain_id, version) "
+    "VALUES ('s', 'd', 'v1')"
+)
+_SELECT = "SELECT version FROM glyff_session_domains WHERE session_id = 's'"
 
 
 @pytest.fixture

@@ -7,9 +7,8 @@ from ._interfaces import (
     Serializer,
     TransactionProvider,
 )
-from ._models import SessionId
+from ._identity import SessionId
 from ._sequencer import Sequencer
-from .exceptions import AppVersionMismatchError
 
 
 class Session:
@@ -19,11 +18,9 @@ class Session:
     It sets up the execution context. Execution records are persisted per
     event, so there is no session-wide transaction to commit at exit.
 
-    Entering a session atomically claims it for ``app_version``, the generation
-    of code its records belong to. Entering one whose records were written under
-    a different version raises
-    :class:`~glyff.exceptions.AppVersionMismatchError` instead of replaying them
-    against code that may no longer mean the same thing.
+    A session takes no version of its own. Generations belong to
+    :class:`~glyff.Domain`, and one is claimed or verified the first time this
+    session enters a function that belongs to it.
     """
 
     def __init__(
@@ -33,14 +30,12 @@ class Session:
         backend: Backend,
         serializer: Serializer,
         argument_canonicalizer: ArgumentCanonicalizer,
-        app_version: str,
         event_emitter: EventEmitter | None = None,
     ) -> None:
         self._id = id
         self._backend = backend
         self._argument_canonicalizer = argument_canonicalizer
         self._serializer = serializer
-        self._app_version = app_version
         self._event_emitter = event_emitter or EventEmitter([])
         self._context: Context | None = None
         self._context_token = None
@@ -60,19 +55,7 @@ class Session:
         """Returns the TransactionProvider used by this Session."""
         return self._backend.transaction_provider
 
-    async def _claim_app_version(self) -> None:
-        """Records this session's generation, or refuses to resume another's."""
-        recorded = await self._backend.claim_session(self._id, self._app_version)
-        if recorded != self._app_version:
-            raise AppVersionMismatchError(
-                f"Session {self._id} was written under app_version "
-                f"{recorded!r}, but this process runs {self._app_version!r}. "
-                "Migrate the session forward, pin it to the code that started "
-                "it, or start a new one."
-            )
-
     async def __aenter__(self) -> "Session":
-        await self._claim_app_version()
         self._context = Context(
             session_id=self._id,
             backend=self._backend,

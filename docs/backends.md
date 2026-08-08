@@ -14,7 +14,7 @@ one because its attributes happen to line up. It is:
 | --- | --- |
 | `ExecutionRepository` | Aggregate persistence: `get`, `save`, `executions`, `delete_many`. |
 | `TransactionProvider` | Owns transaction boundaries; `begin_transaction` returns a `Transaction` with `commit`/`rollback`. |
-| `claim_session(session_id, app_version)` | Atomically establishes the application version behind a session's records, and returns the recorded one. |
+| `claim_domain(session_id, domain, version)` | Atomically establishes the version a session's records for one domain were written under, and returns the recorded one. |
 
 - **Every repository operation names its `SessionId`.** A backend is scoped to a
   store, not a session, so which session a record belongs to is never implied by
@@ -31,15 +31,15 @@ one because its attributes happen to line up. It is:
   [migration](./migration.md) — need arguments and results, and because the path
   an id is rebuilt from is a backend's internal business. It is an async
   iterator so a backend that can stream does.
-- **`claim_session`** takes an unclaimed session's version or reports the one
-  already recorded, in one step that holds across processes. `Session` decides
-  what a difference means (see [migration](./migration.md)); glyff only records
-  the value.
+- **`claim_domain`** takes an unclaimed pair's version or reports the one already
+  recorded, in one step that holds across processes. What a difference means is
+  decided above the backend (see [migration](./migration.md)); glyff only records
+  the value. A session carries one version per domain it has entered, so the pair
+  — not the session — is what a version is claimed for.
 
-Entering a `Session` atomically claims it with a concrete application version
-before execution begins. Using an `ExecutionRepository` directly is the
-lower-level persistence API and bypasses the `Session` lifecycle, including that
-claim.
+The first call to a domain-bound function claims that domain before anything is
+resolved or replayed. Using an `ExecutionRepository` directly is the lower-level
+persistence API and bypasses that claim.
 
 The repository stores `Execution` aggregates whole — args, status, result, metadata —
 and core assumes nothing about the medium underneath. Tables, files, and key
@@ -79,7 +79,7 @@ Subclass `Backend` — or `MigratableBackend` if you offer migration — and exp
 the pieces above. Verify the
 implementation against the shared contract suite in `glyff.testing`: subclass
 the contract classes (`ExecutionBackendContract`, `DurableBackendContract`,
-`AppVersionContract`, and the text/binary-safety variants) and provide your
+`DomainVersionContract`, and the text/binary-safety variants) and provide your
 backend factory — the factory names a *store*, and the same name reopens it. The
 shipped backends run the same suite. It also exports the reference
 `PruningEventHandler` and the helpers `save_execution`, `serialized_value`, and

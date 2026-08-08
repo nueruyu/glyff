@@ -79,7 +79,7 @@ class TestConfigurableTablePrefix:
     def test_default_prefix_derives_both_table_names(self, tmp_path: Path):
         client = SQLiteClient(tmp_path / "default.sqlite3")
         assert client._table_name == "glyff_executions"
-        assert client._sessions_table_name == "glyff_sessions"
+        assert client._session_domains_table_name == "glyff_session_domains"
         assert client._meta_table_name == "glyff_meta"
 
     async def test_custom_prefix_round_trips(self, tmp_path: Path):
@@ -95,9 +95,9 @@ class TestConfigurableTablePrefix:
         rows = await client.read_sql(
             "SELECT name FROM sqlite_master "
             "WHERE type = 'table' AND name IN "
-            "('app_executions', 'app_meta', 'app_sessions') ORDER BY name"
+            "('app_executions', 'app_meta', 'app_session_domains') ORDER BY name"
         )
-        assert rows == [("app_executions",), ("app_meta",), ("app_sessions",)]
+        assert rows == [("app_executions",), ("app_meta",), ("app_session_domains",)]
 
         reloaded = await backend.repository.get(SessionId("custom"), execution_id)
         assert reloaded is not None

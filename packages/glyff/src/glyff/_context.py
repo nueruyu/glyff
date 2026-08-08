@@ -5,6 +5,9 @@ from collections.abc import Iterator, Sequence
 from typing import Any, overload
 
 from ._event_system import EventEmitter
+from ._domain_claims import DomainClaims
+from ._execution import SerializedValue
+from ._identity import ExecutionId, SessionId
 from ._interfaces import (
     ArgumentCanonicalizer,
     Backend,
@@ -13,7 +16,6 @@ from ._interfaces import (
     Transaction,
     TransactionProvider,
 )
-from ._models import ExecutionId, SerializedValue, SessionId
 from ._sequencer import Sequencer
 from .exceptions import ContextNotSetError, NoCurrentExecutionError
 
@@ -91,6 +93,9 @@ class Context:
         self._transaction_provider = backend.transaction_provider
         self._serializer = serializer
         self._sequencer = sequencer
+        # Derived from what the context already holds, so a session's claims can
+        # never be made against another session or another store.
+        self._domain_claims = DomainClaims(backend=backend, session_id=session_id)
         self._argument_canonicalizer = argument_canonicalizer
         self._event_emitter = event_emitter
         self._tracer = ExecutionTracer()
@@ -114,6 +119,10 @@ class Context:
     @property
     def sequencer(self) -> Sequencer:
         return self._sequencer
+
+    @property
+    def domain_claims(self) -> DomainClaims:
+        return self._domain_claims
 
     @property
     def argument_canonicalizer(self) -> ArgumentCanonicalizer:

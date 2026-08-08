@@ -2,10 +2,12 @@
 
 import pytest
 
-from glyff import ArgumentCanonicalizer, EventEmitter, SessionId, engrave
+from glyff import ArgumentCanonicalizer, Domain, EventEmitter, SessionId
 from glyff.store.utils import execution_id_to_path
 from glyff.testing import PruningEventHandler
 from glyff.tests.types import BackendFactory, make_session
+
+engrave = Domain("test", version="1").engrave
 
 _runs: list[str] = []
 

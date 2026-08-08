@@ -19,15 +19,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
-from .._models import (
+from .._execution import (
     CanonicalArguments,
     Execution,
-    ExecutionId,
     ExecutionStatus,
     Metadata,
     SerializedValue,
-    SessionId,
 )
+from .._identity import ExecutionId, SessionId
 
 __all__ = [
     "DeleteExecution",

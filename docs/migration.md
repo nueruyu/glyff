@@ -1,8 +1,8 @@
 # Migration & versioning
 
 "Migration" is three problems with different owners. glyff migrates its own
-store, defines the contract for your recorded payloads, and refuses a session
-whose application version has changed — it does not rewrite your in-flight
+store, defines the contract for your recorded payloads, and refuses a call into
+a domain whose version has changed — it does not rewrite your in-flight
 sessions.
 
 ## The three layers
@@ -15,8 +15,14 @@ sessions.
 
 The first and last are each guarded by a version, owned by a different party, at
 different scopes: glyff's `FORMAT_VERSION` covers the whole store and is stamped
-when it first writes one, while your `app_version` is recorded per session, by
-whichever process claims it first.
+when it first writes one, while a **domain's** version is recorded per session and
+per domain, by whichever process claims it first. A domain is the ownership
+boundary for a set of engraved functions (see
+[execution identity](./execution-identity.md#domains)), so a library on glyff
+owns the version its records carry and the migration between generations of it,
+without needing the application it runs inside to own either. Running that
+migration stays the application's: it decides when a session goes offline and
+which migrations the run carries.
 
 ### glyff's store schema
 
@@ -44,22 +50,52 @@ on top.
 
 ### In-flight sessions across code changes
 
-glyff does not auto-migrate a paused session onto new code. Instead:
+- **A session records the version of every domain it has entered.** Calling a
+  domain-bound function lazily claims or verifies that domain's version. There
+  are three outcomes, and only three:
 
-- **Every session records an application-supplied generation marker.** Entering
-  a session claims it for `Session(app_version=...)`, and entering one whose
-  records were written under a different value raises `AppVersionMismatchError`
-  instead of replaying them against code that may no longer mean the same thing.
-  The value is opaque to glyff: what counts as a new generation is yours to
-  decide.
+  | The session records | What happens |
+  | --- | --- |
+  | nothing for this domain | the current version is recorded, and the call proceeds |
+  | the same version | the call proceeds |
+  | a different version | `DomainVersionMismatchError`, with nothing changed |
+
+  The version is opaque to glyff: what counts as a new generation is the
+  domain owner's to decide. The error carries `domain_id`, `recorded_version`
+  and `current_version`, so a caller can route the session to migration without
+  reading the message.
+
+  Only a session that already records a version for the domain needs migrating —
+  which is not the same as one holding records in it, since a claim lands before
+  call identity is resolved.
+
+  The check moved from session entry to first use, which is what makes per-domain
+  versions possible: a session has no single version to check on the way in. So a
+  mismatch surfaces deeper than it used to, and other domains may already have
+  run. What has *not* happened is any write to the mismatched domain's records.
 - **Sessions you decide to carry across** are handled by a forward, offline
   batch: a `MigratableBackend`'s `session_migration` takes the session
   exclusively, hands its metadata and executions to a `SessionMigrator`, and
-  stores what comes back — the records and the version they were written under
+  stores what comes back — the records and the versions they were written under
   in one atomic step, so "migrated but still stamped for the old version" is not
   a state a store can be found in. Nothing is added to the resume path.
   Taking the session offline is yours: the exclusion lasts for the call, and
   glyff does not stop a worker on the old version from resuming afterwards.
+
+  So a mismatch is a *signal*, not a trigger: catch
+  `DomainVersionMismatchError`, take the session offline, plan the domain
+  migrations it needs, replace the session in one `SessionMigration.run()`, and
+  resume on the new version. Migrating one domain in the middle of a running
+  session would leave the rest of it recorded under versions that no longer mean
+  the same thing — which is exactly the state the atomic replacement exists to
+  prevent.
+
+  A `StoredSession` refuses to be built unless it records a version for every
+  domain named anywhere in its executions' identity chains, ancestors included.
+  Dropping a domain's version therefore means remapping the descendants that
+  still name it. The versions themselves are held to what a `Domain` could
+  declare — non-empty — so a migration cannot leave behind a version no running
+  process could ever match.
 
 What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),
@@ -68,7 +104,8 @@ therefore a transformation of recorded JSON, with no dead Python types to keep
 alive and no dependence on the canonicalizer that wrote the record.
 
 > **Planned** — the `SessionMigrator` implementation, including migration
-> chains, identity remapping, and sequence compaction
+> chains, identity remapping, sequence compaction, and how a library publishes a
+> migration for its own domain
 > ([#39](https://github.com/nueruyu/glyff/issues/39)). Until then, reproducing
 > glyff's canonical encoding yourself is not a supported surface, so pin paused
 > sessions to the code that started them.
@@ -76,8 +113,8 @@ alive and no dependence on the canonicalizer that wrote the record.
 ## Running without migration
 
 Paused sessions run to completion on the code version that started them: route
-resumes to a worker pinned to the old version and start new sessions on the new
-one. Combined with
+resumes to a worker pinned to the old domain versions and start new sessions on
+the new ones. Combined with
 [coarse-grained boundaries](./execution-identity.md#choosing-engrave-boundaries),
 most deployments need nothing else. This is a supported mode, not a workaround.
 

@@ -1,7 +1,7 @@
 import pytest
 
 from glyff.testing import (
-    AppVersionContract,
+    DomainVersionContract,
     DurableBackendContract,
     ExecutionBackendContract,
     SessionMigrationContract,
@@ -14,7 +14,7 @@ class TestJsonFileBackendContract(
     ExecutionBackendContract,
     DurableBackendContract,
     TextBackendContract,
-    AppVersionContract,
+    DomainVersionContract,
     SessionMigrationContract,
 ):
     @pytest.fixture
