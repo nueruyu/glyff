@@ -24,24 +24,28 @@ class ArgumentCanonicalizerContract:
     def canonicalizer(self) -> ArgumentCanonicalizer:
         raise NotImplementedError
 
-    def test_a_canonical_form_is_in_the_json_data_model(
+    def test_a_canonical_form_encodes_into_a_key(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # The encoder is what turns the form into an execution's key, so a form
-        # it cannot take is not a canonical form.
-        encode_canonical(canonicalizer.canonicalize({"a": 1, "b": "two", "c": None}))
+        form = canonicalizer.canonicalize({"a": 1, "b": "two", "c": None})
 
-    def test_every_bound_name_reaches_the_canonical_form(
+        assert encode_canonical(form)
+
+    def test_the_bound_name_is_part_of_the_form(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # Same values, different names: a canonicalizer that carried only the
-        # values would key `f(a=1)` and `f(b=1)` the same way.
+        # One value, two names: a canonicalizer carrying only the values would
+        # key `f(a=1)` and `f(b=1)` the same way.
         assert canonicalizer.canonicalize({"a": 1}) != canonicalizer.canonicalize(
             {"b": 1}
         )
-        assert canonicalizer.canonicalize(
+
+    def test_an_extra_bound_argument_changes_the_form(
+        self, canonicalizer: ArgumentCanonicalizer
+    ):
+        assert canonicalizer.canonicalize({"a": 1}) != canonicalizer.canonicalize(
             {"a": 1, "b": 2}
-        ) != canonicalizer.canonicalize({"a": 1})
+        )
 
     def test_the_same_arguments_canonicalize_the_same_way(
         self, canonicalizer: ArgumentCanonicalizer
@@ -57,5 +61,9 @@ class ArgumentCanonicalizerContract:
             {"a": 2}
         )
 
-    def test_no_arguments_canonicalizes(self, canonicalizer: ArgumentCanonicalizer):
-        encode_canonical(canonicalizer.canonicalize({}))
+    def test_no_arguments_still_encodes_into_a_key(
+        self, canonicalizer: ArgumentCanonicalizer
+    ):
+        form = canonicalizer.canonicalize({})
+
+        assert encode_canonical(form)

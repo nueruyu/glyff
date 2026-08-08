@@ -67,6 +67,16 @@ class Interrupted(Exception):
 
 
 # -- Engraved bodies ---------------------------------------------------------
+#
+# Each returns what its name says, so a test's assertion can be read without
+# recomputing anything: what these contracts are about is which calls ran, which
+# records remain, and what came back — never arithmetic.
+
+# Enough branches to interleave; the yield below is what forces it, not the count.
+CONCURRENT_BRANCHES = 4
+
+# More than one, so a store that could only carry a single record is caught.
+RECORDS_PER_SESSION = 3
 
 
 @engrave
@@ -79,9 +89,13 @@ async def doubled(x: int) -> int:
 
 @engrave
 async def doubled_plus_one(x: int) -> int:
-    value = await doubled(x)
-    _state.calls.append(f"plus_one({value})")
-    return value + 1
+    return await doubled(x) + 1
+
+
+@engrave
+async def steady() -> str:
+    _state.calls.append("steady")
+    return "steady"
 
 
 @engrave
@@ -90,65 +104,86 @@ async def pausing() -> str:
     if _state.interrupt:
         raise Interrupted()
     _state.calls.append("pausing:end")
-    return "B"
-
-
-@engrave
-async def steady() -> str:
-    _state.calls.append("steady")
-    return "A"
+    return "pausing"
 
 
 @engrave
 async def two_steps() -> str:
-    return f"{await steady()}:{await pausing()}"
+    return f"{await steady()}/{await pausing()}"
 
 
 @engrave
-async def slow_child(index: int) -> int:
+async def branch(index: int) -> int:
     # Yield so siblings genuinely interleave their START/COMPLETE transactions
     # on the shared backend.
     await asyncio.sleep(0)
-    _state.calls.append(f"child({index})")
-    return index * 10
+    _state.calls.append(f"branch({index})")
+    return index
 
 
 @engrave
-async def fan_out(width: int) -> int:
-    total = sum(await asyncio.gather(*(slow_child(i) for i in range(width))))
+async def fan_out() -> list[int]:
+    branches = list(
+        await asyncio.gather(*(branch(i) for i in range(CONCURRENT_BRANCHES)))
+    )
     if _state.interrupt:
         raise Interrupted()
-    return total
+    return branches
 
 
 @engrave
-async def payload(seed: int) -> list[int]:
-    _state.calls.append(f"payload({seed})")
-    return [seed + offset for offset in range(500)]
+async def only_child() -> str:
+    _state.calls.append("only_child")
+    return "only_child"
 
 
 @engrave
-async def one_branch_completes() -> str:
-    # The first branch finishes, and has a descendant to prune; the second stops.
-    return f"{await doubled_plus_one(5)}:{await pausing()}"
+async def parent_of_one() -> str:
+    value = await only_child()
+    if _state.interrupt:
+        raise Interrupted()
+    return value
 
 
 @engrave
-async def leaf(n: int) -> int:
-    _state.calls.append(f"leaf({n})")
-    return n
+async def record(index: int) -> dict[str, int]:
+    _state.calls.append(f"record({index})")
+    # Structured, not a scalar: a store that flattened a result would still pass
+    # with a bare number.
+    return {"index": index}
 
 
 @engrave
-async def middle(base: int) -> int:
-    _state.calls.append(f"middle({base})")
-    return await leaf(base) + await leaf(base + 1)
+async def grandchild(side: str) -> str:
+    _state.calls.append(f"grandchild({side})")
+    return side
 
 
 @engrave
-async def tree() -> int:
-    _state.calls.append("tree")
-    return await middle(0) + await middle(10)
+async def child(side: str) -> str:
+    _state.calls.append(f"child({side})")
+    await grandchild(side)
+    return side
+
+
+@engrave
+async def three_deep() -> str:
+    _state.calls.append("three_deep")
+    await child("left")
+    await child("right")
+    return "three_deep"
+
+
+@engrave
+async def finishing_branch() -> str:
+    _state.calls.append("finishing_branch")
+    await grandchild("finishing")
+    return "finished"
+
+
+@engrave
+async def one_branch_finishes_then_another_pauses() -> str:
+    return f"{await finishing_branch()}/{await pausing()}"
 
 
 # -- The contracts -----------------------------------------------------------
@@ -313,7 +348,7 @@ class ResumeContract(_SessionScenario):
         async with make_session(
             "scenario-resume", backend, argument_canonicalizer, serializer
         ):
-            assert await two_steps() == "A:B"
+            assert await two_steps() == "steady/pausing"
 
         assert "steady" not in _state.calls
         assert "pausing:end" in _state.calls
@@ -332,15 +367,15 @@ class ResumeContract(_SessionScenario):
             async with make_session(
                 "scenario-per-event", backend, argument_canonicalizer, serializer
             ):
-                await fan_out(1)
-        assert _state.calls == ["child(0)"]
+                await parent_of_one()
+        assert _state.calls == ["only_child"]
 
         _state.calls.clear()
         _state.interrupt = False
         async with make_session(
             "scenario-per-event", backend, argument_canonicalizer, serializer
         ):
-            assert await fan_out(1) == 0
+            assert await parent_of_one() == "only_child"
         assert _state.calls == []
 
     async def test_a_record_is_replayed_by_a_handle_that_did_not_write_it(
@@ -357,7 +392,7 @@ class ResumeContract(_SessionScenario):
             argument_canonicalizer,
             serializer,
         ):
-            written = [await payload(seed) for seed in (0, 1000, 99999)]
+            written = [await record(i) for i in range(RECORDS_PER_SESSION)]
         _state.calls.clear()
 
         async with make_session(
@@ -366,14 +401,12 @@ class ResumeContract(_SessionScenario):
             argument_canonicalizer,
             serializer,
         ):
-            assert [await payload(seed) for seed in (0, 1000, 99999)] == written
+            assert [await record(i) for i in range(RECORDS_PER_SESSION)] == written
         assert _state.calls == []
 
 
 class ParallelContract(_SessionScenario):
     """Concurrent branches, which share a backend but not a transaction."""
-
-    WIDTH = 12
 
     async def test_parallel_calls_all_complete(
         self,
@@ -385,10 +418,12 @@ class ParallelContract(_SessionScenario):
         async with make_session(
             "scenario-parallel", backend, argument_canonicalizer, serializer
         ):
-            total = await fan_out(self.WIDTH)
+            assert await fan_out() == list(range(CONCURRENT_BRANCHES))
 
-        assert total == sum(i * 10 for i in range(self.WIDTH))
-        assert len(_state.calls) == self.WIDTH
+        # Sorted, not a set: every branch ran, and each of them exactly once.
+        assert sorted(_state.calls) == [
+            f"branch({index})" for index in range(CONCURRENT_BRANCHES)
+        ]
 
     async def test_every_parallel_child_is_durable_after_the_root_is_interrupted(
         self,
@@ -404,8 +439,10 @@ class ParallelContract(_SessionScenario):
             async with make_session(
                 "scenario-parallel-durable", backend, argument_canonicalizer, serializer
             ):
-                await fan_out(self.WIDTH)
-        assert len(_state.calls) == self.WIDTH
+                await fan_out()
+        assert sorted(_state.calls) == [
+            f"branch({index})" for index in range(CONCURRENT_BRANCHES)
+        ]
 
         _state.calls.clear()
         _state.interrupt = False
@@ -417,9 +454,10 @@ class ParallelContract(_SessionScenario):
             argument_canonicalizer,
             serializer,
         ):
-            total = await fan_out(self.WIDTH)
+            assert await fan_out() == list(range(CONCURRENT_BRANCHES))
 
-        assert total == sum(i * 10 for i in range(self.WIDTH))
+        # Not one of them ran again: every branch came back from a record this
+        # handle did not write.
         assert _state.calls == []
 
 
@@ -451,7 +489,7 @@ class PruningContract(_SessionScenario):
             serializer,
             event_emitter=self._pruning(backend),
         ):
-            assert await tree() == (0 + 1) + (10 + 11)
+            await three_deep()
 
         remaining = await self._executions(backend, "scenario-prune")
         assert remaining
@@ -467,7 +505,7 @@ class PruningContract(_SessionScenario):
         async with make_session(
             "scenario-noprune", backend, argument_canonicalizer, serializer
         ):
-            await tree()
+            await three_deep()
 
         remaining = await self._executions(backend, "scenario-noprune")
         assert any(execution.id.parent_id is not None for execution in remaining)
@@ -486,7 +524,7 @@ class PruningContract(_SessionScenario):
             serializer,
             event_emitter=self._pruning(backend),
         ):
-            first = await tree()
+            await three_deep()
 
         _state.calls.clear()
         async with make_session(
@@ -495,7 +533,7 @@ class PruningContract(_SessionScenario):
             argument_canonicalizer,
             serializer,
         ):
-            assert await tree() == first
+            assert await three_deep() == "three_deep"
         assert _state.calls == []
 
     async def test_a_branch_is_pruned_while_the_session_is_still_running(
@@ -517,14 +555,18 @@ class PruningContract(_SessionScenario):
                 serializer,
                 event_emitter=self._pruning(backend),
             ):
-                await one_branch_completes()
+                await one_branch_finishes_then_another_pauses()
 
         names = {
             execution.id.name.value
             for execution in await self._executions(backend, "scenario-prune-mid")
         }
-        assert {"one_branch_completes", "doubled_plus_one", "pausing"} <= names
-        assert "doubled" not in names
+        assert {
+            "one_branch_finishes_then_another_pauses",
+            "finishing_branch",
+            "pausing",
+        } <= names
+        assert "grandchild" not in names
 
         _state.calls.clear()
         _state.interrupt = False
@@ -536,7 +578,7 @@ class PruningContract(_SessionScenario):
             serializer,
             event_emitter=self._pruning(reopened),
         ):
-            assert await one_branch_completes() == "11:B"
+            assert await one_branch_finishes_then_another_pauses() == "finished/pausing"
 
         assert _state.calls == ["pausing:start", "pausing:end"]
         remaining = await self._executions(reopened, "scenario-prune-mid")
