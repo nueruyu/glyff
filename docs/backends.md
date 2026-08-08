@@ -89,23 +89,23 @@ run the same suite.
 | `TextBackendContract` / `BinarySafeBackendContract` | Whichever the store promises about the bytes it is handed. |
 | `SessionMigrationContract` | `session_migration`, for a `MigratableBackend`. |
 | `EngravedCallContract`, `ResumeContract`, `ParallelContract`, `PruningContract` | Whole engraved calls through a `Session`. |
+| `ArgumentCanonicalizerContract` | An `ArgumentCanonicalizer`, for the other extension point. |
+| `SerializerContract` | A `Serializer`, likewise. |
 
-The last four are worth running even once the repository contract passes: a
-backend can satisfy every operation in isolation and still lose a sibling's
-staged writes under `asyncio.gather`, or hand a reopened store records the first
-handle never flushed.
+The session-level four are worth running even once the repository contract
+passes: a backend can satisfy every operation in isolation and still lose a
+sibling's staged writes under `asyncio.gather`, or hand a reopened store records
+the first handle never flushed.
+
+The last two are deliberately thin, because their ABCs are. How an implementation
+represents a value it has no representation for, and what its bytes look like, is
+not part of implementing the interface, so it is proved beside each
+implementation instead.
 
 `glyff.testing` also exports the reference `PruningEventHandler`, `make_session`,
 and the helpers `save_execution`, `serialized_value`, and the pair
 `make_execution_id` / `canonical_arguments`, which build an execution that
 satisfies the `arguments_digest` invariant.
-
-`ArgumentCanonicalizerContract` and `SerializerContract` cover the other two
-extension points, and are deliberately thin: they check only what those ABCs
-promise — an encodable canonical form, determinism, a value that round-trips.
-How an implementation handles a value it has no representation for, and what its
-bytes look like, is its own business and is not a requirement of implementing the
-interface.
 
 `glyff.store.staging` is there if you want it. A backend holds one
 `ExecutionStaging`; a transaction calls `begin()` for its own `ExecutionStage`,

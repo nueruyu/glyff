@@ -1,11 +1,8 @@
 """pytest conformance contracts for what a store must make a session do.
 
-Re-exported from :mod:`glyff.testing`, the public entry point.
-
-Where :mod:`._backend_contract` drives a `Backend` directly, these drive whole
-engraved calls through `Session`, which is where a backend that satisfies every
-operation in isolation can still come apart. `docs/backends.md` says what those
-failures look like.
+Re-exported from :mod:`glyff.testing`. Where :mod:`._backend_contract` drives a
+`Backend` directly, these drive whole engraved calls through `Session`; see
+`docs/backends.md` for why both are worth running.
 """
 
 from __future__ import annotations
@@ -340,8 +337,8 @@ class ResumeContract(_SessionScenario):
         argument_canonicalizer: ArgumentCanonicalizer,
         serializer: Serializer,
     ):
-        # A durable store's records outlive the object that wrote them; an
-        # ephemeral one hands back the same store, so both keep the promise.
+        # An ephemeral store hands back the same object, so it keeps this
+        # promise too.
         async with make_session(
             "scenario-reopen",
             backend_factory("scenario-reopen"),
@@ -387,8 +384,8 @@ class ParallelContract(_SessionScenario):
         argument_canonicalizer: ArgumentCanonicalizer,
         serializer: Serializer,
     ):
-        # Each branch commits in its own transaction, so concurrent siblings must
-        # neither flush nor discard each other's staged writes.
+        # Each branch commits in its own transaction, so this forces siblings to
+        # interfere if the backend lets them.
         backend = backend_factory("scenario-parallel-durable")
         _state.interrupt = True
         with pytest.raises(Interrupted):
@@ -464,8 +461,6 @@ class PruningContract(_SessionScenario):
         argument_canonicalizer: ArgumentCanonicalizer,
         serializer: Serializer,
     ):
-        # The completed root short-circuits, so the deleted descendants are never
-        # needed — which is what makes deleting them safe.
         backend = backend_factory("scenario-prune-replay")
         async with make_session(
             "scenario-prune-replay",

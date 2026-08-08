@@ -2,21 +2,14 @@
 
 A supported surface: applications on glyff — and third parties implementing a
 :class:`~glyff.Backend`, a :class:`~glyff.Serializer` or an
-:class:`~glyff.ArgumentCanonicalizer` — can use it in their own test suites, as
-the workspace packages' tests do. An implementation checks it honours the glyff
-contract by subclassing the relevant bases and supplying a factory fixture::
+:class:`~glyff.ArgumentCanonicalizer` — can use it in their own suites, as the
+workspace packages do. Subclass the contracts that apply and supply a factory::
 
     import pytest
 
-    from glyff.testing import (
-        DurableBackendContract,
-        EngravedCallContract,
-        ExecutionBackendContract,
-    )
+    from glyff.testing import EngravedCallContract, ExecutionBackendContract
 
-    class TestMyBackend(
-        ExecutionBackendContract, DurableBackendContract, EngravedCallContract
-    ):
+    class TestMyBackend(ExecutionBackendContract, EngravedCallContract):
         @pytest.fixture
         def backend_factory(self):
             def factory(store: str):
@@ -24,13 +17,8 @@ contract by subclassing the relevant bases and supplying a factory fixture::
 
             return factory
 
-The factory names a *store*, and the same name reopens it. The session-level
-contracts (`EngravedCallContract` and its siblings) drive whole engraved calls
-rather than the repository, so they catch what only shows up once a `Session` is
-composing the pieces.
-
-The contracts are pytest test classes, so importing this module needs pytest
-(install ``glyff[testing]``).
+`docs/backends.md` lists every contract and what it drives. Importing this module
+needs pytest (install ``glyff[testing]``).
 """
 
 from ._backend_contract import (

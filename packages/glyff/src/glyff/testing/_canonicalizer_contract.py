@@ -1,19 +1,9 @@
 """pytest conformance contract for :class:`~glyff.ArgumentCanonicalizer`.
 
-Re-exported from :mod:`glyff.testing`, the public entry point.
-
-Only what the interface itself promises — a bound mapping in, an encodable
-canonical value out, and the determinism that being a key requires. Two things
-are deliberately absent because the ABC does not ask for them:
-
-- the *taxonomy*, which Python value becomes which canonical form. Implementations
-  disagree there on purpose: the shipped JSON canonicalizer rejects a ``datetime``
-  as opaque where the Pydantic one represents it by value.
-- the ``OpaquePolicy`` mechanism. That is how the shipped family handles a value
-  it has no representation for; another canonicalizer may handle one some other
-  way, or never meet one.
-
-Both are proved beside the implementations that promise them.
+Re-exported from :mod:`glyff.testing`. A bound mapping in, an encodable canonical
+value out, and the determinism a key needs. Which Python value becomes which
+canonical form, and what happens to one with no representation, are each
+implementation's own.
 """
 
 from __future__ import annotations

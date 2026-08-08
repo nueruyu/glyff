@@ -74,12 +74,9 @@ the name from the function's `__qualname__`.
 - Custom backends provide an `ExecutionRepository`, a `TransactionProvider` and
   `claim_domain`, usually through a small backend bundle. See
   [the backends doc](https://github.com/nueruyu/glyff/blob/main/docs/backends.md).
-- `glyff.testing` carries a conformance suite for each extension point — the
-  backend, the serializer, and the argument canonicalizer — plus contracts that
-  drive whole engraved calls through a `Session`. Each checks what its interface
-  promises and no more. Subclass the ones that apply and supply a factory; the
-  shipped packages run the same suites (*planned:*
-  [#36](https://github.com/nueruyu/glyff/issues/36)).
+- `glyff.testing` carries a conformance suite for each extension point, listed in
+  [the backends doc](https://github.com/nueruyu/glyff/blob/main/docs/backends.md#writing-your-own)
+  (*planned:* [#36](https://github.com/nueruyu/glyff/issues/36)).
 
 ## Status
 

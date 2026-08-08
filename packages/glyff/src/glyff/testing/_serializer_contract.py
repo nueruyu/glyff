@@ -1,11 +1,7 @@
 """pytest conformance contract for :class:`~glyff.Serializer`.
 
-Re-exported from :mod:`glyff.testing`, the public entry point.
-
-Only what the interface promises: a value declared as a type comes back as that
-value. What the bytes in between look like — whether they are stable across
-mapping orders, which values are refused and how — is each implementation's own,
-and is proved beside it.
+Re-exported from :mod:`glyff.testing`. A value declared as a type comes back as
+that value. What the bytes in between look like is each implementation's own.
 """
 
 from __future__ import annotations
