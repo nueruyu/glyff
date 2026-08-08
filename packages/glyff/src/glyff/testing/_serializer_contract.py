@@ -48,12 +48,12 @@ class SerializerContract:
         self, serializer_factory: SerializerFactory
     ):
         # A record outlives the session that wrote it, and a session that resumes
-        # a paused run is handed a serializer it built itself.
+        # a paused run is handed a serializer it built itself — after the record
+        # was written, which is the order these two are built in.
         value = {"key": "value", "items": [1, "a"]}
 
-        assert (
-            await serializer_factory().deserialize(
-                await serializer_factory().serialize(value, dict), dict
-            )
-            == value
-        )
+        writer = serializer_factory()
+        data = await writer.serialize(value, dict)
+
+        reader = serializer_factory()
+        assert await reader.deserialize(data, dict) == value
