@@ -1,8 +1,19 @@
-"""What glyff reads off an engraved function, and what it refuses to read."""
+"""What glyff reads off an engraved function, and what it refuses to read.
+
+Under ``from __future__ import annotations``, so every hint reaches
+``from_callable`` as a string; ``test_function_definition_no_future.py`` covers
+the representation where they do not.
+"""
+
+from __future__ import annotations
 
 import pytest
 from glyff._function import FunctionDefinition
 from glyff.exceptions import MissingTypeHintError, TypeHintResolutionError
+
+
+class _ModuleScoped:
+    pass
 
 
 async def greet(name: str, greeting: str = "Hello") -> str:
@@ -84,7 +95,37 @@ def test_a_variadic_parameter_needs_no_hint():
 
 
 def test_a_hint_that_cannot_be_resolved_is_refused():
-    async def task(a: "NoSuchType") -> None: ...  # type: ignore[name-defined]  # noqa: F821
+    async def task(a: NoSuchType) -> None: ...  # type: ignore[name-defined]  # noqa: F821
 
     with pytest.raises(TypeHintResolutionError):
         FunctionDefinition.from_callable(task)
+
+
+def test_an_unannotated_self_is_not_a_missing_hint():
+    class Service:
+        async def method(self, arg: int) -> str: ...
+
+    assert FunctionDefinition.from_callable(Service.method).return_type is str
+
+
+def test_an_unannotated_cls_is_not_a_missing_hint():
+    class Service:
+        @classmethod
+        async def method(cls, arg: int) -> str: ...
+
+    assert FunctionDefinition.from_callable(Service.method).return_type is str
+
+
+def test_a_missing_hint_is_reported_before_an_unresolvable_one():
+    # The absent hint is the one the author can act on, and only the unevaluated
+    # pass can see it: resolution fails on the whole annotation set at once.
+    async def task(a) -> NoSuchType: ...  # type: ignore[name-defined]  # noqa: F821
+
+    with pytest.raises(MissingTypeHintError, match="a"):
+        FunctionDefinition.from_callable(task)
+
+
+def test_a_hint_naming_a_module_level_type_resolves():
+    async def task() -> _ModuleScoped: ...
+
+    assert FunctionDefinition.from_callable(task).return_type is _ModuleScoped
