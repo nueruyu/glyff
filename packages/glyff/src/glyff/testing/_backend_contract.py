@@ -356,6 +356,29 @@ class ExecutionBackendContract:
 
         assert await backend.repository.get(SESSION, execution_id) is None
 
+    async def test_delete_many_leaves_a_sibling_under_the_same_parent(
+        self, backend_factory: BackendFactory
+    ):
+        # Pruning deletes one branch at a time, so a key prefix that reaches too
+        # far would take a sibling's completed record with it.
+        backend = backend_factory("delete-sibling")
+        root = make_execution_id("root")
+        left = make_execution_id("branch", parent=root, sequence=0)
+        right = make_execution_id("branch", parent=root, sequence=1)
+        under_left = make_execution_id("leaf", parent=left)
+        under_right = make_execution_id("leaf", parent=right)
+
+        for execution_id in (root, left, right, under_left, under_right):
+            await save_execution(
+                backend, Execution.start(execution_id, canonical_arguments())
+            )
+
+        async with TransactionScope(backend.transaction_provider):
+            await backend.repository.delete_many(SESSION, [under_left])
+
+        assert await backend.repository.get(SESSION, under_left) is None
+        assert await backend.repository.get(SESSION, under_right) is not None
+
     async def test_delete_many_ignores_missing_ids(
         self, backend_factory: BackendFactory
     ):
