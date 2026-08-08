@@ -3,7 +3,11 @@ import pytest
 from glyff.testing import (
     DomainVersionContract,
     DurableBackendContract,
+    EngravedCallContract,
     ExecutionBackendContract,
+    ParallelContract,
+    PruningContract,
+    ResumeContract,
     SessionMigrationContract,
     TextBackendContract,
 )
@@ -16,6 +20,10 @@ class TestJsonFileBackendContract(
     TextBackendContract,
     DomainVersionContract,
     SessionMigrationContract,
+    EngravedCallContract,
+    ResumeContract,
+    ParallelContract,
+    PruningContract,
 ):
     @pytest.fixture
     def backend_factory(self, tmp_path):

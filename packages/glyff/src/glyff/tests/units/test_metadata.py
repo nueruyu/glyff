@@ -19,7 +19,7 @@ from glyff._sequencer import Sequencer
 from glyff.exceptions import NoCurrentExecutionError
 from glyff.serialization import JsonArgumentCanonicalizer, JsonSerializer
 from glyff.store import MemoryBackend
-from glyff.tests.types import BackendFactory, make_session
+from glyff.testing import BackendFactory, make_session
 
 engrave = Domain("test", version="1").engrave
 

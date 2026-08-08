@@ -36,19 +36,33 @@ from ._backend_contract import (
 from ._canonicalizer_contract import ArgumentCanonicalizerContract
 from ._migration_contract import SessionMigrationContract
 from ._pruning import PruningEventHandler
+from ._scenarios import (
+    BackendFactory,
+    EngravedCallContract,
+    ParallelContract,
+    PruningContract,
+    ResumeContract,
+    make_session,
+)
 from ._serializer_contract import SerializerContract
 
 __all__ = [
     "ArgumentCanonicalizerContract",
+    "BackendFactory",
     "DomainVersionContract",
     "BinarySafeBackendContract",
     "DurableBackendContract",
     "ExecutionBackendContract",
     "TextBackendContract",
+    "EngravedCallContract",
+    "ParallelContract",
+    "PruningContract",
     "PruningEventHandler",
+    "ResumeContract",
     "SerializerContract",
     "SessionMigrationContract",
     "canonical_arguments",
+    "make_session",
     "make_execution_id",
     "save_execution",
     "serialized_value",
