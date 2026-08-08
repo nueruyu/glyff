@@ -66,6 +66,17 @@ async def test_a_value_pydantic_cannot_carry_is_refused(serializer: Serializer):
         await serializer.serialize(object(), object)
 
 
+async def test_the_encoding_options_reach_the_output():
+    # `serialize` is overridden here but the encoding is the parent's, so this is
+    # the wiring: a rewrite that stopped going through `_encode` would keep the
+    # JSON serializer's own tests green.
+    serializer = PydanticSerializer(indent=2, ensure_ascii=True)
+
+    assert await serializer.serialize({"message": "こんにちは"}, dict) == (
+        b'{\n  "message": "\\u3053\\u3093\\u306b\\u3061\\u306f"\n}'
+    )
+
+
 # -- Models as identity -------------------------------------------------------
 
 

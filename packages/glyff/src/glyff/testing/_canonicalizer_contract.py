@@ -34,7 +34,11 @@ class ArgumentCanonicalizerContract:
     def test_every_bound_name_reaches_the_canonical_form(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # A name that vanished would let two different calls share one key.
+        # Same values, different names: a canonicalizer that carried only the
+        # values would key `f(a=1)` and `f(b=1)` the same way.
+        assert canonicalizer.canonicalize({"a": 1}) != canonicalizer.canonicalize(
+            {"b": 1}
+        )
         assert canonicalizer.canonicalize(
             {"a": 1, "b": 2}
         ) != canonicalizer.canonicalize({"a": 1})

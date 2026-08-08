@@ -122,6 +122,18 @@ async def fan_out(width: int) -> int:
 
 
 @engrave
+async def payload(seed: int) -> list[int]:
+    _state.calls.append(f"payload({seed})")
+    return [seed + offset for offset in range(500)]
+
+
+@engrave
+async def one_branch_completes() -> str:
+    # The first branch finishes, and has a descendant to prune; the second stops.
+    return f"{await doubled_plus_one(5)}:{await pausing()}"
+
+
+@engrave
 async def leaf(n: int) -> int:
     _state.calls.append(f"leaf({n})")
     return n
@@ -345,7 +357,7 @@ class ResumeContract(_SessionScenario):
             argument_canonicalizer,
             serializer,
         ):
-            assert await doubled(7) == 14
+            written = [await payload(seed) for seed in (0, 1000, 99999)]
         _state.calls.clear()
 
         async with make_session(
@@ -354,7 +366,7 @@ class ResumeContract(_SessionScenario):
             argument_canonicalizer,
             serializer,
         ):
-            assert await doubled(7) == 14
+            assert [await payload(seed) for seed in (0, 1000, 99999)] == written
         assert _state.calls == []
 
 
@@ -397,8 +409,13 @@ class ParallelContract(_SessionScenario):
 
         _state.calls.clear()
         _state.interrupt = False
+        # A handle that wrote none of them: what a worker picking the session up
+        # after the interruption actually holds.
         async with make_session(
-            "scenario-parallel-durable", backend, argument_canonicalizer, serializer
+            "scenario-parallel-durable",
+            backend_factory("scenario-parallel-durable"),
+            argument_canonicalizer,
+            serializer,
         ):
             total = await fan_out(self.WIDTH)
 
@@ -473,7 +490,54 @@ class PruningContract(_SessionScenario):
 
         _state.calls.clear()
         async with make_session(
-            "scenario-prune-replay", backend, argument_canonicalizer, serializer
+            "scenario-prune-replay",
+            backend_factory("scenario-prune-replay"),
+            argument_canonicalizer,
+            serializer,
         ):
             assert await tree() == first
         assert _state.calls == []
+
+    async def test_a_branch_is_pruned_while_the_session_is_still_running(
+        self,
+        backend_factory: BackendFactory,
+        argument_canonicalizer: ArgumentCanonicalizer,
+        serializer: Serializer,
+    ):
+        # Pruning fires on each completion, not at the end, so a finished branch
+        # loses its descendants while a sibling is still to come — and the
+        # branch itself must still replay from the record left behind.
+        backend = backend_factory("scenario-prune-mid")
+        _state.interrupt = True
+        with pytest.raises(Interrupted):
+            async with make_session(
+                "scenario-prune-mid",
+                backend,
+                argument_canonicalizer,
+                serializer,
+                event_emitter=self._pruning(backend),
+            ):
+                await one_branch_completes()
+
+        names = {
+            execution.id.name.value
+            for execution in await self._executions(backend, "scenario-prune-mid")
+        }
+        assert {"one_branch_completes", "doubled_plus_one", "pausing"} <= names
+        assert "doubled" not in names
+
+        _state.calls.clear()
+        _state.interrupt = False
+        reopened = backend_factory("scenario-prune-mid")
+        async with make_session(
+            "scenario-prune-mid",
+            reopened,
+            argument_canonicalizer,
+            serializer,
+            event_emitter=self._pruning(reopened),
+        ):
+            assert await one_branch_completes() == "11:B"
+
+        assert _state.calls == ["pausing:start", "pausing:end"]
+        remaining = await self._executions(reopened, "scenario-prune-mid")
+        assert all(execution.id.parent_id is None for execution in remaining)
