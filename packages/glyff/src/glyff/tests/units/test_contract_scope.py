@@ -29,11 +29,11 @@ class BareSerializer(Serializer):
 
 class TestABareCanonicalizerSatisfiesTheContract(ArgumentCanonicalizerContract):
     @pytest.fixture
-    def canonicalizer(self) -> ArgumentCanonicalizer:
-        return BareCanonicalizer()
+    def canonicalizer_factory(self):
+        return BareCanonicalizer
 
 
 class TestABareSerializerSatisfiesTheContract(SerializerContract):
     @pytest.fixture
-    def serializer(self) -> Serializer:
-        return BareSerializer()
+    def serializer_factory(self):
+        return BareSerializer

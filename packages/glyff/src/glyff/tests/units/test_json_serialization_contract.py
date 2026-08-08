@@ -7,11 +7,11 @@ from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
 class TestJsonArgumentCanonicalizerContract(ArgumentCanonicalizerContract):
     @pytest.fixture
-    def canonicalizer(self) -> JsonArgumentCanonicalizer:
-        return JsonArgumentCanonicalizer()
+    def canonicalizer_factory(self):
+        return JsonArgumentCanonicalizer
 
 
 class TestJsonSerializerContract(SerializerContract):
     @pytest.fixture
-    def serializer(self) -> JsonSerializer:
-        return JsonSerializer()
+    def serializer_factory(self):
+        return JsonSerializer
