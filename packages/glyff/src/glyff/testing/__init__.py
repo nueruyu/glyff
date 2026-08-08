@@ -23,8 +23,8 @@ The contracts are pytest test classes, so importing this module needs pytest
 """
 
 from ._backend_contract import (
-    DomainVersionContract,
     BinarySafeBackendContract,
+    DomainVersionContract,
     DurableBackendContract,
     ExecutionBackendContract,
     TextBackendContract,
@@ -33,16 +33,20 @@ from ._backend_contract import (
     save_execution,
     serialized_value,
 )
+from ._canonicalizer_contract import ArgumentCanonicalizerContract
 from ._migration_contract import SessionMigrationContract
 from ._pruning import PruningEventHandler
+from ._serializer_contract import SerializerContract
 
 __all__ = [
+    "ArgumentCanonicalizerContract",
     "DomainVersionContract",
     "BinarySafeBackendContract",
     "DurableBackendContract",
     "ExecutionBackendContract",
     "TextBackendContract",
     "PruningEventHandler",
+    "SerializerContract",
     "SessionMigrationContract",
     "canonical_arguments",
     "make_execution_id",

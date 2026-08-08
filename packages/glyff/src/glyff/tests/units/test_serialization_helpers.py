@@ -59,6 +59,11 @@ def test_canonical_normalizes_containers():
     assert canonical({"t": (1, 2), "s": {3, 1, 2}}) == {"t": [1, 2], "s": [1, 2, 3]}
 
 
+def test_canonical_gives_a_frozenset_the_form_of_its_set():
+    # Which of the two an argument happens to be is not an identity difference.
+    assert canonical(frozenset({2, 1})) == canonical({1, 2})
+
+
 def test_canonical_encodes_bytes_as_hex():
     assert canonical(b"\x01\xff") == "01ff"
 
