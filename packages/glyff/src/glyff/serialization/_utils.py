@@ -13,7 +13,7 @@ from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
 # Namespaces a policy's output so an opaque value can never collide with a native
 # representation that happens to match it.
-_OPAQUE_TAG = "__glyff_opaque__"
+OPAQUE_TAG = "__glyff_opaque__"
 
 
 def _qualified_name(obj: Any) -> str:
@@ -158,7 +158,7 @@ def to_canonical(
         return obj.hex()
     if callable(obj) and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
-    return {_OPAQUE_TAG: recurse(policy.represent(obj))}
+    return {OPAQUE_TAG: recurse(policy.represent(obj))}
 
 
 def _reject(obj: Any) -> Any:

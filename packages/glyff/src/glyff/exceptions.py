@@ -132,3 +132,15 @@ class MigrationCollisionError(MigrationError):
     """
 
     pass
+
+
+class MigrationOrderError(MigrationError):
+    """
+    Raised when a migration would gather separately recorded calls into one
+    class of identical repeated calls.
+
+    Such calls are matched by ordinal, and nothing records which of them ran
+    first, so the migration is refused rather than given an order glyff invented.
+    """
+
+    pass

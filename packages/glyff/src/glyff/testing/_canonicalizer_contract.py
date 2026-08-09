@@ -79,6 +79,19 @@ class ArgumentCanonicalizerContract:
 
         assert encode_canonical(form)
 
+    def test_a_canonical_form_canonicalizes_to_itself(
+        self, canonicalizer: ArgumentCanonicalizer
+    ):
+        # A migration reads recorded canonical arguments and hands back the ones
+        # the call should be keyed by. An argument it passed through untouched
+        # has to come out of here keying the call the way it already did.
+        form = canonicalizer.canonicalize(
+            {"a": 1, "b": ["x", None], "c": {"d": True}, "e": "text"}
+        )
+        assert isinstance(form, dict)
+
+        assert canonicalizer.canonicalize(form) == form
+
     def test_a_later_instance_agrees_on_the_form(
         self, canonicalizer_factory: CanonicalizerFactory
     ):
