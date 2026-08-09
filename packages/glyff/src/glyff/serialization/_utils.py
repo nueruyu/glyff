@@ -11,9 +11,27 @@ from .._execution import CanonicalValue
 from ..exceptions import ArgumentCanonicalizationError
 from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
-# Namespaces a policy's output so an opaque value can never collide with a native
-# representation that happens to match it.
-OPAQUE_TAG = "__glyff_opaque__"
+# A key reserved for glyff, so a policy's output can never be mistaken for a
+# native representation that happens to match it. `_canonical_mapping` refuses a
+# mapping that claims it, which is what makes the namespace real rather than
+# merely unlikely.
+_OPAQUE_TAG = "__glyff_opaque__"
+
+
+def as_opaque(representation: CanonicalValue) -> CanonicalValue:
+    """The canonical form of a value an `OpaquePolicy` stood in for."""
+    return {_OPAQUE_TAG: representation}
+
+
+def is_opaque(value: CanonicalValue) -> bool:
+    """Whether ``value`` is what :func:`as_opaque` writes."""
+    return isinstance(value, dict) and len(value) == 1 and _OPAQUE_TAG in value
+
+
+def opaque_representation(value: CanonicalValue) -> CanonicalValue:
+    """What the policy returned for a value :func:`is_opaque` accepts."""
+    assert isinstance(value, dict)
+    return value[_OPAQUE_TAG]
 
 
 def _qualified_name(obj: Any) -> str:
@@ -96,6 +114,12 @@ def _canonical_mapping(obj: dict, recurse: _Recurse) -> dict[str, CanonicalValue
     canonical: dict[str, CanonicalValue] = {}
     for key, value in obj.items():
         name = _canonical_key(key)
+        if name == _OPAQUE_TAG:
+            raise ArgumentCanonicalizationError(
+                f"{name!r} is reserved: it is how glyff records a value an "
+                "opaque policy stood in for, and a mapping using it would be "
+                "read back as one. Name the key something else."
+            )
         if name in canonical:
             raise ArgumentCanonicalizationError(
                 f"Two keys of this mapping canonicalize to {name!r}. Distinct "
@@ -158,7 +182,7 @@ def to_canonical(
         return obj.hex()
     if callable(obj) and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
-    return {OPAQUE_TAG: recurse(policy.represent(obj))}
+    return as_opaque(recurse(policy.represent(obj)))
 
 
 def _reject(obj: Any) -> Any:

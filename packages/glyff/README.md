@@ -51,7 +51,8 @@ pip install glyff
 `glyff.migration` carries the offline half: `MigratableBackend` and
 `SessionMigration` for a store that can replace a session atomically,
 `SessionMigrator` for what a session should become, and `RemappingMigrator` —
-declared as the `Boundary` pairs that changed shape — as the one glyff ships.
+declared as the `ExecutionShape` pairs that changed shape — as the one glyff
+ships.
 See [migration](https://github.com/nueruyu/glyff/blob/main/docs/migration.md).
 
 Every engraved function belongs to a domain, which owns and versions its

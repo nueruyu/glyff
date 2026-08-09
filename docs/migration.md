@@ -113,36 +113,47 @@ boundaries that changed shape — what each one was, what it became, and the
 conversion between their arguments:
 
 ```python
-from glyff.migration import Boundary, RemappingMigrator
+from glyff.migration import ExecutionShape, RemappingMigrator
 
 migrator = RemappingMigrator(
     canonicalizer=canonicalizer,
-    to_domain_versions={"com.example.payments": "2"},
+    domain_versions={"com.example.payments": ("1", "2")},
 )
-migrator.migrate_function(
-    Boundary("com.example.payments", "authorize", "order", "units"),
-    Boundary("com.example.payments", "charge", "order_id", "cents"),
+migrator.rewrite(
+    ExecutionShape("com.example.payments", "authorize", "order", "units"),
+    ExecutionShape("com.example.payments", "charge", "order_id", "cents"),
     arguments=lambda order, units: {"order_id": order["id"], "cents": units * 100},
 )
 
 report = await backend.session_migration.run(SessionId("order-42"), migrator)
 ```
 
-A `Boundary` is spelled out rather than read off the function it names. Taking
-the parameters from a live signature would let a later, unrelated change to it
-silently reshape records the migration claims to know; written down, a migration
-keeps describing the generation it was written for. Both sides are checked
-against what is actually there — records whose argument names are not the ones
-declared are refused as belonging to another generation, and so is a conversion
-that returns the wrong names. A boundary's `parameters` are every name a call
-carries, defaults included, so a boundary that gained a default has the
-migration write it out.
+An `ExecutionShape` is a domain, the name records carry, and the names of the
+arguments a call is bound to — no Python signature and no version. It is spelled
+out rather than read off the function it names, because taking it from a live
+signature would let a later, unrelated change there silently reshape records the
+migration claims to know.
 
-The conversion receives the recorded canonical arguments by their old names, and
-returns the ones the new boundary is keyed by. Leave it out when the parameters
-did not change and the recorded form is kept as it is. `drop_function` removes a
-boundary's records, and everything recorded beneath them, since a descendant
-outlives its parent only as weight no resume can reach.
+Every side is then checked against what is actually there:
+
+- `domain_versions` names the generations this migration is *for* — the version
+  it reads and the version it writes, per domain. A session recording anything
+  else is refused, so a v1→v2 migration cannot be applied to a v3 session whose
+  boundaries happen to match. Domains the migration says nothing about keep the
+  versions they had, so a library can publish a migration for its own domain
+  without knowing what else the session has entered.
+- Records whose argument names are not the ones declared are refused, and so is
+  a conversion that returns the wrong names. Dropping is held to the same check,
+  since it is the destructive one.
+
+An `ExecutionShape`'s `argument_names` are every name a call carries, defaults
+included, so a boundary that gained a default has the migration write it out.
+
+The conversion receives the recorded arguments by their old names and returns the
+ones the new shape is keyed by. Leave it out when the names did not change and
+the recorded form is kept as it is. `drop` removes a boundary's records, and
+everything recorded beneath them, since a descendant outlives its parent only as
+weight no resume can reach.
 
 Everything a migration does not name — parent chains that a rewrite invalidates,
 the ordinals a live `Sequencer` would assign — is the migrator's, because those
@@ -151,12 +162,14 @@ are what a caller cannot reproduce.
 **Values with no value representation** arrive wrapped in `Opaque`, carrying
 whatever the [`OpaquePolicy`](./execution-identity.md#canonical-arguments) put in
 the key. Return one unchanged and the argument keys the call exactly as it did;
-there is nothing to rebuild, because there was nothing to record. Recorded
-arguments in general are the canonical form, not the values that produced it, so
-what a conversion computes with is JSON — a `bytes` argument reads as hex, a
-dataclass as the fields it compares by. Fields a dataclass excludes from
-equality are not there at all: they never distinguished two calls, so nothing
-recorded them.
+there is nothing to rebuild, because there was nothing to record. One stands for
+a whole argument, so it is returned as one or not at all.
+
+Recorded arguments in general are the canonical form, not the values that
+produced it, so what a conversion computes with is JSON — a `bytes` argument
+reads as hex, a dataclass as the fields it compares by. Fields a dataclass
+excludes from equality are not there at all: they never distinguished two calls,
+so nothing recorded them.
 
 #### What changing the order does
 

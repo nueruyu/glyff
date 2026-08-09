@@ -7,7 +7,7 @@ import pytest
 from glyff import CanonicalValue, DomainId, Execution, SerializedValue
 from glyff.exceptions import MigrationError, MigrationOrderError
 from glyff.migration import (
-    Boundary,
+    ExecutionShape,
     Opaque,
     RemappingMigrator,
     SessionMetadata,
@@ -49,10 +49,12 @@ def session(
     )
 
 
-def migrator(versions: dict[DomainId, str] | None = None) -> RemappingMigrator:
+def migrator(
+    versions: dict[DomainId, tuple[str, str]] | None = None,
+) -> RemappingMigrator:
     return RemappingMigrator(
         canonicalizer=JsonArgumentCanonicalizer(),
-        to_domain_versions=versions or {PAY: "v2"},
+        domain_versions=versions or {PAY: ("v1", "v2")},
     )
 
 
@@ -84,8 +86,9 @@ def test_a_migrated_execution_keeps_its_result_and_metadata():
     execution.set_metadata("attempts", SerializedValue(b"2"))
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"), Boundary(PAY, "charge", "order")
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "charge", "order"),
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -101,8 +104,9 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"), Boundary(PAY, "charge", "order")
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "charge", "order"),
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -114,22 +118,26 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
 def test_a_boundary_can_move_to_another_domain():
     execution = started("authorize", arguments={"order": "ord_1"})
 
-    migration = migrator({PAY: "v2", SHIP: "v1"})
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"), Boundary(SHIP, "authorize", "order")
+    migration = migrator()
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(SHIP, "authorize", "order"),
     )
-    [migrated] = migrate(migration, session(execution))
+    result = migration.migrate(session(execution, versions={PAY: "v1", SHIP: "v7"}))
 
-    assert migrated.id.domain == SHIP
+    assert result.session.executions[0].id.domain == SHIP
+    # A migration names the domains it owns; one it says nothing about keeps the
+    # version it had.
+    assert result.report.to_domain_versions == {PAY: "v2", SHIP: "v7"}
 
 
 def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
     execution = started("authorize", arguments={"order": {"id": "ord_1"}, "units": 12})
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order", "units"),
-        Boundary(PAY, "charge", "order_id", "cents"),
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order", "units"),
+        ExecutionShape(PAY, "charge", "order_id", "cents"),
         arguments=lambda order, units: {
             "order_id": order["id"],
             "cents": units * 100,
@@ -149,9 +157,9 @@ def test_a_default_the_new_boundary_gained_is_written_out_by_the_migration():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"),
-        Boundary(PAY, "authorize", "order", "currency"),
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "authorize", "order", "currency"),
         arguments=lambda order: {"order": order, "currency": "JPY"},
     )
     [migrated] = migrate(migration, session(execution))
@@ -170,9 +178,9 @@ def test_an_opaque_argument_reaches_the_conversion_as_itself():
     )
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "client"),
-        Boundary(PAY, "charge", "client"),
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "client"),
+        ExecutionShape(PAY, "charge", "client"),
         arguments=lambda client: seen.append(client) or {"client": client},
     )
     migrate(migration, session(execution))
@@ -190,9 +198,9 @@ def test_an_opaque_argument_passed_through_keys_the_call_as_it_did_before():
     )
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "client", "order"),
-        Boundary(PAY, "charge", "client", "order"),
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "client", "order"),
+        ExecutionShape(PAY, "charge", "client", "order"),
         arguments=lambda client, order: {"client": client, "order": order},
     )
     [migrated] = migrate(migration, session(execution))
@@ -210,8 +218,9 @@ def test_a_child_follows_its_remapped_parent():
     child = started("capture", parent=parent.id)
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"), Boundary(PAY, "charge", "order")
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "charge", "order"),
     )
     migrated = migrate(migration, session(parent, child))
     by_name = {execution.id.name.value: execution for execution in migrated}
@@ -225,8 +234,9 @@ def test_a_grandchild_follows_too():
     grandchild = started("settle", parent=child.id)
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"), Boundary(PAY, "charge", "order")
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "charge", "order"),
     )
     migrated = migrate(migration, session(root, child, grandchild))
     by_name = {execution.id.name.value: execution for execution in migrated}
@@ -252,7 +262,7 @@ def test_dropping_a_boundary_takes_what_was_recorded_beneath_it():
     kept = started("notify", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.drop_function(Boundary(PAY, "authorize", "order"))
+    migration.drop(ExecutionShape(PAY, "authorize", "order"))
     migrated = migrate(migration, session(root, child, kept))
 
     assert [execution.id.name.value for execution in migrated] == ["notify"]
@@ -294,9 +304,9 @@ def test_gathering_separate_calls_into_one_class_is_refused():
     second = started("authorize", arguments={"order": "ord_2"})
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"),
-        Boundary(PAY, "charge", "at_all"),
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "charge", "at_all"),
         arguments=lambda order: {"at_all": True},
     )
 
@@ -309,11 +319,12 @@ def test_two_boundaries_may_share_a_name_while_their_calls_stay_apart():
     capture = started("capture", arguments={"order": "ord_2"})
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"), Boundary(PAY, "charge", "order")
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "charge", "order"),
     )
-    migration.migrate_function(
-        Boundary(PAY, "capture", "order"), Boundary(PAY, "charge", "order")
+    migration.rewrite(
+        ExecutionShape(PAY, "capture", "order"), ExecutionShape(PAY, "charge", "order")
     )
     migrated = migrate(migration, session(authorize, capture))
 
@@ -328,9 +339,9 @@ def test_records_of_another_generation_are_refused():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order", "currency"),
-        Boundary(PAY, "charge", "order"),
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order", "currency"),
+        ExecutionShape(PAY, "charge", "order"),
         arguments=lambda order, currency: {"order": order},
     )
 
@@ -342,13 +353,13 @@ def test_a_conversion_that_misses_an_argument_is_refused():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"),
-        Boundary(PAY, "charge", "order_id", "cents"),
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "charge", "order_id", "cents"),
         arguments=lambda order: {"order_id": order},
     )
 
-    with pytest.raises(MigrationError, match="but it takes"):
+    with pytest.raises(MigrationError, match="but it is keyed by"):
         migrate(migration, session(execution))
 
 
@@ -356,24 +367,72 @@ def test_a_rename_that_changes_the_parameters_needs_a_conversion():
     migration = migrator()
 
     with pytest.raises(MigrationError, match="conversion between them"):
-        migration.migrate_function(
-            Boundary(PAY, "authorize", "order"), Boundary(PAY, "charge", "order_id")
+        migration.rewrite(
+            ExecutionShape(PAY, "authorize", "order"),
+            ExecutionShape(PAY, "charge", "order_id"),
         )
 
 
 def test_a_boundary_registered_twice_is_refused():
     migration = migrator()
-    migration.migrate_function(
-        Boundary(PAY, "authorize", "order"), Boundary(PAY, "charge", "order")
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(PAY, "charge", "order"),
     )
 
     with pytest.raises(MigrationError, match="already registered"):
-        migration.drop_function(Boundary(PAY, "authorize", "order"))
+        migration.drop(ExecutionShape(PAY, "authorize", "order"))
 
 
 def test_a_boundary_naming_one_parameter_twice_is_refused():
     with pytest.raises(ValueError, match="more than once"):
-        Boundary(PAY, "authorize", "order", "order")
+        ExecutionShape(PAY, "authorize", "order", "order")
+
+
+def test_a_nested_opaque_is_refused_rather_than_derived():
+    execution = started(
+        "authorize",
+        arguments={"client": {"__glyff_opaque__": "com.example.PaymentClient"}},
+    )
+
+    migration = migrator()
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "client"),
+        ExecutionShape(PAY, "charge", "clients"),
+        arguments=lambda client: {"clients": [client]},
+    )
+
+    with pytest.raises(MigrationError, match="stands for a whole argument"):
+        migrate(migration, session(execution))
+
+
+# -- The generation a migration reads ----------------------------------------
+
+
+def test_a_session_at_another_version_is_refused():
+    execution = started("authorize", arguments={"order": "ord_1"})
+
+    with pytest.raises(MigrationError, match="another generation"):
+        migrate(migrator(), session(execution, versions={PAY: "v0"}))
+
+
+def test_a_session_that_never_entered_the_domain_is_refused():
+    execution = started("authorize", arguments={"order": "ord_1"}, domain=SHIP)
+
+    with pytest.raises(MigrationError, match="records no version"):
+        migrate(migrator(), session(execution, versions={SHIP: "v1"}))
+
+
+def test_a_drop_is_held_to_the_shape_it_declares():
+    # The destructive half, so at least as strict as a rewrite: a migration
+    # describing another generation must not delete this one's records.
+    execution = started("authorize", arguments={"order": "ord_1"})
+
+    migration = migrator()
+    migration.drop(ExecutionShape(PAY, "authorize", "order", "currency"))
+
+    with pytest.raises(MigrationError, match="another generation"):
+        migrate(migration, session(execution))
 
 
 # -- The report --------------------------------------------------------------

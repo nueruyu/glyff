@@ -1,18 +1,12 @@
-"""The recorded arguments a migration reads, and what it hands back.
-
-A record keeps the canonical form of a call's arguments, which is plain JSON
-except where an `OpaquePolicy` stood in for a value. That marker is glyff's own,
-so it is given a name on the way in and put back on the way out rather than
-appearing in the migrations people write.
-"""
+"""The recorded arguments a migration reads, and what it hands back."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TypeAlias
 
 from .._execution import CanonicalValue
-from ..serialization._utils import OPAQUE_TAG
+from ..serialization._utils import is_opaque, opaque_representation
 
 
 @dataclass(frozen=True)
@@ -27,27 +21,16 @@ class Opaque:
     value: CanonicalValue
 
 
-def from_recorded(value: CanonicalValue) -> Any:
-    """Recorded canonical arguments, with glyff's own marker given a name."""
+RecordedValue: TypeAlias = "str | int | float | bool | None | Opaque | list[RecordedValue] | dict[str, RecordedValue]"  # noqa: E501
+"""A recorded canonical value, with the markers glyff wrote given a name."""
+
+
+def from_recorded(value: CanonicalValue) -> RecordedValue:
+    """Reads recorded canonical arguments into what a conversion is handed."""
+    if is_opaque(value):
+        return Opaque(opaque_representation(value))
     if isinstance(value, dict):
-        if set(value) == {OPAQUE_TAG}:
-            return Opaque(value[OPAQUE_TAG])
         return {key: from_recorded(item) for key, item in value.items()}
     if isinstance(value, list):
         return [from_recorded(item) for item in value]
-    return value
-
-
-def restore(value: Any) -> Any:
-    """Puts the marker back, so a canonicalizer is handed what it wrote.
-
-    Canonicalizing is idempotent on its own output, so a marker that survives
-    this substitution keys the call exactly as the recorded one did.
-    """
-    if isinstance(value, Opaque):
-        return {OPAQUE_TAG: value.value}
-    if isinstance(value, dict):
-        return {key: restore(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [restore(item) for item in value]
     return value

@@ -155,6 +155,14 @@ def test_canonical_tags_policy_output_so_it_cannot_collide():
     assert list(tagged) == ["__glyff_opaque__"]  # type: ignore[arg-type]
 
 
+def test_canonical_refuses_a_mapping_that_claims_the_policy_tag():
+    # Tagging only namespaces a policy's *output*. A mapping keyed by the tag
+    # would be the marker, so anything reading a record back could not tell it
+    # from a value the caller passed. The key is glyff's, and reserved.
+    with pytest.raises(ArgumentCanonicalizationError, match="reserved"):
+        canonical({"__glyff_opaque__": "com.example.Service"})
+
+
 def test_canonical_applies_the_policy_at_any_depth():
     class Service:
         pass

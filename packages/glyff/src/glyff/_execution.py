@@ -16,6 +16,10 @@ CanonicalValue: TypeAlias = (
     "str | int | float | bool | None | list[CanonicalValue] | dict[str, CanonicalValue]"
 )
 
+# A whole call's arguments, canonicalized. Always a mapping, because it is keyed
+# by the names the call was bound to.
+CanonicalMapping: TypeAlias = "dict[str, CanonicalValue]"
+
 
 @dataclass(frozen=True)
 class CanonicalArguments:

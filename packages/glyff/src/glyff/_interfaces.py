@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterable, Mapping
 from typing import Any
 
-from ._execution import CanonicalValue, Execution, ExecutionStatus
+from ._execution import CanonicalMapping, Execution, ExecutionStatus
 from ._identity import DomainId, ExecutionId, SessionId
 
 
@@ -89,8 +89,13 @@ class ArgumentCanonicalizer(ABC):
     """
 
     @abstractmethod
-    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalValue:
-        """Normalizes a call's bound arguments into the JSON data model."""
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalMapping:
+        """Normalizes a call's bound arguments into the JSON data model.
+
+        Idempotent on the forms it derives: one handed back in comes out equal
+        to itself, which is what lets a migration return an argument untouched
+        and have it key the call as it already did.
+        """
         ...
 
 

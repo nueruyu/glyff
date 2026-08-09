@@ -32,7 +32,7 @@ class SessionMigration(ABC):
         """Runs the migrator under exclusive storage access and stores its result.
 
         The caller must ensure the session is offline: exclusion lasts only for
-        this call, and nothing stops a worker on the previous application
+        this call, and nothing stops a worker on the previous domain
         version from writing to the session once it returns.
 
         Anything the migrator raises propagates with the session unchanged.
@@ -41,7 +41,7 @@ class SessionMigration(ABC):
 
 
 class MigratableBackend(Backend):
-    """A backend that can migrate a session between application versions."""
+    """A backend that can migrate a session between domain versions."""
 
     @property
     @abstractmethod

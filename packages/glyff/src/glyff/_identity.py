@@ -135,3 +135,28 @@ class ExecutionId:
             f"ExecutionId(domain='{self.domain}', name='{self.name}', "
             f"sequence={self.sequence}{parent_info})"
         )
+
+
+@dataclass(frozen=True)
+class SequenceScope:
+    """Everything of an identity except the ordinal, which counts within it.
+
+    A `sequence` orders calls inside one of these and means nothing outside it,
+    so whoever assigns an ordinal and whoever renumbers one later have to agree
+    on the scope down to the field. Defined here so they share the definition
+    rather than each spelling it out.
+    """
+
+    parent_id: ExecutionId | None
+    domain: DomainId
+    name: ExecutionName
+    arguments_digest: ArgumentsDigest
+
+    @classmethod
+    def of(cls, execution_id: ExecutionId) -> SequenceScope:
+        return cls(
+            parent_id=execution_id.parent_id,
+            domain=execution_id.domain,
+            name=execution_id.name,
+            arguments_digest=execution_id.arguments_digest,
+        )

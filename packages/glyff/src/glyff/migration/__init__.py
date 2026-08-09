@@ -1,11 +1,11 @@
-"""Carrying a recorded session across a change in application version.
+"""Carrying a recorded session across a change of domain version.
 
 This package is the mechanism, split in two: a `SessionMigrator` decides what a
 session should become, and a backend's `SessionMigration` makes that the stored
 truth atomically. Neither knows the other's half.
 """
 
-from ._arguments import Opaque
+from ._arguments import Opaque, RecordedValue
 from ._interfaces import MigratableBackend, SessionMigration, SessionMigrator
 from ._models import (
     MigrationReport,
@@ -13,18 +13,25 @@ from ._models import (
     SessionMigrationResult,
     StoredSession,
 )
-from ._remap import ArgumentConversion, Boundary, RemappingMigrator
+from ._remap import (
+    ArgumentConversion,
+    ExecutionShape,
+    RemappingMigrator,
+    VersionChange,
+)
 
 __all__ = [
     "ArgumentConversion",
-    "Boundary",
+    "ExecutionShape",
     "MigratableBackend",
     "MigrationReport",
     "Opaque",
+    "RecordedValue",
     "RemappingMigrator",
     "SessionMetadata",
     "SessionMigration",
     "SessionMigrationResult",
     "SessionMigrator",
     "StoredSession",
+    "VersionChange",
 ]
