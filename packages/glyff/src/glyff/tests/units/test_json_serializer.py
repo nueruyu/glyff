@@ -125,6 +125,26 @@ def test_the_policy_is_handed_the_value_itself():
     assert seen == [marker]
 
 
+def test_what_a_policy_returns_is_what_reaches_the_form():
+    # Being handed the value is not enough: a canonicalizer that called the
+    # policy and then rendered the value its own way would still tell two
+    # instances apart, so only a policy that disagrees with that rendering
+    # catches it.
+    class Svc:
+        def __init__(self, name: str):
+            self.name = name
+
+    class ByName(OpaquePolicy):
+        def represent(self, value):
+            return value.name
+
+    canonicalizer = JsonArgumentCanonicalizer(opaque_policy=ByName())
+
+    assert canonicalizer.canonicalize({"a": Svc("one")}) != canonicalizer.canonicalize(
+        {"a": Svc("two")}
+    )
+
+
 def test_a_falsy_policy_is_not_mistaken_for_no_policy():
     class FalsyPolicy(OpaquePolicy):
         def __bool__(self):

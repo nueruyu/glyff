@@ -163,7 +163,10 @@ async def failing_sibling() -> str:
 
 @engrave
 async def two_siblings() -> str:
-    done = await asyncio.gather(completing_sibling(), failing_sibling())
+    # The failing branch is started first and finishes last, so a store that
+    # numbered or replayed siblings by the order they completed rather than the
+    # order they were called would disagree with itself across the two runs.
+    done = await asyncio.gather(failing_sibling(), completing_sibling())
     return "/".join(done)
 
 
@@ -526,7 +529,7 @@ class ParallelContract(_SessionScenario):
             argument_canonicalizer,
             serializer,
         ):
-            assert await two_siblings() == "completing_sibling/failing_sibling"
+            assert await two_siblings() == "failing_sibling/completing_sibling"
 
         # The one that committed came back from its record; only the one that
         # rolled back ran a second time.

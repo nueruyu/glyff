@@ -77,6 +77,15 @@ async def test_the_encoding_options_reach_the_output():
     )
 
 
+async def test_key_order_does_not_reach_the_output(serializer: Serializer):
+    # The same wiring as above on the axis the options cannot reveal: a rewrite
+    # that formatted its own JSON could keep `indent` and `ensure_ascii` and
+    # still lose the sorted keys the parent asks for.
+    assert await serializer.serialize({"b": 2, "a": 1}, dict) == (
+        await serializer.serialize({"a": 1, "b": 2}, dict)
+    )
+
+
 # -- Models as identity -------------------------------------------------------
 
 
