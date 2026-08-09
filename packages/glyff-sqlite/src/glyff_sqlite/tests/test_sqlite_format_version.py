@@ -1,3 +1,5 @@
+"""Format-version stamping, as this store spells it."""
+
 import sqlite3
 from pathlib import Path
 

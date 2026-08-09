@@ -56,7 +56,16 @@ def test_canonical_passes_through_json_native_values():
 
 def test_canonical_normalizes_containers():
     # Tuples and sets both become lists; a set is ordered so the form is stable.
-    assert canonical({"t": (1, 2), "s": {3, 1, 2}}) == {"t": [1, 2], "s": [1, 2, 3]}
+    # Strings, not small ints: a small int set iterates in sorted order anyway,
+    # so it would pass whether or not anything sorted it.
+    assert canonical({"t": (1, 2), "s": {"gamma", "alpha", "beta"}}) == {
+        "t": [1, 2],
+        "s": ["alpha", "beta", "gamma"],
+    }
+
+
+def test_canonical_gives_a_frozenset_the_form_of_its_set():
+    assert canonical(frozenset({2, 1})) == canonical({1, 2})
 
 
 def test_canonical_encodes_bytes_as_hex():

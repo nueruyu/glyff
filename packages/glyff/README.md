@@ -72,10 +72,11 @@ the name from the function's `__qualname__`.
   [`glyff-file-store`](https://pypi.org/project/glyff-file-store/) (debug).
 - For Pydantic-typed serialization, see [`glyff-pydantic`](https://pypi.org/project/glyff-pydantic/).
 - Custom backends provide an `ExecutionRepository`, a `TransactionProvider` and
-  `claim_domain`, usually through a small backend bundle, and are verified
-  against the shared contract suite in `glyff.testing` (*planned:*
-  [#36](https://github.com/nueruyu/glyff/issues/36)). See
+  `claim_domain`, usually through a small backend bundle. See
   [the backends doc](https://github.com/nueruyu/glyff/blob/main/docs/backends.md).
+- `glyff.testing` carries a conformance suite for each extension point, listed in
+  [the backends doc](https://github.com/nueruyu/glyff/blob/main/docs/backends.md#writing-your-own)
+  (*planned:* [#36](https://github.com/nueruyu/glyff/issues/36)).
 
 ## Status
 

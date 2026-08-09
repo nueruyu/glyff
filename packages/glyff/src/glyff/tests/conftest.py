@@ -17,7 +17,7 @@ from glyff.store import MemoryBackend
 from glyff.testing import make_execution_id
 from glyff.store._memory_client import MemoryClient
 from glyff.tests.stubs.store import StubBackend
-from glyff.tests.types import BackendFactory
+from glyff.testing import BackendFactory
 
 
 @pytest.fixture
