@@ -61,6 +61,7 @@ assertion. Observe what was persisted instead.
 | Session lifecycle and context | `packages/glyff/src/glyff/_session.py`, `_context.py` |
 | Events and handler dispatch | `packages/glyff/src/glyff/events.py`, `_event_system.py` |
 | The backend / serializer / canonicalizer contracts | `packages/glyff/src/glyff/_interfaces.py` |
+| Carrying a session across a version change | `packages/glyff/src/glyff/migration/` |
 | Built-in JSON hashing and serialization | `packages/glyff/src/glyff/serialization/` |
 | In-memory store | `packages/glyff/src/glyff/store/` |
 | File backend (debug) | `packages/glyff-file-store/` |

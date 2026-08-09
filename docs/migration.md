@@ -38,7 +38,8 @@ later; sequential migrations between glyff versions are glyff's responsibility
 and are possible because the stamp exists.
 
 > **Planned** — a migration runner. The stamp refuses unknown versions, but
-> nothing yet converts a store from one format version to the next.
+> nothing yet converts a store from one format version to the next
+> ([#41](https://github.com/nueruyu/glyff/issues/41)).
 
 ### User payload
 
@@ -101,14 +102,82 @@ What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),
 byte-for-byte the preimage of its `arguments_digest`. Remapping an argument is
 therefore a transformation of recorded JSON, with no dead Python types to keep
-alive and no dependence on the canonicalizer that wrote the record.
+alive. What canonicalized the record is not needed to read it back; a migration
+is handed the canonicalizer the *resuming* session will use, so the keys it
+writes are the keys that session goes looking for.
 
-> **Planned** — the `SessionMigrator` implementation, including migration
-> chains, identity remapping, sequence compaction, and how a library publishes a
-> migration for its own domain
-> ([#39](https://github.com/nueruyu/glyff/issues/39)). Until then, reproducing
-> glyff's canonical encoding yourself is not a supported surface, so pin paused
-> sessions to the code that started them.
+### Writing one
+
+`RemappingMigrator` is the `SessionMigrator` to reach for. A migration is the
+boundaries that changed shape — what each one was, what it became, and the
+conversion between their arguments:
+
+```python
+from glyff.migration import Boundary, RemappingMigrator
+
+migrator = RemappingMigrator(
+    canonicalizer=canonicalizer,
+    to_domain_versions={"com.example.payments": "2"},
+)
+migrator.migrate_function(
+    Boundary("com.example.payments", "authorize", "order", "units"),
+    Boundary("com.example.payments", "charge", "order_id", "cents"),
+    arguments=lambda order, units: {"order_id": order["id"], "cents": units * 100},
+)
+
+report = await backend.session_migration.run(SessionId("order-42"), migrator)
+```
+
+A `Boundary` is spelled out rather than read off the function it names. Taking
+the parameters from a live signature would let a later, unrelated change to it
+silently reshape records the migration claims to know; written down, a migration
+keeps describing the generation it was written for. Both sides are checked
+against what is actually there — records whose argument names are not the ones
+declared are refused as belonging to another generation, and so is a conversion
+that returns the wrong names. A boundary's `parameters` are every name a call
+carries, defaults included, so a boundary that gained a default has the
+migration write it out.
+
+The conversion receives the recorded canonical arguments by their old names, and
+returns the ones the new boundary is keyed by. Leave it out when the parameters
+did not change and the recorded form is kept as it is. `drop_function` removes a
+boundary's records, and everything recorded beneath them, since a descendant
+outlives its parent only as weight no resume can reach.
+
+Everything a migration does not name — parent chains that a rewrite invalidates,
+the ordinals a live `Sequencer` would assign — is the migrator's, because those
+are what a caller cannot reproduce.
+
+**Values with no value representation** arrive wrapped in `Opaque`, carrying
+whatever the [`OpaquePolicy`](./execution-identity.md#canonical-arguments) put in
+the key. Return one unchanged and the argument keys the call exactly as it did;
+there is nothing to rebuild, because there was nothing to record. Recorded
+arguments in general are the canonical form, not the values that produced it, so
+what a conversion computes with is JSON — a `bytes` argument reads as hex, a
+dataclass as the fields it compares by. Fields a dataclass excludes from
+equality are not there at all: they never distinguished two calls, so nothing
+recorded them.
+
+#### What changing the order does
+
+| What changed | What a migration owes it |
+| --- | --- |
+| The order of a boundary's parameters | Nothing. A key is a mapping of names, and its encoding sorts them. |
+| The order of distinct calls | Nothing. Keys are content-addressed, not positional. |
+| The count or relative order of [identical repeated calls](./execution-identity.md#identical-repeated-calls) | This is the one glyff cannot carry. |
+
+Repeated calls that share parent, name and arguments are matched by ordinal, and
+nothing records which of them ran first. So a migration that gathers calls
+recorded separately into one such class — two boundaries renamed onto one, or a
+conversion that maps distinct arguments onto one value — is refused with
+`MigrationOrderError` rather than given an order glyff invented. Give those calls
+arguments that tell them apart, or drop one.
+
+> **Planned** — migration chains, so a session whose stamp trails the code by
+> more than one generation applies the steps in sequence, and a published form so
+> a library can ship the migrations for its own domain
+> ([#39](https://github.com/nueruyu/glyff/issues/39)). Today a migration
+> describes one step, and running it is the application's.
 
 ## Running without migration
 

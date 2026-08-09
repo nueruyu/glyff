@@ -146,6 +146,11 @@ verbatim — anything that re-encoded them would break the key. It is what lets 
 [migration](./migration.md#in-flight-sessions-across-code-changes) rewrite an
 argument and recompute the key from the record alone.
 
+A canonical form is already in the JSON data model, so canonicalizing one again
+returns it unchanged. That is what lets a migration hand an argument back
+untouched and have it key the call exactly as it did;
+`ArgumentCanonicalizerContract` holds implementations to it.
+
 Canonicalizing is **not** serializing. It is one-way and deliberately lossy,
 keeping only what identity depends on:
 
