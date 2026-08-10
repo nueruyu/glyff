@@ -147,9 +147,10 @@ verbatim — anything that re-encoded them would break the key. It is what lets 
 argument and recompute the key from the record alone.
 
 A canonical form is already in the JSON data model, so canonicalizing one again
-returns it unchanged. That is what lets a migration hand an argument back
+returns it unchanged, and what a policy stood in for goes back as an `Opaque`
+and reaches the same form. That is what lets a migration hand an argument back
 untouched and have it key the call exactly as it did;
-`ArgumentCanonicalizerContract` holds implementations to it.
+`ArgumentCanonicalizerContract` holds implementations to both.
 
 Canonicalizing is **not** serializing. It is one-way and deliberately lossy,
 keeping only what identity depends on:
@@ -178,7 +179,9 @@ what counts as opaque in your application.
 | `OpaqueByTypeQualname` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
 
 Policy return values are namespaced, so a policy that returns `"pkg.Cls"` cannot
-collide with a plain string argument of the same text. The same classification governs what is *stored*, not just what
+collide with a plain string argument of the same text. The key that namespaces
+them is glyff's: a value canonicalizing to it — a mapping using it, a dataclass
+field named it — is refused rather than allowed to share an opaque value's key. The same classification governs what is *stored*, not just what
 is hashed — an opaque value the policy rejects never reaches the store.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard

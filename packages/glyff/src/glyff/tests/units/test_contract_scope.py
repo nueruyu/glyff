@@ -11,12 +11,21 @@ from typing import Any
 
 import pytest
 from glyff import ArgumentCanonicalizer, CanonicalValue, Serializer
+from glyff.serialization import Opaque
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
 
 class BareCanonicalizer(ArgumentCanonicalizer):
     def canonicalize(self, arguments) -> CanonicalValue:
-        return dict(arguments)
+        # `Opaque` is a value the interface names, so writing it out is part of
+        # implementing this and not an extra the contract asks for.
+        return {name: _plain(value) for name, value in arguments.items()}
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, Opaque):
+        return {"opaque": _plain(value.value)}
+    return value
 
 
 class BareSerializer(Serializer):

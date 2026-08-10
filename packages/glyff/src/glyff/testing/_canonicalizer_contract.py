@@ -13,6 +13,7 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
+from ..serialization import Opaque
 from ..serialization._utils import encode_canonical
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]
@@ -91,6 +92,19 @@ class ArgumentCanonicalizerContract:
         assert isinstance(form, dict)
 
         assert canonicalizer.canonicalize(form) == form
+
+    def test_a_recorded_opaque_value_canonicalizes_back_to_its_marker(
+        self, canonicalizer: ArgumentCanonicalizer
+    ):
+        # A migration hands back what a record held, and what a policy stood in
+        # for comes back as `Opaque`. It has to reach the form it was read from.
+        marker = canonicalizer.canonicalize({"a": Opaque("com.example.Service")})
+
+        assert encode_canonical(marker)
+        assert (
+            canonicalizer.canonicalize({"a": Opaque("com.example.Service")}) == marker
+        )
+        assert marker != canonicalizer.canonicalize({"a": "com.example.Service"})
 
     def test_a_later_instance_agrees_on_the_form(
         self, canonicalizer_factory: CanonicalizerFactory

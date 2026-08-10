@@ -389,21 +389,29 @@ def test_a_boundary_naming_one_parameter_twice_is_refused():
         ExecutionShape(PAY, "authorize", "order", "order")
 
 
-def test_a_nested_opaque_is_refused_rather_than_derived():
+def test_an_opaque_nested_in_a_container_survives_a_conversion():
+    # The canonicalizer applies a policy at any depth, so a recorded marker can
+    # sit anywhere. Converting one argument must not cost another its key.
     execution = started(
         "authorize",
-        arguments={"client": {"__glyff_opaque__": "com.example.PaymentClient"}},
+        arguments={
+            "clients": [{"__glyff_opaque__": "com.example.PaymentClient"}],
+            "units": 12,
+        },
     )
 
     migration = migrator()
     migration.rewrite(
-        ExecutionShape(PAY, "authorize", "client"),
-        ExecutionShape(PAY, "charge", "clients"),
-        arguments=lambda client: {"clients": [client]},
+        ExecutionShape(PAY, "authorize", "clients", "units"),
+        ExecutionShape(PAY, "charge", "clients", "cents"),
+        arguments=lambda clients, units: {"clients": clients, "cents": units * 100},
     )
+    [migrated] = migrate(migration, session(execution))
 
-    with pytest.raises(MigrationError, match="stands for a whole argument"):
-        migrate(migration, session(execution))
+    assert recorded(migrated) == {
+        "clients": [{"__glyff_opaque__": "com.example.PaymentClient"}],
+        "cents": 1200,
+    }
 
 
 # -- The generation a migration reads ----------------------------------------
@@ -414,6 +422,29 @@ def test_a_session_at_another_version_is_refused():
 
     with pytest.raises(MigrationError, match="another generation"):
         migrate(migrator(), session(execution, versions={PAY: "v0"}))
+
+
+def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
+    execution = started("authorize", arguments={"order": "ord_1"})
+
+    migration = migrator({PAY: ("v1", "v2"), SHIP: (None, "v1")})
+    migration.rewrite(
+        ExecutionShape(PAY, "authorize", "order"),
+        ExecutionShape(SHIP, "authorize", "order"),
+    )
+    result = migration.migrate(session(execution))
+
+    assert result.session.executions[0].id.domain == SHIP
+    assert result.report.to_domain_versions == {PAY: "v2", SHIP: "v1"}
+
+
+def test_claiming_a_domain_the_session_already_records_is_refused():
+    execution = started("authorize", arguments={"order": "ord_1"})
+
+    migration = migrator({PAY: ("v1", "v2"), SHIP: (None, "v1")})
+
+    with pytest.raises(MigrationError, match="has not entered"):
+        migrate(migration, session(execution, versions={PAY: "v1", SHIP: "v7"}))
 
 
 def test_a_session_that_never_entered_the_domain_is_refused():

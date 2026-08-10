@@ -6,13 +6,18 @@ import pytest
 
 from glyff import ArgumentsDigest, CanonicalArguments, CanonicalValue
 from glyff.exceptions import ArgumentCanonicalizationError
-from glyff.serialization import OpaqueByTypeQualname
+from glyff.serialization import Opaque, OpaqueByTypeQualname
 from glyff.serialization._utils import (
     _canonicalize_set,
     encode_canonical,
     stable_json_dumps,
     to_canonical,
 )
+
+
+@dataclasses.dataclass
+class _TagField:
+    __glyff_opaque__: str
 
 
 def canonical(obj: object, **kwargs) -> CanonicalValue:
@@ -155,12 +160,22 @@ def test_canonical_tags_policy_output_so_it_cannot_collide():
     assert list(tagged) == ["__glyff_opaque__"]  # type: ignore[arg-type]
 
 
-def test_canonical_refuses_a_mapping_that_claims_the_policy_tag():
-    # Tagging only namespaces a policy's *output*. A mapping keyed by the tag
-    # would be the marker, so anything reading a record back could not tell it
-    # from a value the caller passed. The key is glyff's, and reserved.
+@pytest.mark.parametrize("value", [{"__glyff_opaque__": "x"}, _TagField("x")])
+def test_canonical_refuses_a_value_that_claims_the_policy_tag(value):
+    # The marker is how a value with no representation is written down. Anything
+    # else canonicalizing to it would share that value's key, whichever branch
+    # of the walk built the mapping — a native one or a dataclass's fields.
     with pytest.raises(ArgumentCanonicalizationError, match="reserved"):
-        canonical({"__glyff_opaque__": "com.example.Service"})
+        canonical(value)
+
+
+def test_canonical_keeps_a_recorded_opaque_value_as_its_marker():
+    class Service:
+        pass
+
+    recorded = canonical(Service(), policy=OpaqueByTypeQualname())
+
+    assert canonical(Opaque(f"{__name__}.{Service.__qualname__}")) == recorded
 
 
 def test_canonical_applies_the_policy_at_any_depth():

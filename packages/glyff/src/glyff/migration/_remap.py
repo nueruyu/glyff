@@ -7,12 +7,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .._execution import CanonicalArguments, CanonicalValue, Execution
+from .._execution import CanonicalArguments, Execution
 from .._identity import DomainId, ExecutionId, ExecutionName, SequenceScope
 from .._interfaces import ArgumentCanonicalizer
 from ..exceptions import MigrationError, MigrationOrderError
-from ..serialization._utils import as_opaque, encode_canonical
-from ._arguments import Opaque, RecordedValue, from_recorded
+from ..serialization._utils import encode_canonical
+from ._arguments import RecordedValue, from_recorded
 from ._interfaces import SessionMigrator
 from ._models import (
     MigrationReport,
@@ -29,8 +29,12 @@ returns is canonicalized, so those may be ordinary Python values — or
 `RecordedValue`s handed straight back.
 """
 
-VersionChange = tuple[str, str]
-"""The version a migration reads, and the one it writes."""
+VersionChange = tuple[str | None, str]
+"""The version a migration reads, and the one it writes.
+
+``None`` on the left is a domain the session has not entered, which this
+migration claims — what a rewrite into a new domain needs.
+"""
 
 
 @dataclass(frozen=True)
@@ -154,6 +158,14 @@ class RemappingMigrator(SessionMigrator):
 
     def _require_source_versions(self, recorded: Mapping[DomainId, str]) -> None:
         for domain, (reads, _) in self._versions.items():
+            if reads is None:
+                if domain in recorded:
+                    raise MigrationError(
+                        f"This migration claims {domain} as a domain the "
+                        f"session has not entered, but it records "
+                        f"{recorded[domain]!r} for it."
+                    )
+                continue
             if domain not in recorded:
                 raise MigrationError(
                     f"This migration reads {domain} at version {reads!r}, but "
@@ -241,27 +253,9 @@ class RemappingMigrator(SessionMigrator):
                 f"{_named(set(converted))}, but it is keyed by "
                 f"{_named(rewrite.to.argument_names)}."
             )
-        return CanonicalArguments(encode_canonical(self._canonical(converted)))
-
-    def _canonical(self, converted: dict[str, Any]) -> dict[str, CanonicalValue]:
-        """The converted arguments as a key, markers kept as recorded.
-
-        A marker never goes back through the canonicalizer, which refuses the
-        reserved key it is written under.
-        """
-        derived = {
-            name: value
-            for name, value in converted.items()
-            if not isinstance(value, Opaque)
-        }
-        for name, value in derived.items():
-            _refuse_nested_opaque(name, value)
-
-        canonical = dict(self._canonicalizer.canonicalize(derived))
-        for name, value in converted.items():
-            if isinstance(value, Opaque):
-                canonical[name] = as_opaque(value.value)
-        return canonical
+        return CanonicalArguments(
+            encode_canonical(self._canonicalizer.canonicalize(converted))
+        )
 
     @staticmethod
     def _recorded(
@@ -276,21 +270,6 @@ class RemappingMigrator(SessionMigrator):
                 "of these records."
             )
         return {name: from_recorded(value) for name, value in stored.items()}
-
-
-def _refuse_nested_opaque(name: str, value: Any) -> None:
-    if isinstance(value, Opaque):
-        raise MigrationError(
-            f"The conversion put a recorded opaque value inside {name}. One "
-            "stands for a whole argument, so it can be returned as one or not "
-            "at all."
-        )
-    if isinstance(value, dict):
-        for item in value.values():
-            _refuse_nested_opaque(name, item)
-    elif isinstance(value, list):
-        for item in value:
-            _refuse_nested_opaque(name, item)
 
 
 def _named(names: set[str] | frozenset[str]) -> str:

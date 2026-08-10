@@ -94,7 +94,9 @@ class ArgumentCanonicalizer(ABC):
 
         Idempotent on the forms it derives: one handed back in comes out equal
         to itself, which is what lets a migration return an argument untouched
-        and have it key the call as it already did.
+        and have it key the call as it already did. What a policy stood in for
+        comes back as an :class:`~glyff.serialization.Opaque`, which has to
+        reach the form it was read from.
         """
         ...
 

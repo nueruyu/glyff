@@ -18,6 +18,18 @@ from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 _OPAQUE_TAG = "__glyff_opaque__"
 
 
+@dataclasses.dataclass(frozen=True)
+class Opaque:
+    """A value already standing in for one that has no value representation.
+
+    What an `OpaquePolicy` returned, carried as itself. Canonicalizing one
+    yields the marker again, which is how a recorded argument goes back through
+    a canonicalizer without a mapping being able to pass itself off as one.
+    """
+
+    value: CanonicalValue
+
+
 def as_opaque(representation: CanonicalValue) -> CanonicalValue:
     """The canonical form of a value an `OpaquePolicy` stood in for."""
     return {_OPAQUE_TAG: representation}
@@ -114,12 +126,6 @@ def _canonical_mapping(obj: dict, recurse: _Recurse) -> dict[str, CanonicalValue
     canonical: dict[str, CanonicalValue] = {}
     for key, value in obj.items():
         name = _canonical_key(key)
-        if name == _OPAQUE_TAG:
-            raise ArgumentCanonicalizationError(
-                f"{name!r} is reserved: it is how glyff records a value an "
-                "opaque policy stood in for, and a mapping using it would be "
-                "read back as one. Name the key something else."
-            )
         if name in canonical:
             raise ArgumentCanonicalizationError(
                 f"Two keys of this mapping canonicalize to {name!r}. Distinct "
@@ -158,6 +164,29 @@ def to_canonical(
     if recurse is None:
         recurse = functools.partial(to_canonical, policy=policy)
 
+    if isinstance(obj, Opaque):
+        # Already the policy's answer, so it is kept rather than asked again.
+        return as_opaque(recurse(obj.value))
+
+    derived = _derive(obj, policy, recurse)
+    if derived is _UNREPRESENTABLE:
+        return as_opaque(recurse(policy.represent(obj)))
+    if isinstance(derived, dict) and _OPAQUE_TAG in derived:
+        # Every mapping glyff derives from a value passes here, whichever branch
+        # built it, so nothing can claim the tag by another route.
+        raise ArgumentCanonicalizationError(
+            f"{_OPAQUE_TAG!r} is reserved: it is how glyff records a value an "
+            "opaque policy stood in for, and a value canonicalizing to it would "
+            "collide with one. Name the key or field something else."
+        )
+    return derived
+
+
+_UNREPRESENTABLE = object()
+
+
+def _derive(obj: Any, policy: OpaquePolicy, recurse: _Recurse) -> Any:
+    """One value's canonical form, or ``_UNREPRESENTABLE`` if it has none."""
     if obj is None or isinstance(obj, (str, int, float)):
         # bool is an int subclass, so it lands here too.
         return obj
@@ -182,7 +211,7 @@ def to_canonical(
         return obj.hex()
     if callable(obj) and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
-    return as_opaque(recurse(policy.represent(obj)))
+    return _UNREPRESENTABLE
 
 
 def _reject(obj: Any) -> Any:

@@ -2,31 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TypeAlias
 
 from .._execution import CanonicalValue
-from ..serialization._utils import is_opaque, opaque_representation
-
-
-@dataclass(frozen=True)
-class Opaque:
-    """A recorded argument that stands for a value, not the value itself.
-
-    An `OpaquePolicy` decided how a value with no value representation appears in
-    a key; :attr:`value` is that representation. Returning one unchanged keeps
-    the argument exactly as it was recorded.
-    """
-
-    value: CanonicalValue
-
+from ..serialization._utils import Opaque, is_opaque, opaque_representation
 
 RecordedValue: TypeAlias = "str | int | float | bool | None | Opaque | list[RecordedValue] | dict[str, RecordedValue]"  # noqa: E501
 """A recorded canonical value, with the markers glyff wrote given a name."""
 
 
 def from_recorded(value: CanonicalValue) -> RecordedValue:
-    """Reads recorded canonical arguments into what a conversion is handed."""
+    """Reads recorded canonical arguments into what a conversion is handed.
+
+    Markers become `Opaque` wherever they sit, so a conversion can hand any of
+    them back and have the canonicalizer write them out as they were.
+    """
     if is_opaque(value):
         return Opaque(opaque_representation(value))
     if isinstance(value, dict):

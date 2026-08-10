@@ -5,7 +5,8 @@ session should become, and a backend's `SessionMigration` makes that the stored
 truth atomically. Neither knows the other's half.
 """
 
-from ._arguments import Opaque, RecordedValue
+from ._arguments import RecordedValue
+from ..serialization import Opaque
 from ._interfaces import MigratableBackend, SessionMigration, SessionMigrator
 from ._models import (
     MigrationReport,

@@ -141,7 +141,9 @@ Every side is then checked against what is actually there:
   else is refused, so a v1→v2 migration cannot be applied to a v3 session whose
   boundaries happen to match. Domains the migration says nothing about keep the
   versions they had, so a library can publish a migration for its own domain
-  without knowing what else the session has entered.
+  without knowing what else the session has entered. A rewrite *into* a domain
+  the session has never entered says so with `None` on the left — `{SHIP:
+  (None, "1")}` — which claims it.
 - Records whose argument names are not the ones declared are refused, and so is
   a conversion that returns the wrong names. Dropping is held to the same check,
   since it is the destructive one.
@@ -161,9 +163,9 @@ are what a caller cannot reproduce.
 
 **Values with no value representation** arrive wrapped in `Opaque`, carrying
 whatever the [`OpaquePolicy`](./execution-identity.md#canonical-arguments) put in
-the key. Return one unchanged and the argument keys the call exactly as it did;
-there is nothing to rebuild, because there was nothing to record. One stands for
-a whole argument, so it is returned as one or not at all.
+the key — wherever they sit, since a policy applies at any depth. Return one
+unchanged and the argument keys the call exactly as it did; there is nothing to
+rebuild, because there was nothing to record.
 
 Recorded arguments in general are the canonical form, not the values that
 produced it, so what a conversion computes with is JSON — a `bytes` argument
