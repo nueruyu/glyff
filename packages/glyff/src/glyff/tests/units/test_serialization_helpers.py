@@ -6,7 +6,8 @@ import pytest
 
 from glyff import ArgumentsDigest, CanonicalArguments, CanonicalValue
 from glyff.exceptions import ArgumentCanonicalizationError
-from glyff.serialization import Opaque, OpaqueByTypeQualname
+from glyff import Opaque
+from glyff.serialization import OpaqueByTypeQualname
 from glyff.serialization._utils import (
     _canonicalize_set,
     encode_canonical,

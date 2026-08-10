@@ -4,15 +4,14 @@ import hashlib
 import json
 
 import pytest
-from glyff import CanonicalValue, DomainId, Execution, SerializedValue
-from glyff.exceptions import MigrationError, MigrationOrderError
+from glyff import CanonicalValue, DomainId, Execution, Opaque, SerializedValue
+from glyff.exceptions import MigrationError, MigrationOrdinalAmbiguityError
 from glyff.migration import (
+    DomainVersionTransition,
     ExecutionShape,
-    Opaque,
     RemappingMigrator,
     SessionMetadata,
     StoredSession,
-    VersionChange,
 )
 from glyff.serialization import JsonArgumentCanonicalizer
 from glyff.testing import canonical_arguments, make_execution_id
@@ -51,11 +50,11 @@ def session(
 
 
 def migrator(
-    versions: dict[DomainId, VersionChange] | None = None,
+    transitions: dict[DomainId | str, DomainVersionTransition] | None = None,
 ) -> RemappingMigrator:
     return RemappingMigrator(
         canonicalizer=JsonArgumentCanonicalizer(),
-        domain_versions=versions or {PAY: ("v1", "v2")},
+        version_transitions=transitions or {PAY: DomainVersionTransition("v1", "v2")},
     )
 
 
@@ -87,7 +86,7 @@ def test_a_migrated_execution_keeps_its_result_and_metadata():
     execution.set_metadata("attempts", SerializedValue(b"2"))
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "order"),
     )
@@ -105,7 +104,7 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "order"),
     )
@@ -119,8 +118,15 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
 def test_a_boundary_can_move_to_another_domain():
     execution = started("authorize", arguments={"order": "ord_1"})
 
-    migration = migrator()
-    migration.rewrite(
+    migration = migrator(
+        {
+            PAY: DomainVersionTransition("v1", "v2"),
+            # Unchanged, but named: a rule reaching it has to say which
+            # generation it was written against.
+            SHIP: DomainVersionTransition("v7", "v7"),
+        }
+    )
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(SHIP, "authorize", "order"),
     )
@@ -136,10 +142,10 @@ def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
     execution = started("authorize", arguments={"order": {"id": "ord_1"}, "units": 12})
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order", "units"),
         ExecutionShape(PAY, "charge", "order_id", "cents"),
-        arguments=lambda order, units: {
+        convert_arguments=lambda order, units: {
             "order_id": order["id"],
             "cents": units * 100,
         },
@@ -158,10 +164,10 @@ def test_a_default_the_new_boundary_gained_is_written_out_by_the_migration():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "authorize", "order", "currency"),
-        arguments=lambda order: {"order": order, "currency": "JPY"},
+        convert_arguments=lambda order: {"order": order, "currency": "JPY"},
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -179,10 +185,10 @@ def test_an_opaque_argument_reaches_the_conversion_as_itself():
     )
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "client"),
         ExecutionShape(PAY, "charge", "client"),
-        arguments=lambda client: seen.append(client) or {"client": client},
+        convert_arguments=lambda client: seen.append(client) or {"client": client},
     )
     migrate(migration, session(execution))
 
@@ -199,10 +205,10 @@ def test_an_opaque_argument_passed_through_keys_the_call_as_it_did_before():
     )
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "client", "order"),
         ExecutionShape(PAY, "charge", "client", "order"),
-        arguments=lambda client, order: {"client": client, "order": order},
+        convert_arguments=lambda client, order: {"client": client, "order": order},
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -219,7 +225,7 @@ def test_a_child_follows_its_remapped_parent():
     child = started("capture", parent=parent.id)
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "order"),
     )
@@ -235,7 +241,7 @@ def test_a_grandchild_follows_too():
     grandchild = started("settle", parent=child.id)
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "order"),
     )
@@ -305,13 +311,13 @@ def test_gathering_separate_calls_into_one_class_is_refused():
     second = started("authorize", arguments={"order": "ord_2"})
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "at_all"),
-        arguments=lambda order: {"at_all": True},
+        convert_arguments=lambda order: {"at_all": True},
     )
 
-    with pytest.raises(MigrationOrderError, match="which of them ran first"):
+    with pytest.raises(MigrationOrdinalAmbiguityError, match="which of them ran first"):
         migrate(migration, session(first, second))
 
 
@@ -320,11 +326,11 @@ def test_two_boundaries_may_share_a_name_while_their_calls_stay_apart():
     capture = started("capture", arguments={"order": "ord_2"})
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "order"),
     )
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "capture", "order"), ExecutionShape(PAY, "charge", "order")
     )
     migrated = migrate(migration, session(authorize, capture))
@@ -340,10 +346,10 @@ def test_records_of_another_generation_are_refused():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order", "currency"),
         ExecutionShape(PAY, "charge", "order"),
-        arguments=lambda order, currency: {"order": order},
+        convert_arguments=lambda order, currency: {"order": order},
     )
 
     with pytest.raises(MigrationError, match="another generation"):
@@ -354,10 +360,10 @@ def test_a_conversion_that_misses_an_argument_is_refused():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "order_id", "cents"),
-        arguments=lambda order: {"order_id": order},
+        convert_arguments=lambda order: {"order_id": order},
     )
 
     with pytest.raises(MigrationError, match="but it is keyed by"):
@@ -368,15 +374,40 @@ def test_a_rename_that_changes_the_parameters_needs_a_conversion():
     migration = migrator()
 
     with pytest.raises(MigrationError, match="conversion between them"):
-        migration.rewrite(
+        migration.remap(
             ExecutionShape(PAY, "authorize", "order"),
             ExecutionShape(PAY, "charge", "order_id"),
         )
 
 
+def test_a_rule_reaching_an_undeclared_domain_is_refused():
+    # Shapes carry no version, so the transitions are the only thing saying
+    # which generation a rule was written against.
+    migration = migrator()
+
+    with pytest.raises(MigrationError, match="declares no version transition"):
+        migration.remap(
+            ExecutionShape(SHIP, "authorize", "order"),
+            ExecutionShape(SHIP, "charge", "order"),
+        )
+
+    with pytest.raises(MigrationError, match="declares no version transition"):
+        migration.drop(ExecutionShape(SHIP, "authorize", "order"))
+
+
+def test_a_rewrite_into_an_undeclared_domain_is_refused():
+    migration = migrator()
+
+    with pytest.raises(MigrationError, match="declares no version transition"):
+        migration.remap(
+            ExecutionShape(PAY, "authorize", "order"),
+            ExecutionShape(SHIP, "authorize", "order"),
+        )
+
+
 def test_a_boundary_registered_twice_is_refused():
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "order"),
     )
@@ -402,10 +433,13 @@ def test_an_opaque_nested_in_a_container_survives_a_conversion():
     )
 
     migration = migrator()
-    migration.rewrite(
+    migration.remap(
         ExecutionShape(PAY, "authorize", "clients", "units"),
         ExecutionShape(PAY, "charge", "clients", "cents"),
-        arguments=lambda clients, units: {"clients": clients, "cents": units * 100},
+        convert_arguments=lambda clients, units: {
+            "clients": clients,
+            "cents": units * 100,
+        },
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -428,8 +462,13 @@ def test_a_session_at_another_version_is_refused():
 def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
     execution = started("authorize", arguments={"order": "ord_1"})
 
-    migration = migrator({PAY: ("v1", "v2"), SHIP: (None, "v1")})
-    migration.rewrite(
+    migration = migrator(
+        {
+            PAY: DomainVersionTransition("v1", "v2"),
+            SHIP: DomainVersionTransition.claiming("v1"),
+        }
+    )
+    migration.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(SHIP, "authorize", "order"),
     )
@@ -442,7 +481,12 @@ def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
 def test_claiming_a_domain_the_session_already_records_is_refused():
     execution = started("authorize", arguments={"order": "ord_1"})
 
-    migration = migrator({PAY: ("v1", "v2"), SHIP: (None, "v1")})
+    migration = migrator(
+        {
+            PAY: DomainVersionTransition("v1", "v2"),
+            SHIP: DomainVersionTransition.claiming("v1"),
+        }
+    )
 
     with pytest.raises(MigrationError, match="has not entered"):
         migrate(migration, session(execution, versions={PAY: "v1", SHIP: "v7"}))

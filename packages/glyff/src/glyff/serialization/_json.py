@@ -2,7 +2,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from .._execution import CanonicalMapping, CanonicalValue
+from .._execution import CanonicalArgumentMap, CanonicalValue
 from .._interfaces import ArgumentCanonicalizer, Serializer
 from ..exceptions import SerializationError
 from .constants import DEFAULT_ENCODING
@@ -68,7 +68,7 @@ class JsonArgumentCanonicalizer(ArgumentCanonicalizer):
         """
         return to_canonical(obj, self._opaque_policy, self.canonicalize_value)
 
-    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalMapping:
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArgumentMap:
         canonical = self.canonicalize_value(dict(arguments))
         assert isinstance(canonical, dict)
         return canonical

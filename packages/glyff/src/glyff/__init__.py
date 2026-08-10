@@ -2,8 +2,10 @@ from ._context import MetadataAccessor, TransactionScope, get_context
 from ._domain import Domain
 from ._event_system import Event, EventEmitter, EventHandler
 from ._execution import (
+    CanonicalArgumentMap,
     CanonicalArguments,
     CanonicalValue,
+    Opaque,
     Execution,
     ExecutionStatus,
     Metadata,
@@ -36,7 +38,9 @@ __all__ = [
     "ExecutionRepository",
     "ArgumentsDigest",
     "CanonicalValue",
+    "CanonicalArgumentMap",
     "CanonicalArguments",
+    "Opaque",
     "Execution",
     "ExecutionId",
     "ExecutionName",

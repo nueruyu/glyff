@@ -153,7 +153,7 @@ class SequenceScope:
     arguments_digest: ArgumentsDigest
 
     @classmethod
-    def of(cls, execution_id: ExecutionId) -> SequenceScope:
+    def from_execution_id(cls, execution_id: ExecutionId) -> SequenceScope:
         return cls(
             parent_id=execution_id.parent_id,
             domain=execution_id.domain,

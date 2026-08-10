@@ -9,7 +9,9 @@ from .._identity import DomainId, ExecutionId
 from ..exceptions import MigrationCollisionError, MigrationError
 
 
-def _read_only(versions: Mapping[DomainId, str]) -> Mapping[DomainId, str]:
+def _validated_domain_versions(
+    versions: Mapping[DomainId, str],
+) -> Mapping[DomainId, str]:
     # A version no `Domain` could ever declare is one nothing would match again,
     # and migration is the only way into this mapping that does not go through
     # one.
@@ -30,7 +32,9 @@ class SessionMetadata:
 
     def __post_init__(self) -> None:
         # Copied: ``frozen`` protects the attribute, not the mapping behind it.
-        object.__setattr__(self, "domain_versions", _read_only(self.domain_versions))
+        object.__setattr__(
+            self, "domain_versions", _validated_domain_versions(self.domain_versions)
+        )
 
 
 @dataclass(frozen=True)
@@ -94,10 +98,14 @@ class MigrationReport:
 
     def __post_init__(self) -> None:
         object.__setattr__(
-            self, "from_domain_versions", _read_only(self.from_domain_versions)
+            self,
+            "from_domain_versions",
+            _validated_domain_versions(self.from_domain_versions),
         )
         object.__setattr__(
-            self, "to_domain_versions", _read_only(self.to_domain_versions)
+            self,
+            "to_domain_versions",
+            _validated_domain_versions(self.to_domain_versions),
         )
 
 

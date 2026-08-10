@@ -13,7 +13,7 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
-from ..serialization import Opaque
+from .._execution import Opaque
 from ..serialization._utils import encode_canonical
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]

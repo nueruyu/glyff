@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterable, Mapping
 from typing import Any
 
-from ._execution import CanonicalMapping, Execution, ExecutionStatus
+from ._execution import CanonicalArgumentMap, Execution, ExecutionStatus
 from ._identity import DomainId, ExecutionId, SessionId
 
 
@@ -89,11 +89,11 @@ class ArgumentCanonicalizer(ABC):
     """
 
     @abstractmethod
-    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalMapping:
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArgumentMap:
         """Normalizes a call's bound arguments into the JSON data model.
 
         Idempotent on the mappings it produces, and an
-        :class:`~glyff.serialization.Opaque` canonicalizes to the form the value
+        :class:`~glyff.Opaque` canonicalizes to the form the value
         it stands for was recorded as.
         """
         ...

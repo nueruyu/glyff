@@ -180,7 +180,10 @@ what counts as opaque in your application.
 Policy return values are namespaced, so a policy that returns `"pkg.Cls"` cannot
 collide with a plain string argument of the same text. The key that namespaces
 them is glyff's: a value canonicalizing to it — a mapping using it, a dataclass
-field named it — is refused rather than allowed to share an opaque value's key. The same classification governs what is *stored*, not just what
+field named it — is refused rather than allowed to share an opaque value's key.
+`Opaque` is that marker as a value: canonicalizing one writes the marker, so a
+recorded argument can go back through a canonicalizer unchanged. Passing one to
+a live call declares the representation outright, and no policy is consulted. The same classification governs what is *stored*, not just what
 is hashed — an opaque value the policy rejects never reaches the store.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard

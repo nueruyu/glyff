@@ -39,6 +39,8 @@ pip install glyff
 | `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`.                                   |
 | `SerializedValue`     | Serializer-neutral persisted value (results, metadata).         |
 | `CanonicalArguments`    | A call's canonical arguments, the preimage of its key.          |
+| `CanonicalArgumentMap` | A whole call's arguments, canonicalized.                        |
+| `Opaque`              | A canonical value standing in for one with no representation.   |
 | `Metadata`            | Metadata entry owned by an `Execution`.                         |
 | `ExecutionRepository` | Repository for execution aggregates.                            |
 | `Transaction`         | Active transaction boundary.                                    |

@@ -18,7 +18,47 @@ CanonicalValue: TypeAlias = (
 
 # A whole call's arguments, canonicalized. Always a mapping, because it is keyed
 # by the names the call was bound to.
-CanonicalMapping: TypeAlias = "dict[str, CanonicalValue]"
+CanonicalArgumentMap: TypeAlias = "dict[str, CanonicalValue]"
+
+# Reserved marker for opaque canonical values.
+_OPAQUE_MARKER_KEY = "__glyff_opaque__"
+
+
+@dataclass(frozen=True)
+class Opaque:
+    """A canonical value standing in for one with no value representation.
+
+    :attr:`representation` is what an `OpaquePolicy` returned, not the value it
+    replaced — there is nothing to get back to. Canonicalizing one writes the
+    marker again, which is how a recorded argument goes back through a
+    canonicalizer without a mapping being able to pass itself off as one.
+
+    Passing one to a live call is a deliberate escape hatch: it declares the
+    representation outright, so no policy is consulted for it.
+    """
+
+    representation: CanonicalValue
+
+
+def opaque_marker(representation: CanonicalValue) -> CanonicalValue:
+    """The canonical form an opaque value is recorded as."""
+    return {_OPAQUE_MARKER_KEY: representation}
+
+
+def is_opaque_marker(value: CanonicalValue) -> bool:
+    """Whether a canonical value is what :func:`opaque_marker` writes."""
+    return isinstance(value, dict) and len(value) == 1 and _OPAQUE_MARKER_KEY in value
+
+
+def claims_opaque_marker(value: CanonicalValue) -> bool:
+    """Whether a mapping claims the reserved key, however it came to."""
+    return isinstance(value, dict) and _OPAQUE_MARKER_KEY in value
+
+
+def opaque_marker_representation(value: CanonicalValue) -> CanonicalValue:
+    """What the policy returned, from a value :func:`is_opaque_marker` accepts."""
+    assert isinstance(value, dict)
+    return value[_OPAQUE_MARKER_KEY]
 
 
 @dataclass(frozen=True)

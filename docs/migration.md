@@ -113,16 +113,19 @@ boundaries that changed shape — what each one was, what it became, and the
 conversion between their arguments:
 
 ```python
-from glyff.migration import ExecutionShape, RemappingMigrator
+from glyff.migration import DomainVersionTransition, ExecutionShape, RemappingMigrator
 
 migrator = RemappingMigrator(
     canonicalizer=canonicalizer,
-    domain_versions={"com.example.payments": ("1", "2")},
+    version_transitions={"com.example.payments": DomainVersionTransition("1", "2")},
 )
-migrator.rewrite(
+migrator.remap(
     ExecutionShape("com.example.payments", "authorize", "order", "units"),
     ExecutionShape("com.example.payments", "charge", "order_id", "cents"),
-    arguments=lambda order, units: {"order_id": order["id"], "cents": units * 100},
+    convert_arguments=lambda order, units: {
+        "order_id": order["id"],
+        "cents": units * 100,
+    },
 )
 
 report = await backend.session_migration.run(SessionId("order-42"), migrator)
@@ -136,14 +139,16 @@ migration claims to know.
 
 Every side is then checked against what is actually there:
 
-- `domain_versions` names the generations this migration is *for* — the version
-  it reads and the version it writes, per domain. A session recording anything
-  else is refused, so a v1→v2 migration cannot be applied to a v3 session whose
-  boundaries happen to match. Domains the migration says nothing about keep the
+- `version_transitions` names the generations this migration is *for* — the
+  version it reads and the version it writes, per domain. A session recording
+  anything else is refused, so a v1→v2 migration cannot be applied to a v3
+  session whose boundaries happen to match. Because a shape carries no version,
+  these are the only thing tying a rule to a generation, so **every domain a
+  rule touches needs one**: a domain that only carries records across unchanged
+  declares the same version twice, and one the session has never entered uses
+  `DomainVersionTransition.claiming("1")`. Domains no rule touches keep the
   versions they had, so a library can publish a migration for its own domain
-  without knowing what else the session has entered. A rewrite *into* a domain
-  the session has never entered says so with `None` on the left — `{SHIP:
-  (None, "1")}` — which claims it.
+  without knowing what else the session has entered.
 - Records whose argument names are not the ones declared are refused, and so is
   a conversion that returns the wrong names. Dropping is held to the same check,
   since it is the destructive one.
@@ -151,11 +156,11 @@ Every side is then checked against what is actually there:
 An `ExecutionShape`'s `argument_names` are every name a call carries, defaults
 included, so a boundary that gained a default has the migration write it out.
 
-The conversion receives the recorded arguments by their old names and returns the
-ones the new shape is keyed by. Leave it out when the names did not change and
-the recorded form is kept as it is. `drop` removes a boundary's records, and
-everything recorded beneath them, since a descendant outlives its parent only as
-weight no resume can reach.
+`convert_arguments` receives the recorded arguments by their old names and
+returns the ones the new shape is keyed by. Leave it out when the names did not
+change and the recorded form is kept as it is. `drop` removes a boundary's
+records, and everything recorded beneath them, since a descendant outlives its
+parent only as weight no resume can reach.
 
 Everything a migration does not name — parent chains that a rewrite invalidates,
 the ordinals a live `Sequencer` would assign — is the migrator's, because those
@@ -183,7 +188,7 @@ Repeated calls that share parent, name and arguments are matched by ordinal, and
 nothing records which of them ran first. So a migration that gathers calls
 recorded separately into one such class — two boundaries renamed onto one, or a
 conversion that maps distinct arguments onto one value — is refused with
-`MigrationOrderError` rather than given an order glyff invented. Give those calls
+`MigrationOrdinalAmbiguityError` rather than given an order glyff invented. Give those calls
 arguments that tell them apart, or drop one.
 
 > **Planned** — migration chains, so a session whose stamp trails the code by

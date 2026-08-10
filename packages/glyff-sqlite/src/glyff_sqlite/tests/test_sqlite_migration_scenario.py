@@ -10,7 +10,11 @@ from pathlib import Path
 import pytest
 from glyff import ArgumentCanonicalizer, Domain, DomainId, Serializer, SessionId
 from glyff.exceptions import DomainVersionMismatchError
-from glyff.migration import ExecutionShape, RemappingMigrator
+from glyff.migration import (
+    DomainVersionTransition,
+    ExecutionShape,
+    RemappingMigrator,
+)
 from glyff.testing import make_session
 from glyff_sqlite import SQLiteBackend
 
@@ -88,22 +92,23 @@ async def checkout_v2(order: str) -> str:
 
 def _migration(canonicalizer: ArgumentCanonicalizer) -> RemappingMigrator:
     migrator = RemappingMigrator(
-        canonicalizer=canonicalizer, domain_versions={PAY: ("1", "2")}
+        canonicalizer=canonicalizer,
+        version_transitions={PAY: DomainVersionTransition("1", "2")},
     )
-    migrator.rewrite(
+    migrator.remap(
         ExecutionShape(PAY, "checkout_v1", "order"),
         ExecutionShape(PAY, "checkout_v2", "order"),
     )
-    migrator.rewrite(
+    migrator.remap(
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(PAY, "charge", "order"),
     )
-    migrator.rewrite(
+    migrator.remap(
         ExecutionShape(PAY, "capture", "order"),
         ExecutionShape(PAY, "capture_cents", "order", "cents"),
-        arguments=lambda order: {"order": order, "cents": 1200},
+        convert_arguments=lambda order: {"order": order, "cents": 1200},
     )
-    migrator.rewrite(
+    migrator.remap(
         ExecutionShape(PAY, "finish", "order"), ExecutionShape(PAY, "complete", "order")
     )
     return migrator

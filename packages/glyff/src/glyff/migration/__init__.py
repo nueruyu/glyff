@@ -5,8 +5,6 @@ session should become, and a backend's `SessionMigration` makes that the stored
 truth atomically. Neither knows the other's half.
 """
 
-from ._arguments import RecordedValue
-from ..serialization import Opaque
 from ._interfaces import MigratableBackend, SessionMigration, SessionMigrator
 from ._models import (
     MigrationReport,
@@ -14,25 +12,17 @@ from ._models import (
     SessionMigrationResult,
     StoredSession,
 )
-from ._remap import (
-    ArgumentConversion,
-    ExecutionShape,
-    RemappingMigrator,
-    VersionChange,
-)
+from ._remap import DomainVersionTransition, ExecutionShape, RemappingMigrator
 
 __all__ = [
-    "ArgumentConversion",
+    "DomainVersionTransition",
     "ExecutionShape",
     "MigratableBackend",
     "MigrationReport",
-    "Opaque",
-    "RecordedValue",
     "RemappingMigrator",
     "SessionMetadata",
     "SessionMigration",
     "SessionMigrationResult",
     "SessionMigrator",
     "StoredSession",
-    "VersionChange",
 ]

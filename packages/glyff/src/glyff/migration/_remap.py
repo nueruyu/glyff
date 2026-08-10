@@ -10,9 +10,9 @@ from typing import Any
 from .._execution import CanonicalArguments, Execution
 from .._identity import DomainId, ExecutionId, ExecutionName, SequenceScope
 from .._interfaces import ArgumentCanonicalizer
-from ..exceptions import MigrationError, MigrationOrderError
+from ..exceptions import MigrationError, MigrationOrdinalAmbiguityError
 from ..serialization._utils import encode_canonical
-from ._arguments import RecordedValue, from_recorded
+from ._arguments import RecordedArgumentValue, from_recorded
 from ._interfaces import SessionMigrator
 from ._models import (
     MigrationReport,
@@ -21,20 +21,25 @@ from ._models import (
     StoredSession,
 )
 
-ArgumentConversion = Callable[..., Mapping[str, Any]]
-"""What a boundary's arguments become.
+_ArgumentConverter = Callable[..., Mapping[str, Any]]
 
-Called with the recorded arguments as keywords, each a `RecordedValue`. What it
-returns is canonicalized, so those may be ordinary Python values — or
-`RecordedValue`s handed straight back.
-"""
 
-VersionChange = tuple[str | None, str]
-"""The version a migration reads, and the one it writes.
+@dataclass(frozen=True)
+class DomainVersionTransition:
+    """The generation a migration reads for one domain, and the one it writes.
 
-``None`` on the left is a domain the session has not entered, which this
-migration claims — what a rewrite into a new domain needs.
-"""
+    Every domain a migration touches needs one, so a rewrite can never run
+    against a generation nobody said it was for. A domain that only carries
+    records across unchanged declares the same version twice.
+    """
+
+    source: str | None
+    target: str
+
+    @classmethod
+    def claiming(cls, target: str) -> DomainVersionTransition:
+        """A domain the session has not entered, which this migration claims."""
+        return cls(source=None, target=target)
 
 
 @dataclass(frozen=True)
@@ -68,10 +73,10 @@ class ExecutionShape:
 
 
 @dataclass(frozen=True)
-class _Rewrite:
-    old: ExecutionShape
-    to: ExecutionShape | None
-    arguments: ArgumentConversion | None
+class _Remap:
+    source: ExecutionShape
+    target: ExecutionShape | None
+    convert_arguments: _ArgumentConverter | None
 
 
 class RemappingMigrator(SessionMigrator):
@@ -86,79 +91,99 @@ class RemappingMigrator(SessionMigrator):
         self,
         *,
         canonicalizer: ArgumentCanonicalizer,
-        domain_versions: (
-            Mapping[DomainId, VersionChange] | Mapping[str, VersionChange]
-        ),
+        version_transitions: Mapping[DomainId | str, DomainVersionTransition],
     ) -> None:
         # The canonicalizer the resuming session will build, not the one that
         # wrote the records: the keys this computes have to be the keys that
         # session goes looking for.
         self._canonicalizer = canonicalizer
-        self._versions: dict[DomainId, VersionChange] = {
-            DomainId(domain) if isinstance(domain, str) else domain: change
-            for domain, change in domain_versions.items()
+        self._transitions: dict[DomainId, DomainVersionTransition] = {
+            DomainId(domain) if isinstance(domain, str) else domain: transition
+            for domain, transition in version_transitions.items()
         }
-        self._rewrites: dict[tuple[DomainId, ExecutionName], _Rewrite] = {}
+        self._remaps: dict[tuple[DomainId, ExecutionName], _Remap] = {}
 
-    def rewrite(
+    def remap(
         self,
-        old: ExecutionShape,
-        to: ExecutionShape,
+        source: ExecutionShape,
+        target: ExecutionShape,
         *,
-        arguments: ArgumentConversion | None = None,
+        convert_arguments: _ArgumentConverter | None = None,
     ) -> None:
-        """Registers a move of ``old``'s records onto ``to``.
+        """Registers a move of ``source``'s records onto ``target``.
 
-        ``arguments`` receives the recorded arguments by their old names and
-        returns the ones ``to`` is keyed by; leave it out when the argument
-        names did not change and the recorded form is kept as it is.
+        ``convert_arguments`` receives the recorded arguments by their old names
+        and returns the ones ``target`` is keyed by; leave it out when the
+        argument names did not change and the recorded form is kept as it is.
         """
-        if arguments is None and old.argument_names != to.argument_names:
+        if convert_arguments is None and source.argument_names != target.argument_names:
             raise MigrationError(
-                f"{old.name} is recorded with {_named(old.argument_names)} and "
-                f"{to.name} takes {_named(to.argument_names)}, so the recorded "
-                "arguments cannot carry over unchanged. Give the migration a "
-                "conversion between them."
+                f"{source.name} is recorded with {_format_argument_names(source.argument_names)} "
+                f"and {target.name} takes {_format_argument_names(target.argument_names)}, "
+                "so the recorded arguments cannot carry over unchanged. Give the "
+                "migration a conversion between them."
             )
-        self._register(old.key, _Rewrite(old=old, to=to, arguments=arguments))
+        self._require_transition(source.domain)
+        self._require_transition(target.domain)
+        self._register(
+            source.key,
+            _Remap(source=source, target=target, convert_arguments=convert_arguments),
+        )
 
-    def drop(self, old: ExecutionShape) -> None:
-        """Registers the removal of ``old``'s records, and their descendants."""
-        self._register(old.key, _Rewrite(old=old, to=None, arguments=None))
+    def drop(self, source: ExecutionShape) -> None:
+        """Registers the removal of ``source``'s records, and their descendants."""
+        self._require_transition(source.domain)
+        self._register(
+            source.key, _Remap(source=source, target=None, convert_arguments=None)
+        )
 
     def migrate(self, source: StoredSession) -> SessionMigrationResult:
-        recorded = source.metadata.domain_versions
-        self._require_source_versions(recorded)
-        migrated = {
-            **recorded,
-            **{domain: change[1] for domain, change in self._versions.items()},
+        recorded_versions = source.metadata.domain_versions
+        self._require_source_versions(recorded_versions)
+        migrated_versions = {
+            **recorded_versions,
+            **{
+                domain: transition.target
+                for domain, transition in self._transitions.items()
+            },
         }
         return SessionMigrationResult(
             session=StoredSession(
-                metadata=SessionMetadata(domain_versions=migrated),
+                metadata=SessionMetadata(domain_versions=migrated_versions),
                 executions=self._rebuild(source),
             ),
             report=MigrationReport(
-                from_domain_versions=recorded, to_domain_versions=migrated
+                from_domain_versions=recorded_versions,
+                to_domain_versions=migrated_versions,
             ),
         )
 
     # -- Registration --------------------------------------------------------
 
-    def _register(
-        self, boundary: tuple[DomainId, ExecutionName], rewrite: _Rewrite
-    ) -> None:
-        if boundary in self._rewrites:
-            domain, name = boundary
+    def _require_transition(self, domain: DomainId) -> None:
+        # The shapes carry no version, so the transitions are the only thing
+        # saying which generation a rule was written against. A rule reaching a
+        # domain none of them names would run whatever the session records.
+        if domain not in self._transitions:
+            raise MigrationError(
+                f"This migration touches {domain} but declares no version "
+                "transition for it, so nothing says which generation it is "
+                "written against. Declare one, repeating the version if the "
+                "domain only carries records across unchanged."
+            )
+
+    def _register(self, key: tuple[DomainId, ExecutionName], remap: _Remap) -> None:
+        if key in self._remaps:
+            domain, name = key
             raise MigrationError(
                 f"{name} in {domain} is already registered. One boundary "
                 "changes shape once."
             )
-        self._rewrites[boundary] = rewrite
+        self._remaps[key] = remap
 
     def _require_source_versions(self, recorded: Mapping[DomainId, str]) -> None:
-        for domain, (reads, _) in self._versions.items():
-            if reads is None:
+        for domain, transition in self._transitions.items():
+            if transition.source is None:
                 if domain in recorded:
                     raise MigrationError(
                         f"This migration claims {domain} as a domain the "
@@ -168,14 +193,16 @@ class RemappingMigrator(SessionMigrator):
                 continue
             if domain not in recorded:
                 raise MigrationError(
-                    f"This migration reads {domain} at version {reads!r}, but "
-                    "the session records no version for that domain."
+                    f"This migration reads {domain} at version "
+                    f"{transition.source!r}, but the session records no version "
+                    "for that domain."
                 )
-            if recorded[domain] != reads:
+            if recorded[domain] != transition.source:
                 raise MigrationError(
-                    f"This migration reads {domain} at version {reads!r}, but "
-                    f"the session records {recorded[domain]!r}. It describes "
-                    "another generation of these records."
+                    f"This migration reads {domain} at version "
+                    f"{transition.source!r}, but the session records "
+                    f"{recorded[domain]!r}. It describes another generation of "
+                    "these records."
                 )
 
     # -- Rebuilding ----------------------------------------------------------
@@ -185,7 +212,7 @@ class RemappingMigrator(SessionMigrator):
 
         migrated: list[Execution] = []
         ordinals: dict[SequenceScope, int] = {}
-        sources: dict[SequenceScope, set[SequenceScope]] = {}
+        source_scopes_by_target: dict[SequenceScope, set[SequenceScope]] = {}
 
         # Ancestors first, so a parent's own key is settled before anything that
         # names it. Depth-first only because that keeps the walk iterative.
@@ -195,22 +222,22 @@ class RemappingMigrator(SessionMigrator):
             for execution in sorted(
                 children.get(old_parent, ()), key=lambda e: e.id.sequence
             ):
-                rewrite = self._rewrites.get((execution.id.domain, execution.id.name))
-                if rewrite is not None and rewrite.to is None:
+                remap = self._remaps.get((execution.id.domain, execution.id.name))
+                if remap is not None and remap.target is None:
                     # Checked before deleting, not only before rewriting: this
                     # is the destructive half.
-                    self._recorded(execution, rewrite.old)
+                    self._recorded(execution, remap.source)
                     continue
 
-                arguments = self._arguments(execution, rewrite)
-                target = rewrite.to if rewrite is not None else None
+                arguments = self._arguments(execution, remap)
+                target = remap.target if remap is not None else None
                 scope = SequenceScope(
                     parent_id=new_parent,
                     domain=target.domain if target else execution.id.domain,
                     name=target.name if target else execution.id.name,
                     arguments_digest=arguments.digest,
                 )
-                _record_source(sources, scope, execution.id)
+                _require_one_source_scope(source_scopes_by_target, scope, execution.id)
                 sequence = ordinals.get(scope, 0)
                 ordinals[scope] = sequence + 1
 
@@ -227,31 +254,31 @@ class RemappingMigrator(SessionMigrator):
         return tuple(migrated)
 
     def _arguments(
-        self, execution: Execution, rewrite: _Rewrite | None
+        self, execution: Execution, remap: _Remap | None
     ) -> CanonicalArguments:
-        if rewrite is None:
+        if remap is None:
             return execution.arguments
-        if rewrite.arguments is None:
+        if remap.convert_arguments is None:
             # The recorded bytes are the digest's preimage, so an argument that
             # did not change keeps its key by keeping them.
-            self._recorded(execution, rewrite.old)
+            self._recorded(execution, remap.source)
             return execution.arguments
 
-        assert rewrite.to is not None
-        recorded = self._recorded(execution, rewrite.old)
+        assert remap.target is not None
+        recorded = self._recorded(execution, remap.source)
         try:
-            converted = dict(rewrite.arguments(**recorded))
+            converted = dict(remap.convert_arguments(**recorded))
         except Exception as e:
             raise MigrationError(
                 f"Converting the arguments of {execution.id.name} in "
                 f"{execution.id.domain} failed: {e}"
             ) from e
 
-        if set(converted) != rewrite.to.argument_names:
+        if set(converted) != remap.target.argument_names:
             raise MigrationError(
-                f"The conversion onto {rewrite.to.name} returned "
-                f"{_named(set(converted))}, but it is keyed by "
-                f"{_named(rewrite.to.argument_names)}."
+                f"The conversion onto {remap.target.name} returned "
+                f"{_format_argument_names(set(converted))}, but it is keyed by "
+                f"{_format_argument_names(remap.target.argument_names)}."
             )
         return CanonicalArguments(
             encode_canonical(self._canonicalizer.canonicalize(converted))
@@ -259,20 +286,20 @@ class RemappingMigrator(SessionMigrator):
 
     @staticmethod
     def _recorded(
-        execution: Execution, old: ExecutionShape
-    ) -> dict[str, RecordedValue]:
+        execution: Execution, source: ExecutionShape
+    ) -> dict[str, RecordedArgumentValue]:
         stored = json.loads(execution.arguments.data)
-        if set(stored) != old.argument_names:
+        if set(stored) != source.argument_names:
             raise MigrationError(
                 f"{execution.id.name} in {execution.id.domain} is recorded with "
-                f"{_named(set(stored))}, but the migration describes it as "
-                f"{_named(old.argument_names)}. It describes another generation "
-                "of these records."
+                f"{_format_argument_names(set(stored))}, but the migration "
+                f"describes it as {_format_argument_names(source.argument_names)}. "
+                "It describes another generation of these records."
             )
         return {name: from_recorded(value) for name, value in stored.items()}
 
 
-def _named(names: set[str] | frozenset[str]) -> str:
+def _format_argument_names(names: set[str] | frozenset[str]) -> str:
     return ", ".join(sorted(names)) or "no arguments"
 
 
@@ -292,19 +319,19 @@ def _children_by_parent(
     return children
 
 
-def _record_source(
-    sources: dict[SequenceScope, set[SequenceScope]],
-    scope: SequenceScope,
+def _require_one_source_scope(
+    source_scopes_by_target: dict[SequenceScope, set[SequenceScope]],
+    target: SequenceScope,
     old_id: ExecutionId,
 ) -> None:
     # An ordinal orders calls within one scope and means nothing across two, so
     # renumbering is sound only while a scope's members all came from one.
-    seen = sources.setdefault(scope, set())
-    seen.add(SequenceScope.of(old_id))
+    seen = source_scopes_by_target.setdefault(target, set())
+    seen.add(SequenceScope.from_execution_id(old_id))
     if len(seen) > 1:
-        raise MigrationOrderError(
-            f"Migrating onto {scope.name} in {scope.domain} gathers calls that "
-            "were recorded separately into one class of repeated calls, which "
-            "are matched by ordinal. Nothing records which of them ran first. "
-            "Give them arguments that tell them apart, or drop one."
+        raise MigrationOrdinalAmbiguityError(
+            f"Migrating onto {target.name} in {target.domain} gathers calls "
+            "that were recorded separately into one class of repeated calls, "
+            "which are matched by ordinal. Nothing records which of them ran "
+            "first. Give them arguments that tell them apart, or drop one."
         )

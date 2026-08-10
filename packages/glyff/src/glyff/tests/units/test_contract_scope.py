@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 from glyff import ArgumentCanonicalizer, CanonicalValue, Serializer
-from glyff.serialization import Opaque
+from glyff import Opaque
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
 
@@ -24,7 +24,7 @@ class BareCanonicalizer(ArgumentCanonicalizer):
 
 def _plain(value: Any) -> Any:
     if isinstance(value, Opaque):
-        return {"opaque": _plain(value.value)}
+        return {"opaque": _plain(value.representation)}
     return value
 
 

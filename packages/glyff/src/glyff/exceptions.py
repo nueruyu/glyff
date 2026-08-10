@@ -134,7 +134,7 @@ class MigrationCollisionError(MigrationError):
     pass
 
 
-class MigrationOrderError(MigrationError):
+class MigrationOrdinalAmbiguityError(MigrationError):
     """
     Raised when a migration would gather separately recorded calls into one
     class of identical repeated calls.
