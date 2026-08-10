@@ -11,10 +11,7 @@ from .._execution import CanonicalValue
 from ..exceptions import ArgumentCanonicalizationError
 from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
-# A key reserved for glyff, so a policy's output can never be mistaken for a
-# native representation that happens to match it. `_canonical_mapping` refuses a
-# mapping that claims it, which is what makes the namespace real rather than
-# merely unlikely.
+# Reserved marker for opaque canonical values.
 _OPAQUE_TAG = "__glyff_opaque__"
 
 

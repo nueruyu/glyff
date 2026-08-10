@@ -167,11 +167,9 @@ the key — wherever they sit, since a policy applies at any depth. Return one
 unchanged and the argument keys the call exactly as it did; there is nothing to
 rebuild, because there was nothing to record.
 
-Recorded arguments in general are the canonical form, not the values that
-produced it, so what a conversion computes with is JSON — a `bytes` argument
-reads as hex, a dataclass as the fields it compares by. Fields a dataclass
-excludes from equality are not there at all: they never distinguished two calls,
-so nothing recorded them.
+A conversion computes with the recorded canonical form, never the values that
+produced it — see [canonical arguments](./execution-identity.md#canonical-arguments)
+for what that form keeps and what it drops.
 
 #### What changing the order does
 
