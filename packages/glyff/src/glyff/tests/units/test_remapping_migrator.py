@@ -12,6 +12,7 @@ from glyff.migration import (
     RemappingMigrator,
     SessionMetadata,
     StoredSession,
+    VersionChange,
 )
 from glyff.serialization import JsonArgumentCanonicalizer
 from glyff.testing import canonical_arguments, make_execution_id
@@ -50,7 +51,7 @@ def session(
 
 
 def migrator(
-    versions: dict[DomainId, tuple[str, str]] | None = None,
+    versions: dict[DomainId, VersionChange] | None = None,
 ) -> RemappingMigrator:
     return RemappingMigrator(
         canonicalizer=JsonArgumentCanonicalizer(),
