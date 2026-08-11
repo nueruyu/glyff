@@ -14,12 +14,7 @@ from ..exceptions import MigrationError, MigrationOrdinalAmbiguityError
 from ..serialization._utils import encode_canonical
 from ._arguments import RecordedArgumentValue, from_recorded
 from ._interfaces import SessionMigrator
-from ._models import (
-    MigrationReport,
-    SessionMetadata,
-    SessionMigrationResult,
-    StoredSession,
-)
+from ._models import SessionMetadata, StoredSession
 
 _ArgumentConverter = Callable[..., Mapping[str, Any]]
 
@@ -35,6 +30,12 @@ class DomainVersionTransition:
 
     source: str | None
     target: str
+
+    def __post_init__(self) -> None:
+        # A version no `Domain` could declare is one nothing would ever match,
+        # so it is refused where it is written rather than where it is used.
+        if not self.target or self.source == "":
+            raise ValueError("A domain version cannot be empty.")
 
     @classmethod
     def claiming(cls, target: str) -> DomainVersionTransition:
@@ -137,7 +138,7 @@ class RemappingMigrator(SessionMigrator):
             source.key, _Remap(source=source, target=None, convert_arguments=None)
         )
 
-    def migrate(self, source: StoredSession) -> SessionMigrationResult:
+    def migrate(self, source: StoredSession) -> StoredSession:
         recorded_versions = source.metadata.domain_versions
         self._require_source_versions(recorded_versions)
         migrated_versions = {
@@ -147,15 +148,9 @@ class RemappingMigrator(SessionMigrator):
                 for domain, transition in self._transitions.items()
             },
         }
-        return SessionMigrationResult(
-            session=StoredSession(
-                metadata=SessionMetadata(domain_versions=migrated_versions),
-                executions=self._rebuild(source),
-            ),
-            report=MigrationReport(
-                from_domain_versions=recorded_versions,
-                to_domain_versions=migrated_versions,
-            ),
+        return StoredSession(
+            metadata=SessionMetadata(domain_versions=migrated_versions),
+            executions=self._rebuild(source),
         )
 
     # -- Registration --------------------------------------------------------
@@ -211,7 +206,6 @@ class RemappingMigrator(SessionMigrator):
         children = _children_by_parent(source.executions)
 
         migrated: list[Execution] = []
-        ordinals: dict[SequenceScope, int] = {}
         source_scopes_by_target: dict[SequenceScope, set[SequenceScope]] = {}
 
         # Ancestors first, so a parent's own key is settled before anything that
@@ -238,14 +232,15 @@ class RemappingMigrator(SessionMigrator):
                     arguments_digest=arguments.digest,
                 )
                 _require_one_source_scope(source_scopes_by_target, scope, execution.id)
-                sequence = ordinals.get(scope, 0)
-                ordinals[scope] = sequence + 1
 
+                # The ordinal is kept, not re-derived: it orders this call among
+                # the ones the resumed code will make, and a migration knows
+                # nothing about how many of those there are.
                 new_id = ExecutionId(
                     parent_id=scope.parent_id,
                     domain=scope.domain,
                     name=scope.name,
-                    sequence=sequence,
+                    sequence=execution.id.sequence,
                     arguments_digest=scope.arguments_digest,
                 )
                 migrated.append(replace(execution, id=new_id, arguments=arguments))
@@ -325,7 +320,7 @@ def _require_one_source_scope(
     old_id: ExecutionId,
 ) -> None:
     # An ordinal orders calls within one scope and means nothing across two, so
-    # renumbering is sound only while a scope's members all came from one.
+    # carrying one over is sound only while a scope's members all came from one.
     seen = source_scopes_by_target.setdefault(target, set())
     seen.add(SequenceScope.from_execution_id(old_id))
     if len(seen) > 1:

@@ -162,9 +162,12 @@ change and the recorded form is kept as it is. `drop` removes a boundary's
 records, and everything recorded beneath them, since a descendant outlives its
 parent only as weight no resume can reach.
 
-Everything a migration does not name — parent chains that a rewrite invalidates,
-the ordinals a live `Sequencer` would assign — is the migrator's, because those
-are what a caller cannot reproduce.
+The parent chains a remap invalidates are the migrator's: it rebuilds every
+descendant's chain onto its remapped ancestor, which a caller cannot do without
+reproducing the store's own encoding. **Ordinals it leaves alone.** One orders a
+call among the ones the resumed code will make, and a migration knows nothing
+about how many of those there are — a record at `#1` is what a second identical
+call replays, so moving it to `#0` would hand it to the first one instead.
 
 **Values with no value representation** arrive wrapped in `Opaque`, carrying
 whatever the [`OpaquePolicy`](./execution-identity.md#canonical-arguments) put in
@@ -180,7 +183,7 @@ for what that form keeps and what it drops.
 
 | What changed | What a migration owes it |
 | --- | --- |
-| The order of a boundary's parameters | Nothing. A key is a mapping of names, and its encoding sorts them. |
+| The order of a boundary's arguments | Nothing. A key is a mapping of names, and its encoding sorts them. |
 | The order of distinct calls | Nothing. Keys are content-addressed, not positional. |
 | The count or relative order of [identical repeated calls](./execution-identity.md#identical-repeated-calls) | This is the one glyff cannot carry. |
 
@@ -188,8 +191,10 @@ Repeated calls that share parent, name and arguments are matched by ordinal, and
 nothing records which of them ran first. So a migration that gathers calls
 recorded separately into one such class — two boundaries renamed onto one, or a
 conversion that maps distinct arguments onto one value — is refused with
-`MigrationOrdinalAmbiguityError` rather than given an order glyff invented. Give those calls
-arguments that tell them apart, or drop one.
+`MigrationOrdinalAmbiguityError` rather than given an order glyff invented — which
+is also what keeps carrying ordinals over sound, since an ordinal means nothing
+outside the scope that assigned it. Give those calls arguments that tell them
+apart, or drop one.
 
 > **Planned** — migration chains, so a session whose stamp trails the code by
 > more than one generation applies the steps in sequence, and a published form so

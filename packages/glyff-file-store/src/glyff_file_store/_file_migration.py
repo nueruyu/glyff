@@ -34,19 +34,24 @@ class FileSessionMigration(SessionMigration):
     ) -> MigrationReport:
         def migrate(document: dict[str, Any]) -> DocumentUpdate[MigrationReport]:
             source = self._read(document, session_id.value)
-            result = migrator.migrate(source)
+            replacement = migrator.migrate(source)
 
             document.setdefault(_SESSIONS_KEY, {})[session_id.value] = {
                 _DOMAIN_VERSIONS_KEY: {
                     domain.value: version
-                    for domain, version in result.session.metadata.domain_versions.items()
+                    for domain, version in replacement.metadata.domain_versions.items()
                 },
                 _EXECUTIONS_KEY: {
                     execution_id_to_path(execution.id): execution_to_dict(execution)
-                    for execution in result.session.executions
+                    for execution in replacement.executions
                 },
             }
-            return DocumentUpdate(result.report)
+            return DocumentUpdate(
+                MigrationReport(
+                    from_domain_versions=source.metadata.domain_versions,
+                    to_domain_versions=replacement.metadata.domain_versions,
+                )
+            )
 
         return await self._client.update_document(migrate)
 

@@ -10,21 +10,34 @@ import json
 from typing import Any
 
 import pytest
-from glyff import ArgumentCanonicalizer, CanonicalValue, Serializer
-from glyff import Opaque
+from glyff import (
+    ArgumentCanonicalizer,
+    CanonicalValue,
+    Opaque,
+    Serializer,
+    opaque_marker,
+)
+from glyff._execution import claims_opaque_marker
+from glyff.exceptions import ArgumentCanonicalizationError
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
 
 class BareCanonicalizer(ArgumentCanonicalizer):
     def canonicalize(self, arguments) -> CanonicalValue:
-        # `Opaque` is a value the interface names, so writing it out is part of
-        # implementing this and not an extra the contract asks for.
+        # The opaque marker is the canonical format's, so writing and reserving
+        # it is part of implementing this, not an extra the contract asks for.
         return {name: _plain(value) for name, value in arguments.items()}
 
 
 def _plain(value: Any) -> Any:
     if isinstance(value, Opaque):
-        return {"opaque": _plain(value.representation)}
+        return opaque_marker(_plain(value.representation))
+    if isinstance(value, dict):
+        if claims_opaque_marker(value):
+            raise ArgumentCanonicalizationError("The opaque marker is reserved.")
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
     return value
 
 

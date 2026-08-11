@@ -18,7 +18,6 @@ from glyff.migration import (
     MigratableBackend,
     MigrationReport,
     SessionMetadata,
-    SessionMigrationResult,
     SessionMigrator,
     StoredSession,
 )
@@ -61,7 +60,7 @@ class RecordingMigrator(SessionMigrator):
         self._before_return = before_return
         self.source: StoredSession | None = None
 
-    def migrate(self, source: StoredSession) -> SessionMigrationResult:
+    def migrate(self, source: StoredSession) -> StoredSession:
         self.source = source
         if self._raises is not None:
             raise self._raises
@@ -77,13 +76,7 @@ class RecordingMigrator(SessionMigrator):
                     source.executions if self._executions is None else self._executions
                 ),
             )
-        return SessionMigrationResult(
-            session=session,
-            report=MigrationReport(
-                from_domain_versions=source.metadata.domain_versions,
-                to_domain_versions=session.metadata.domain_versions,
-            ),
-        )
+        return session
 
 
 async def _executions(

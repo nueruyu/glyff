@@ -13,7 +13,8 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
-from .._execution import Opaque
+from .._execution import Opaque, opaque_marker
+from ..exceptions import ArgumentCanonicalizationError
 from ..serialization._utils import encode_canonical
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]
@@ -93,18 +94,25 @@ class ArgumentCanonicalizerContract:
 
         assert canonicalizer.canonicalize(form) == form
 
-    def test_a_recorded_opaque_value_canonicalizes_back_to_its_marker(
+    def test_an_opaque_value_canonicalizes_to_the_marker(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # A migration hands back what a record held, and what a policy stood in
-        # for comes back as `Opaque`. It has to reach the form it was read from.
-        marker = canonicalizer.canonicalize({"a": Opaque("com.example.Service")})
+        # The marker is the canonical format's, not any one canonicalizer's: a
+        # migration reads recorded arguments by it, so a form written another
+        # way would not be read back as opaque at all.
+        assert canonicalizer.canonicalize({"a": Opaque("com.example.Service")}) == {
+            "a": opaque_marker("com.example.Service")
+        }
 
-        assert encode_canonical(marker)
-        assert (
-            canonicalizer.canonicalize({"a": Opaque("com.example.Service")}) == marker
-        )
-        assert marker != canonicalizer.canonicalize({"a": "com.example.Service"})
+    def test_a_value_claiming_the_marker_is_refused(
+        self, canonicalizer: ArgumentCanonicalizer
+    ):
+        # Reserved for the same reason: a value canonicalizing to the marker
+        # would share an opaque value's key, and read back as one.
+        with pytest.raises(ArgumentCanonicalizationError):
+            canonicalizer.canonicalize(
+                {"a": dict(opaque_marker("com.example.Service"))}  # type: ignore[arg-type]
+            )
 
     def test_a_later_instance_agrees_on_the_form(
         self, canonicalizer_factory: CanonicalizerFactory

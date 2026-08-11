@@ -65,7 +65,7 @@ def recorded(execution: Execution) -> CanonicalValue:
 
 
 def migrate(migration: RemappingMigrator, source: StoredSession) -> list[Execution]:
-    return list(migration.migrate(source).session.executions)
+    return list(migration.migrate(source).executions)
 
 
 # -- Leaving records alone ---------------------------------------------------
@@ -130,12 +130,14 @@ def test_a_boundary_can_move_to_another_domain():
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(SHIP, "authorize", "order"),
     )
-    result = migration.migrate(session(execution, versions={PAY: "v1", SHIP: "v7"}))
+    replacement = migration.migrate(
+        session(execution, versions={PAY: "v1", SHIP: "v7"})
+    )
 
-    assert result.session.executions[0].id.domain == SHIP
+    assert replacement.executions[0].id.domain == SHIP
     # A migration names the domains it owns; one it says nothing about keeps the
     # version it had.
-    assert result.report.to_domain_versions == {PAY: "v2", SHIP: "v7"}
+    assert replacement.metadata.domain_versions == {PAY: "v2", SHIP: "v7"}
 
 
 def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
@@ -276,31 +278,37 @@ def test_dropping_a_boundary_takes_what_was_recorded_beneath_it():
     assert migrated[0].id == kept.id
 
 
-def test_each_class_of_repeated_calls_counts_from_zero():
-    # One counter per (parent, domain, name, arguments), the way a live
-    # `Sequencer` keeps them: a shared one would push a neighbour off its key.
+def test_repeated_calls_keep_the_ordinals_that_tell_them_apart():
     first = started("retry", sequence=0)
     second = started("retry", sequence=1)
-    other = started("notify", arguments={"order": "ord_1"})
 
-    migrated = migrate(migrator(), session(other, first, second))
+    migration = migrator()
+    migration.remap(ExecutionShape(PAY, "retry"), ExecutionShape(PAY, "retried"))
+    migrated = migrate(migration, session(first, second))
 
-    ordinals: dict[str, list[int]] = {}
-    for execution in migrated:
-        ordinals.setdefault(execution.id.name.value, []).append(execution.id.sequence)
-
-    assert sorted(ordinals["retry"]) == [0, 1]
-    assert ordinals["notify"] == [0]
+    assert sorted(execution.id.sequence for execution in migrated) == [0, 1]
+    assert {execution.id.name.value for execution in migrated} == {"retried"}
 
 
-def test_an_ordinal_no_resume_could_reach_is_closed_up():
-    # Whatever left the hole — an earlier migration, a deletion — a live
-    # `Sequencer` counts from zero, so the record has to move down to it.
+def test_an_ordinal_is_carried_over_rather_than_re_derived():
+    # An ordinal orders this call among the ones the resumed code will make. A
+    # record at 1 is what a second identical call replays; moving it to 0 would
+    # hand it to the first one instead.
     survivor = started("retry", sequence=1)
 
     migrated = migrate(migrator(), session(survivor))
 
-    assert migrated[0].id.sequence == 0
+    assert migrated[0].id.sequence == 1
+
+
+def test_a_migration_leaves_another_domains_ordinals_alone():
+    # A migration names the domains it touches, so it must not renumber a
+    # record in one it said nothing about.
+    elsewhere = started("label", sequence=1, domain=SHIP)
+
+    migrated = migrate(migrator(), session(elsewhere, versions={PAY: "v1", SHIP: "v7"}))
+
+    assert migrated[0].id == elsewhere.id
 
 
 # -- Ordinals a migration cannot recover -------------------------------------
@@ -416,6 +424,21 @@ def test_a_boundary_registered_twice_is_refused():
         migration.drop(ExecutionShape(PAY, "authorize", "order"))
 
 
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: DomainVersionTransition("v1", ""),
+        lambda: DomainVersionTransition("", "v2"),
+        lambda: DomainVersionTransition.claiming(""),
+    ],
+)
+def test_a_transition_to_or_from_an_empty_version_is_refused(build):
+    # A version no `Domain` could declare would match nothing; refused where it
+    # is written rather than where it is used.
+    with pytest.raises(ValueError, match="cannot be empty"):
+        build()
+
+
 def test_a_boundary_naming_one_parameter_twice_is_refused():
     with pytest.raises(ValueError, match="more than once"):
         ExecutionShape(PAY, "authorize", "order", "order")
@@ -472,10 +495,10 @@ def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
         ExecutionShape(PAY, "authorize", "order"),
         ExecutionShape(SHIP, "authorize", "order"),
     )
-    result = migration.migrate(session(execution))
+    replacement = migration.migrate(session(execution))
 
-    assert result.session.executions[0].id.domain == SHIP
-    assert result.report.to_domain_versions == {PAY: "v2", SHIP: "v1"}
+    assert replacement.executions[0].id.domain == SHIP
+    assert replacement.metadata.domain_versions == {PAY: "v2", SHIP: "v1"}
 
 
 def test_claiming_a_domain_the_session_already_records_is_refused():
@@ -514,10 +537,9 @@ def test_a_drop_is_held_to_the_shape_it_declares():
 # -- The report --------------------------------------------------------------
 
 
-def test_the_report_carries_the_versions_on_both_sides():
+def test_the_replacement_carries_the_versions_it_was_migrated_to():
     execution = started("authorize", arguments={"order": "ord_1"})
 
-    report = migrator().migrate(session(execution)).report
+    replacement = migrator().migrate(session(execution))
 
-    assert report.from_domain_versions == {PAY: "v1"}
-    assert report.to_domain_versions == {PAY: "v2"}
+    assert replacement.metadata.domain_versions == {PAY: "v2"}

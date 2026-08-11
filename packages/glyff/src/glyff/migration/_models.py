@@ -107,11 +107,3 @@ class MigrationReport:
             "to_domain_versions",
             _validated_domain_versions(self.to_domain_versions),
         )
-
-
-@dataclass(frozen=True)
-class SessionMigrationResult:
-    """The session to store in place of the migrated one, and its report."""
-
-    session: StoredSession
-    report: MigrationReport

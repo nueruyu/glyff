@@ -10,8 +10,8 @@ from typing import TypeAlias
 from ._identity import ArgumentsDigest, ExecutionId
 from .exceptions import InvalidExecutionError
 
-# A value in the JSON data model. Canonicalizing a call's arguments produces one of
-# these, and a migration's argument conversion both receives and returns one.
+# A value in the JSON data model, which is what canonicalizing a call's arguments
+# produces.
 CanonicalValue: TypeAlias = (
     "str | int | float | bool | None | list[CanonicalValue] | dict[str, CanonicalValue]"
 )

@@ -12,9 +12,7 @@ from typing import Any
 import pytest
 from glyff import DomainId, Execution, SessionId, TransactionScope
 from glyff.migration import (
-    MigrationReport,
     SessionMetadata,
-    SessionMigrationResult,
     SessionMigrator,
     StoredSession,
 )
@@ -30,17 +28,10 @@ class ReplacingMigrator(SessionMigrator):
         self._executions = executions
         self._version = version
 
-    def migrate(self, source: StoredSession) -> SessionMigrationResult:
-        versions = {DOMAIN: self._version}
-        return SessionMigrationResult(
-            session=StoredSession(
-                metadata=SessionMetadata(domain_versions=versions),
-                executions=self._executions,
-            ),
-            report=MigrationReport(
-                from_domain_versions=source.metadata.domain_versions,
-                to_domain_versions=versions,
-            ),
+    def migrate(self, source: StoredSession) -> StoredSession:
+        return StoredSession(
+            metadata=SessionMetadata(domain_versions={DOMAIN: self._version}),
+            executions=self._executions,
         )
 
 

@@ -9,7 +9,6 @@ from ._interfaces import MigratableBackend, SessionMigration, SessionMigrator
 from ._models import (
     MigrationReport,
     SessionMetadata,
-    SessionMigrationResult,
     StoredSession,
 )
 from ._remap import DomainVersionTransition, ExecutionShape, RemappingMigrator
@@ -22,7 +21,6 @@ __all__ = [
     "RemappingMigrator",
     "SessionMetadata",
     "SessionMigration",
-    "SessionMigrationResult",
     "SessionMigrator",
     "StoredSession",
 ]

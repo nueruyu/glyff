@@ -183,7 +183,14 @@ them is glyff's: a value canonicalizing to it — a mapping using it, a dataclas
 field named it — is refused rather than allowed to share an opaque value's key.
 `Opaque` is that marker as a value: canonicalizing one writes the marker, so a
 recorded argument can go back through a canonicalizer unchanged. Passing one to
-a live call declares the representation outright, and no policy is consulted. The same classification governs what is *stored*, not just what
+a live call declares the representation outright, and no policy is consulted.
+
+> **Compatibility.** The key was not reserved before this landed, so a store
+> written by an earlier build may hold a mapping shaped like the marker, which
+> is now read back as an opaque value. The old representation is genuinely
+> ambiguous — nothing distinguishes the two — so reserving the key is the fix
+> rather than a choice. Check paused sessions for an argument mapping whose only
+> key is `__glyff_opaque__` before upgrading. The same classification governs what is *stored*, not just what
 is hashed — an opaque value the policy rejects never reaches the store.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard

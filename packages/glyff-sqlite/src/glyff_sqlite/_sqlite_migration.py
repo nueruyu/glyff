@@ -30,15 +30,18 @@ class SQLiteSessionMigration(SessionMigration):
         # every other writer wait rather than act on what is being replaced.
         def migrate(connection: sqlite3.Connection) -> MigrationReport:
             source = self._read(connection, session_id.value)
-            result = migrator.migrate(source)
+            replacement = migrator.migrate(source)
 
             self._client.delete_session_executions(connection, session_id.value)
-            for execution in result.session.executions:
+            for execution in replacement.executions:
                 self._client.upsert_execution(connection, session_id.value, execution)
             self._client.replace_domain_versions(
-                connection, session_id.value, result.session.metadata.domain_versions
+                connection, session_id.value, replacement.metadata.domain_versions
             )
-            return result.report
+            return MigrationReport(
+                from_domain_versions=source.metadata.domain_versions,
+                to_domain_versions=replacement.metadata.domain_versions,
+            )
 
         return await self._client.run_immediate(migrate)
 

@@ -12,9 +12,7 @@ from pathlib import Path
 import pytest
 from glyff import DomainId, Execution, SessionId, TransactionScope
 from glyff.migration import (
-    MigrationReport,
     SessionMetadata,
-    SessionMigrationResult,
     SessionMigrator,
     StoredSession,
 )
@@ -32,17 +30,10 @@ class ReplacingMigrator(SessionMigrator):
         self._executions = executions
         self._version = version
 
-    def migrate(self, source: StoredSession) -> SessionMigrationResult:
-        versions = {DOMAIN: self._version}
-        return SessionMigrationResult(
-            session=StoredSession(
-                metadata=SessionMetadata(domain_versions=versions),
-                executions=self._executions,
-            ),
-            report=MigrationReport(
-                from_domain_versions=source.metadata.domain_versions,
-                to_domain_versions=versions,
-            ),
+    def migrate(self, source: StoredSession) -> StoredSession:
+        return StoredSession(
+            metadata=SessionMetadata(domain_versions={DOMAIN: self._version}),
+            executions=self._executions,
         )
 
 
@@ -130,7 +121,7 @@ async def test_a_cancelled_migration_does_not_hand_the_store_on_early(
     release = threading.Event()
 
     class SlowMigrator(ReplacingMigrator):
-        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+        def migrate(self, source: StoredSession) -> StoredSession:
             inside.set()
             release.wait(5)
             return super().migrate(source)
@@ -176,7 +167,7 @@ async def test_repeated_cancellation_still_does_not_hand_the_store_on_early(
     release = threading.Event()
 
     class SlowMigrator(ReplacingMigrator):
-        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+        def migrate(self, source: StoredSession) -> StoredSession:
             inside.set()
             release.wait(5)
             return super().migrate(source)
@@ -222,7 +213,7 @@ async def test_a_cancelled_migration_still_reports_a_worker_failure_as_cancelled
     monkeypatch.setattr(backend._client, "_replace_sync", refuse)
 
     class SlowMigrator(ReplacingMigrator):
-        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+        def migrate(self, source: StoredSession) -> StoredSession:
             inside.set()
             release.wait(5)
             return super().migrate(source)
