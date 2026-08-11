@@ -11,14 +11,14 @@ from ._models import (
     SessionMetadata,
     StoredSession,
 )
-from ._remap import DomainVersionTransition, ExecutionShape, RemappingMigrator
+from ._migrator import DomainVersionTransition, ExecutionMigrator, ExecutionShape
 
 __all__ = [
     "DomainVersionTransition",
+    "ExecutionMigrator",
     "ExecutionShape",
     "MigratableBackend",
     "MigrationReport",
-    "RemappingMigrator",
     "SessionMetadata",
     "SessionMigration",
     "SessionMigrator",

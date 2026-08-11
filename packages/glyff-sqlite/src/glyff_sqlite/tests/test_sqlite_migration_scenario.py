@@ -12,8 +12,8 @@ from glyff import ArgumentCanonicalizer, Domain, DomainId, Serializer, SessionId
 from glyff.exceptions import DomainVersionMismatchError
 from glyff.migration import (
     DomainVersionTransition,
+    ExecutionMigrator,
     ExecutionShape,
-    RemappingMigrator,
 )
 from glyff.testing import make_session
 from glyff_sqlite import SQLiteBackend
@@ -90,26 +90,27 @@ async def checkout_v2(order: str) -> str:
     )
 
 
-def _migration(canonicalizer: ArgumentCanonicalizer) -> RemappingMigrator:
-    migrator = RemappingMigrator(
+def _migration(canonicalizer: ArgumentCanonicalizer) -> ExecutionMigrator:
+    migrator = ExecutionMigrator(
         canonicalizer=canonicalizer,
         version_transitions={PAY: DomainVersionTransition("1", "2")},
     )
     migrator.remap(
-        ExecutionShape(PAY, "checkout_v1", "order"),
-        ExecutionShape(PAY, "checkout_v2", "order"),
+        ExecutionShape.from_names(PAY, "checkout_v1", "order"),
+        ExecutionShape.from_names(PAY, "checkout_v2", "order"),
     )
     migrator.remap(
-        ExecutionShape(PAY, "authorize", "order"),
-        ExecutionShape(PAY, "charge", "order"),
+        ExecutionShape.from_names(PAY, "authorize", "order"),
+        ExecutionShape.from_names(PAY, "charge", "order"),
     )
     migrator.remap(
-        ExecutionShape(PAY, "capture", "order"),
-        ExecutionShape(PAY, "capture_cents", "order", "cents"),
+        ExecutionShape.from_names(PAY, "capture", "order"),
+        ExecutionShape.from_names(PAY, "capture_cents", "order", "cents"),
         convert_arguments=lambda order: {"order": order, "cents": 1200},
     )
     migrator.remap(
-        ExecutionShape(PAY, "finish", "order"), ExecutionShape(PAY, "complete", "order")
+        ExecutionShape.from_names(PAY, "finish", "order"),
+        ExecutionShape.from_names(PAY, "complete", "order"),
     )
     return migrator
 

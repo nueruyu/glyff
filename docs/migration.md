@@ -108,20 +108,20 @@ writes are the keys that session goes looking for.
 
 ### Writing one
 
-`RemappingMigrator` is the `SessionMigrator` to reach for. A migration is the
+`ExecutionMigrator` is the `SessionMigrator` to reach for. A migration is the
 boundaries that changed shape — what each one was, what it became, and the
 conversion between their arguments:
 
 ```python
-from glyff.migration import DomainVersionTransition, ExecutionShape, RemappingMigrator
+from glyff.migration import DomainVersionTransition, ExecutionMigrator, ExecutionShape
 
-migrator = RemappingMigrator(
+migrator = ExecutionMigrator(
     canonicalizer=canonicalizer,
     version_transitions={"com.example.payments": DomainVersionTransition("1", "2")},
 )
 migrator.remap(
-    ExecutionShape("com.example.payments", "authorize", "order", "units"),
-    ExecutionShape("com.example.payments", "charge", "order_id", "cents"),
+    ExecutionShape.from_names("com.example.payments", "authorize", "order", "units"),
+    ExecutionShape.from_names("com.example.payments", "charge", "order_id", "cents"),
     convert_arguments=lambda order, units: {
         "order_id": order["id"],
         "cents": units * 100,
@@ -158,16 +158,16 @@ included, so a boundary that gained a default has the migration write it out.
 
 `convert_arguments` receives the recorded arguments by their old names and
 returns the ones the new shape is keyed by. Leave it out when the names did not
-change and the recorded form is kept as it is. `drop` removes a boundary's
-records, and everything recorded beneath them, since a descendant outlives its
-parent only as weight no resume can reach.
+change and the recorded form is kept as it is. It runs once per class of
+[identical repeated calls](./execution-identity.md#identical-repeated-calls),
+which are recorded with the same arguments by definition. `drop` removes a
+boundary's records, and everything recorded beneath them, since a descendant
+outlives its parent only as weight no resume can reach.
 
-The parent chains a remap invalidates are the migrator's: it rebuilds every
-descendant's chain onto its remapped ancestor, which a caller cannot do without
-reproducing the store's own encoding. **Ordinals it leaves alone.** One orders a
-call among the ones the resumed code will make, and a migration knows nothing
-about how many of those there are — a record at `#1` is what a second identical
-call replays, so moving it to `#0` would hand it to the first one instead.
+A remap rebuilds every descendant's chain onto its remapped ancestor.
+**Ordinals it leaves alone**: one orders a call among the identical calls the
+resumed code will make, and a migration knows nothing about how many of those
+there are.
 
 **Values with no value representation** arrive wrapped in `Opaque`, carrying
 whatever the [`OpaquePolicy`](./execution-identity.md#canonical-arguments) put in
@@ -191,10 +191,8 @@ Repeated calls that share parent, name and arguments are matched by ordinal, and
 nothing records which of them ran first. So a migration that gathers calls
 recorded separately into one such class — two boundaries renamed onto one, or a
 conversion that maps distinct arguments onto one value — is refused with
-`MigrationOrdinalAmbiguityError` rather than given an order glyff invented — which
-is also what keeps carrying ordinals over sound, since an ordinal means nothing
-outside the scope that assigned it. Give those calls arguments that tell them
-apart, or drop one.
+`MigrationOrdinalAmbiguityError` rather than given an order glyff invented. Give
+those calls arguments that tell them apart, or drop one.
 
 > **Planned** — migration chains, so a session whose stamp trails the code by
 > more than one generation applies the steps in sequence, and a published form so

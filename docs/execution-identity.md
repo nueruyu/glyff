@@ -147,9 +147,9 @@ verbatim — anything that re-encoded them would break the key. It is what lets 
 argument and recompute the key from the record alone.
 
 A canonical form is already in the JSON data model, so canonicalizing one again
-returns it unchanged, and what a policy stood in for goes back as an `Opaque` and
-reaches the same form. That is what lets a migration hand an argument back
-untouched and have it key the call exactly as it did.
+returns it unchanged — provided the markers in it go back as `Opaque` values,
+since a plain mapping claiming that key is refused. That is what lets a migration
+hand an argument back untouched and have it key the call exactly as it did.
 
 Canonicalizing is **not** serializing. It is one-way and deliberately lossy,
 keeping only what identity depends on:

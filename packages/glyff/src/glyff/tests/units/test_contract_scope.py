@@ -15,9 +15,9 @@ from glyff import (
     CanonicalValue,
     Opaque,
     Serializer,
+    claims_opaque_marker,
     opaque_marker,
 )
-from glyff._execution import claims_opaque_marker
 from glyff.exceptions import ArgumentCanonicalizationError
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 

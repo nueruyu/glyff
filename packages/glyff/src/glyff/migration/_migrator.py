@@ -55,18 +55,18 @@ class ExecutionShape:
     name: ExecutionName
     argument_names: frozenset[str]
 
-    def __init__(
-        self, domain: DomainId | str, name: str | ExecutionName, *argument_names: str
-    ) -> None:
-        object.__setattr__(
-            self, "domain", DomainId(domain) if isinstance(domain, str) else domain
+    @classmethod
+    def from_names(
+        cls, domain: DomainId | str, name: str | ExecutionName, *argument_names: str
+    ) -> ExecutionShape:
+        """A shape spelled out at a call site, from plain strings."""
+        if len(set(argument_names)) != len(argument_names):
+            raise ValueError(f"{name} names an argument more than once.")
+        return cls(
+            domain=DomainId(domain) if isinstance(domain, str) else domain,
+            name=ExecutionName(name) if isinstance(name, str) else name,
+            argument_names=frozenset(argument_names),
         )
-        object.__setattr__(
-            self, "name", ExecutionName(name) if isinstance(name, str) else name
-        )
-        object.__setattr__(self, "argument_names", frozenset(argument_names))
-        if len(self.argument_names) != len(argument_names):
-            raise ValueError(f"{self.name} names an argument more than once.")
 
     @property
     def key(self) -> tuple[DomainId, ExecutionName]:
@@ -80,7 +80,7 @@ class _Remap:
     convert_arguments: _ArgumentConverter | None
 
 
-class RemappingMigrator(SessionMigrator):
+class ExecutionMigrator(SessionMigrator):
     """A `SessionMigrator` declared as pairs of execution shapes.
 
     Each boundary that changed shape is registered as what it was, what it
@@ -206,6 +206,7 @@ class RemappingMigrator(SessionMigrator):
         children = _children_by_parent(source.executions)
 
         migrated: list[Execution] = []
+        arguments_by_source_scope: dict[SequenceScope, CanonicalArguments] = {}
         source_scopes_by_target: dict[SequenceScope, set[SequenceScope]] = {}
 
         # Ancestors first, so a parent's own key is settled before anything that
@@ -223,7 +224,17 @@ class RemappingMigrator(SessionMigrator):
                     self._recorded(execution, remap.source)
                     continue
 
-                arguments = self._arguments(execution, remap)
+                # Converted once per class of identical repeated calls, whose
+                # members are recorded with the same bytes: a second conversion
+                # could only differ by being nondeterministic, and would leave
+                # half the class in a scope whose ordinals no longer start at 0.
+                source_scope = SequenceScope.from_execution_id(execution.id)
+                if source_scope not in arguments_by_source_scope:
+                    arguments_by_source_scope[source_scope] = self._arguments(
+                        execution, remap
+                    )
+                arguments = arguments_by_source_scope[source_scope]
+
                 target = remap.target if remap is not None else None
                 scope = SequenceScope(
                     parent_id=new_parent,
@@ -231,7 +242,7 @@ class RemappingMigrator(SessionMigrator):
                     name=target.name if target else execution.id.name,
                     arguments_digest=arguments.digest,
                 )
-                _require_one_source_scope(source_scopes_by_target, scope, execution.id)
+                _require_one_source_scope(source_scopes_by_target, scope, source_scope)
 
                 # The ordinal is kept, not re-derived: it orders this call among
                 # the ones the resumed code will make, and a migration knows
@@ -317,12 +328,12 @@ def _children_by_parent(
 def _require_one_source_scope(
     source_scopes_by_target: dict[SequenceScope, set[SequenceScope]],
     target: SequenceScope,
-    old_id: ExecutionId,
+    source: SequenceScope,
 ) -> None:
     # An ordinal orders calls within one scope and means nothing across two, so
     # carrying one over is sound only while a scope's members all came from one.
     seen = source_scopes_by_target.setdefault(target, set())
-    seen.add(SequenceScope.from_execution_id(old_id))
+    seen.add(source)
     if len(seen) > 1:
         raise MigrationOrdinalAmbiguityError(
             f"Migrating onto {target.name} in {target.domain} gathers calls "
