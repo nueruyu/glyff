@@ -10,7 +10,6 @@ from ._executor import execute
 from ._function import FunctionDefinition
 from ._identity import DomainId, ExecutionId
 from .exceptions import ArgumentCanonicalizationError
-from .serialization._utils import encode_canonical
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -35,7 +34,7 @@ async def _resolve_call_identity(
             f"Arguments to '{definition.name}' could not be canonicalized. "
             f"Ensure all arguments have a value representation. Original error: {e}"
         ) from e
-    encoded = CanonicalArguments(encode_canonical(canonical))
+    encoded = CanonicalArguments.from_canonical(canonical)
     seq = await ctx.sequencer.next(parent_id, domain, definition.name, encoded.digest)
     execution_id = ExecutionId(
         parent_id=parent_id,

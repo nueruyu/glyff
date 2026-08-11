@@ -12,18 +12,17 @@ from typing import Any
 import pytest
 from glyff import (
     ArgumentCanonicalizer,
-    CanonicalValue,
+    CanonicalArgumentMap,
     Opaque,
     Serializer,
-    claims_opaque_marker,
     opaque_marker,
+    require_unreserved,
 )
-from glyff.exceptions import ArgumentCanonicalizationError
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
 
 class BareCanonicalizer(ArgumentCanonicalizer):
-    def canonicalize(self, arguments) -> CanonicalValue:
+    def canonicalize(self, arguments) -> CanonicalArgumentMap:
         # The opaque marker is the canonical format's, so writing and reserving
         # it is part of implementing this, not an extra the contract asks for.
         return {name: _plain(value) for name, value in arguments.items()}
@@ -33,8 +32,7 @@ def _plain(value: Any) -> Any:
     if isinstance(value, Opaque):
         return opaque_marker(_plain(value.representation))
     if isinstance(value, dict):
-        if claims_opaque_marker(value):
-            raise ArgumentCanonicalizationError("The opaque marker is reserved.")
+        require_unreserved(value)
         return {key: _plain(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_plain(item) for item in value]

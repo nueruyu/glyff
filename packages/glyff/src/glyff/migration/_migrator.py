@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, TypeAlias
 
-from .._execution import CanonicalArguments, Execution
+from .._execution import (
+    CanonicalArguments,
+    Execution,
+    RecordedArgumentValue,
+    from_recorded,
+)
 from .._identity import DomainId, ExecutionId, ExecutionName, SequenceScope
 from .._interfaces import ArgumentCanonicalizer
 from ..exceptions import MigrationError, MigrationOrdinalAmbiguityError
-from ..serialization._utils import encode_canonical
-from ._arguments import RecordedArgumentValue, from_recorded
 from ._interfaces import SessionMigrator
 from ._models import SessionMetadata, StoredSession
 
@@ -32,8 +35,7 @@ class DomainVersionTransition:
     target: str
 
     def __post_init__(self) -> None:
-        # A version no `Domain` could declare is one nothing would ever match,
-        # so it is refused where it is written rather than where it is used.
+        # Refused where it is written rather than where it is used.
         if not self.target or self.source == "":
             raise ValueError("A domain version cannot be empty.")
 
@@ -76,8 +78,16 @@ class ExecutionShape:
 @dataclass(frozen=True)
 class _Remap:
     source: ExecutionShape
-    target: ExecutionShape | None
+    target: ExecutionShape
     convert_arguments: _ArgumentConverter | None
+
+
+@dataclass(frozen=True)
+class _Drop:
+    source: ExecutionShape
+
+
+_Rule: TypeAlias = "_Remap | _Drop"
 
 
 class ExecutionMigrator(SessionMigrator):
@@ -98,11 +108,8 @@ class ExecutionMigrator(SessionMigrator):
         # wrote the records: the keys this computes have to be the keys that
         # session goes looking for.
         self._canonicalizer = canonicalizer
-        self._transitions: dict[DomainId, DomainVersionTransition] = {
-            DomainId(domain) if isinstance(domain, str) else domain: transition
-            for domain, transition in version_transitions.items()
-        }
-        self._remaps: dict[tuple[DomainId, ExecutionName], _Remap] = {}
+        self._transitions = _normalized_transitions(version_transitions)
+        self._rules: dict[tuple[DomainId, ExecutionName], _Rule] = {}
 
     def remap(
         self,
@@ -134,9 +141,7 @@ class ExecutionMigrator(SessionMigrator):
     def drop(self, source: ExecutionShape) -> None:
         """Registers the removal of ``source``'s records, and their descendants."""
         self._require_transition(source.domain)
-        self._register(
-            source.key, _Remap(source=source, target=None, convert_arguments=None)
-        )
+        self._register(source.key, _Drop(source=source))
 
     def migrate(self, source: StoredSession) -> StoredSession:
         recorded_versions = source.metadata.domain_versions
@@ -167,14 +172,14 @@ class ExecutionMigrator(SessionMigrator):
                 "domain only carries records across unchanged."
             )
 
-    def _register(self, key: tuple[DomainId, ExecutionName], remap: _Remap) -> None:
-        if key in self._remaps:
+    def _register(self, key: tuple[DomainId, ExecutionName], rule: _Rule) -> None:
+        if key in self._rules:
             domain, name = key
             raise MigrationError(
                 f"{name} in {domain} is already registered. One boundary "
                 "changes shape once."
             )
-        self._remaps[key] = remap
+        self._rules[key] = rule
 
     def _require_source_versions(self, recorded: Mapping[DomainId, str]) -> None:
         for domain, transition in self._transitions.items():
@@ -217,25 +222,23 @@ class ExecutionMigrator(SessionMigrator):
             for execution in sorted(
                 children.get(old_parent, ()), key=lambda e: e.id.sequence
             ):
-                remap = self._remaps.get((execution.id.domain, execution.id.name))
-                if remap is not None and remap.target is None:
+                rule = self._rules.get((execution.id.domain, execution.id.name))
+                if isinstance(rule, _Drop):
                     # Checked before deleting, not only before rewriting: this
                     # is the destructive half.
-                    self._recorded(execution, remap.source)
+                    self._recorded(execution, rule.source)
                     continue
 
-                # Converted once per class of identical repeated calls, whose
-                # members are recorded with the same bytes: a second conversion
-                # could only differ by being nondeterministic, and would leave
-                # half the class in a scope whose ordinals no longer start at 0.
+                # Memoized per source scope: its members are recorded with the
+                # same bytes, so one conversion answers for all of them.
                 source_scope = SequenceScope.from_execution_id(execution.id)
                 if source_scope not in arguments_by_source_scope:
                     arguments_by_source_scope[source_scope] = self._arguments(
-                        execution, remap
+                        execution, rule
                     )
                 arguments = arguments_by_source_scope[source_scope]
 
-                target = remap.target if remap is not None else None
+                target = rule.target if rule is not None else None
                 scope = SequenceScope(
                     parent_id=new_parent,
                     domain=target.domain if target else execution.id.domain,
@@ -244,9 +247,6 @@ class ExecutionMigrator(SessionMigrator):
                 )
                 _require_one_source_scope(source_scopes_by_target, scope, source_scope)
 
-                # The ordinal is kept, not re-derived: it orders this call among
-                # the ones the resumed code will make, and a migration knows
-                # nothing about how many of those there are.
                 new_id = ExecutionId(
                     parent_id=scope.parent_id,
                     domain=scope.domain,
@@ -270,7 +270,6 @@ class ExecutionMigrator(SessionMigrator):
             self._recorded(execution, remap.source)
             return execution.arguments
 
-        assert remap.target is not None
         recorded = self._recorded(execution, remap.source)
         try:
             converted = dict(remap.convert_arguments(**recorded))
@@ -286,8 +285,8 @@ class ExecutionMigrator(SessionMigrator):
                 f"{_format_argument_names(set(converted))}, but it is keyed by "
                 f"{_format_argument_names(remap.target.argument_names)}."
             )
-        return CanonicalArguments(
-            encode_canonical(self._canonicalizer.canonicalize(converted))
+        return CanonicalArguments.from_canonical(
+            self._canonicalizer.canonicalize(converted)
         )
 
     @staticmethod
@@ -303,6 +302,23 @@ class ExecutionMigrator(SessionMigrator):
                 "It describes another generation of these records."
             )
         return {name: from_recorded(value) for name, value in stored.items()}
+
+
+def _normalized_transitions(
+    declared: Mapping[DomainId | str, DomainVersionTransition],
+) -> dict[DomainId, DomainVersionTransition]:
+    # Two keys spelling one domain are two Python keys but one generation guard,
+    # so the later would quietly replace the earlier.
+    normalized: dict[DomainId, DomainVersionTransition] = {}
+    for domain, transition in declared.items():
+        domain_id = DomainId(domain) if isinstance(domain, str) else domain
+        if domain_id in normalized:
+            raise MigrationError(
+                f"This migration declares more than one version transition for "
+                f"{domain_id}. A domain moves between one pair of generations."
+            )
+        normalized[domain_id] = transition
+    return normalized
 
 
 def _format_argument_names(names: set[str] | frozenset[str]) -> str:

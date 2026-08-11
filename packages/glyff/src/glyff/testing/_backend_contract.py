@@ -29,7 +29,6 @@ from glyff import (
     TransactionScope,
 )
 from glyff.exceptions import SerializationError
-from glyff.serialization._utils import encode_canonical
 
 
 BackendFactory = Callable[[str], Backend]
@@ -68,7 +67,7 @@ def canonical_arguments(
     arguments: dict[str, CanonicalValue] | None = None,
 ) -> CanonicalArguments:
     """The bound arguments an id built by :func:`make_execution_id` is keyed by."""
-    return CanonicalArguments(encode_canonical(arguments or {}))
+    return CanonicalArguments.from_canonical(arguments or {})
 
 
 def serialized_value(raw: object = "value") -> SerializedValue:

@@ -476,6 +476,18 @@ def test_a_boundary_naming_one_parameter_twice_is_refused():
         ExecutionShape.from_names(PAY, "authorize", "order", "order")
 
 
+def test_one_domain_declared_twice_is_refused():
+    # Two spellings of a domain are two Python keys but one generation guard, so
+    # the second would quietly replace the first.
+    with pytest.raises(MigrationError, match="more than one version transition"):
+        migrator(
+            {
+                PAY: DomainVersionTransition("v1", "v2"),
+                PAY.value: DomainVersionTransition("v1", "v3"),
+            }
+        )
+
+
 def test_an_opaque_nested_in_a_container_survives_a_conversion():
     # The canonicalizer applies a policy at any depth, so a recorded marker can
     # sit anywhere. Converting one argument must not cost another its key.

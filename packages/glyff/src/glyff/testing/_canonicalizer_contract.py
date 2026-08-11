@@ -13,9 +13,8 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
-from .._execution import Opaque, opaque_marker
+from .._execution import CanonicalArguments, Opaque, opaque_marker
 from ..exceptions import ArgumentCanonicalizationError
-from ..serialization._utils import encode_canonical
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]
 
@@ -42,7 +41,7 @@ class ArgumentCanonicalizerContract:
     ):
         form = canonicalizer.canonicalize({"a": 1, "b": "two", "c": None})
 
-        assert encode_canonical(form)
+        assert CanonicalArguments.from_canonical(form).data
 
     def test_the_bound_name_is_part_of_the_form(
         self, canonicalizer: ArgumentCanonicalizer
@@ -79,7 +78,7 @@ class ArgumentCanonicalizerContract:
     ):
         form = canonicalizer.canonicalize({})
 
-        assert encode_canonical(form)
+        assert CanonicalArguments.from_canonical(form).data
 
     def test_a_canonical_form_canonicalizes_to_itself(
         self, canonicalizer: ArgumentCanonicalizer

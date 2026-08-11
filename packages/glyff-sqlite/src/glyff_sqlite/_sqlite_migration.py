@@ -38,10 +38,7 @@ class SQLiteSessionMigration(SessionMigration):
             self._client.replace_domain_versions(
                 connection, session_id.value, replacement.metadata.domain_versions
             )
-            return MigrationReport(
-                from_domain_versions=source.metadata.domain_versions,
-                to_domain_versions=replacement.metadata.domain_versions,
-            )
+            return MigrationReport.between(source, replacement)
 
         return await self._client.run_immediate(migrate)
 

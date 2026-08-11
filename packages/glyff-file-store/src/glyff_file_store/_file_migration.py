@@ -46,12 +46,7 @@ class FileSessionMigration(SessionMigration):
                     for execution in replacement.executions
                 },
             }
-            return DocumentUpdate(
-                MigrationReport(
-                    from_domain_versions=source.metadata.domain_versions,
-                    to_domain_versions=replacement.metadata.domain_versions,
-                )
-            )
+            return DocumentUpdate(MigrationReport.between(source, replacement))
 
         return await self._client.update_document(migrate)
 

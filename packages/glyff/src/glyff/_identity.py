@@ -141,9 +141,8 @@ class ExecutionId:
 class SequenceScope:
     """Everything of an identity except the ordinal, which counts within it.
 
-    A `sequence` orders calls inside one of these and means nothing outside it,
-    so whoever assigns an ordinal and whoever renumbers one later have to agree
-    on the scope down to the field. Defined here so they share the definition
+    A `sequence` orders calls inside one of these and means nothing outside it.
+    Defined here so everything that reasons about ordinals shares the definition
     rather than each spelling it out.
     """
 

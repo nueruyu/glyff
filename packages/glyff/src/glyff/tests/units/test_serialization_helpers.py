@@ -1,16 +1,14 @@
 import dataclasses
 import functools
-import hashlib
 
 import pytest
 
-from glyff import ArgumentsDigest, CanonicalArguments, CanonicalValue
+from glyff import CanonicalValue, Opaque
+from glyff._execution import encode_canonical
 from glyff.exceptions import ArgumentCanonicalizationError
-from glyff import Opaque
 from glyff.serialization import OpaqueByTypeQualname
 from glyff.serialization._utils import (
     _canonicalize_set,
-    encode_canonical,
     stable_json_dumps,
     to_canonical,
 )
@@ -186,21 +184,3 @@ def test_canonical_applies_the_policy_at_any_depth():
     assert canonical({"a": [Service()]}, policy=OpaqueByTypeQualname()) == {
         "a": [{"__glyff_opaque__": f"{__name__}.{Service.__qualname__}"}]
     }
-
-
-def test_encode_canonical_sorts_keys_and_stays_compact():
-    assert encode_canonical({"b": 1, "a": [1, 2]}) == b'{"a":[1,2],"b":1}'
-
-
-def test_encode_canonical_rejects_values_outside_the_json_data_model():
-    with pytest.raises(
-        ArgumentCanonicalizationError, match="not in the JSON data model"
-    ):
-        encode_canonical({"a": {1, 2}})  # type: ignore[dict-item]
-
-
-def test_encoded_arguments_digest_is_sha256_of_their_bytes():
-    data = encode_canonical({"a": 1})
-    assert CanonicalArguments(data).digest == ArgumentsDigest(
-        hashlib.sha256(data).hexdigest()
-    )

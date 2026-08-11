@@ -10,11 +10,12 @@ from typing import Any, Callable, TypeAlias
 from .._execution import (
     CanonicalValue,
     Opaque,
-    claims_opaque_marker,
+    encode_canonical,
     opaque_marker,
+    require_unreserved,
 )
 from ..exceptions import ArgumentCanonicalizationError
-from .constants import DEFAULT_ENCODING, JSON_SEPARATORS
+from .constants import JSON_SEPARATORS
 
 
 def _qualified_name(obj: Any) -> str:
@@ -142,14 +143,7 @@ def to_canonical(
     derived = _derive_canonical(obj, policy, recurse)
     if derived is _UNREPRESENTABLE:
         return opaque_marker(recurse(policy.represent(obj)))
-    if claims_opaque_marker(derived):
-        # Every mapping glyff derives from a value passes here, whichever branch
-        # built it, so nothing can claim the reserved key by another route.
-        raise ArgumentCanonicalizationError(
-            "A value canonicalizing to glyff's opaque marker would collide with "
-            "an opaque value's key, so the key is reserved. Name the mapping key "
-            "or dataclass field something else."
-        )
+    require_unreserved(derived)
     return derived
 
 
@@ -183,18 +177,6 @@ def _derive_canonical(obj: Any, policy: OpaquePolicy, recurse: _Recurse) -> Any:
     if callable(obj) and hasattr(obj, "__qualname__"):
         return _qualified_name(obj)
     return _UNREPRESENTABLE
-
-
-def _reject(obj: Any) -> Any:
-    raise ArgumentCanonicalizationError(
-        f"Value of type '{type(obj).__name__}' is not in the JSON data model, so it "
-        "cannot be encoded. Canonicalize it first."
-    )
-
-
-def encode_canonical(value: CanonicalValue) -> bytes:
-    """The single encoder for argument identity. See :attr:`~glyff.Execution.arguments`."""
-    return stable_json_dumps(value, default=_reject).encode(DEFAULT_ENCODING)
 
 
 def to_serializable(obj: Any) -> Any:

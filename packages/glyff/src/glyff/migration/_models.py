@@ -96,6 +96,16 @@ class MigrationReport:
     from_domain_versions: Mapping[DomainId, str]
     to_domain_versions: Mapping[DomainId, str]
 
+    @classmethod
+    def between(
+        cls, source: StoredSession, replacement: StoredSession
+    ) -> MigrationReport:
+        """What a store read and what it stored, which is all a report is."""
+        return cls(
+            from_domain_versions=source.metadata.domain_versions,
+            to_domain_versions=replacement.metadata.domain_versions,
+        )
+
     def __post_init__(self) -> None:
         object.__setattr__(
             self,

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from ._identity import ArgumentsDigest, ExecutionId
-from .exceptions import InvalidExecutionError
+from .exceptions import ArgumentCanonicalizationError, InvalidExecutionError
 
 # A value in the JSON data model, which is what canonicalizing a call's arguments
 # produces.
@@ -19,6 +20,9 @@ CanonicalValue: TypeAlias = (
 # A whole call's arguments, canonicalized. Always a mapping, because it is keyed
 # by the names the call was bound to.
 CanonicalArgumentMap: TypeAlias = "dict[str, CanonicalValue]"
+
+# One recorded argument value, with the markers glyff wrote given a name.
+RecordedArgumentValue: TypeAlias = "str | int | float | bool | None | Opaque | list[RecordedArgumentValue] | dict[str, RecordedArgumentValue]"  # noqa: E501
 
 # Reserved marker for opaque canonical values.
 _OPAQUE_MARKER_KEY = "__glyff_opaque__"
@@ -45,20 +49,35 @@ def opaque_marker(representation: CanonicalValue) -> CanonicalValue:
     return {_OPAQUE_MARKER_KEY: representation}
 
 
-def is_opaque_marker(value: CanonicalValue) -> bool:
-    """Whether a canonical value is what :func:`opaque_marker` writes."""
-    return isinstance(value, dict) and len(value) == 1 and _OPAQUE_MARKER_KEY in value
+def require_unreserved(value: CanonicalValue) -> None:
+    """Refuses a canonical mapping that claims the marker's key as its own.
+
+    A canonicalizer owes this to every mapping it derives from a value: one
+    reaching the key by another route would share an opaque value's key, and
+    read back as one.
+    """
+    if isinstance(value, dict) and _OPAQUE_MARKER_KEY in value:
+        raise ArgumentCanonicalizationError(
+            "A value canonicalizing to glyff's opaque marker would collide with "
+            "an opaque value's key, so the key is reserved. Name the mapping key "
+            "or dataclass field something else."
+        )
 
 
-def claims_opaque_marker(value: CanonicalValue) -> bool:
-    """Whether a mapping claims the reserved key, however it came to."""
-    return isinstance(value, dict) and _OPAQUE_MARKER_KEY in value
+def from_recorded(value: CanonicalValue) -> RecordedArgumentValue:
+    """Reads a recorded canonical value back, markers and all.
 
-
-def opaque_marker_representation(value: CanonicalValue) -> CanonicalValue:
-    """What the policy returned, from a value :func:`is_opaque_marker` accepts."""
-    assert isinstance(value, dict)
-    return value[_OPAQUE_MARKER_KEY]
+    A marker becomes an `Opaque` wherever it sits, which is what makes the form
+    canonicalize to itself again: handed back as it came, it writes the same
+    bytes, and a mapping cannot pass itself off as one on the way.
+    """
+    if isinstance(value, dict):
+        if len(value) == 1 and _OPAQUE_MARKER_KEY in value:
+            return Opaque(value[_OPAQUE_MARKER_KEY])
+        return {key: from_recorded(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [from_recorded(item) for item in value]
+    return value
 
 
 @dataclass(frozen=True)
@@ -72,9 +91,37 @@ class CanonicalArguments:
 
     data: bytes
 
+    @classmethod
+    def from_canonical(cls, arguments: CanonicalArgumentMap) -> CanonicalArguments:
+        """Encodes a canonical argument mapping into the bytes it is keyed by."""
+        return cls(encode_canonical(arguments))
+
     @property
     def digest(self) -> ArgumentsDigest:
         return ArgumentsDigest(hashlib.sha256(self.data).hexdigest())
+
+
+def encode_canonical(value: CanonicalValue) -> bytes:
+    """The single encoder for argument identity.
+
+    Compact and key-sorted, so one canonical form has one spelling. Its options
+    are fixed here rather than shared with the serializers': what a store may
+    reformat, a key may not.
+    """
+    return json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        default=_reject_uncanonical,
+    ).encode("utf-8")
+
+
+def _reject_uncanonical(value: Any) -> Any:
+    raise ArgumentCanonicalizationError(
+        f"Value of type '{type(value).__name__}' is not in the JSON data model, so it "
+        "cannot be encoded. Canonicalize it first."
+    )
 
 
 class ExecutionStatus(Enum):
