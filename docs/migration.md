@@ -167,9 +167,10 @@ A remap rebuilds every descendant's chain onto its remapped ancestor.
 resumed code will make, and a migration knows nothing about how many of those
 there are.
 
-**Values with no value representation** arrive wrapped in `Opaque`, carrying
-whatever the [`OpaquePolicy`](./execution-identity.md#canonical-arguments) put in
-the key — wherever they sit, since a policy applies at any depth. Return one
+**Values handled by a fallback representer** arrive wrapped in
+`CanonicalFallback`, carrying whatever the
+[`CanonicalFallbackRepresenter`](./execution-identity.md#canonical-arguments)
+put in the key — wherever they sit. Return one
 unchanged and the argument keys the call exactly as it did; there is nothing to
 rebuild, because there was nothing to record.
 

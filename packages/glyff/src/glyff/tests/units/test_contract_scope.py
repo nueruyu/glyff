@@ -2,7 +2,7 @@
 
 `glyff.testing` publishes these contracts, so anything they require becomes a
 requirement on every third-party implementation. The two below implement their
-ABC and nothing else — no opaque-value policy, no sorted output — so a contract
+ABC and nothing else — no fallback representer, no sorted output — so a contract
 that grew past its interface fails here rather than in someone else's suite.
 """
 
@@ -13,9 +13,9 @@ import pytest
 from glyff import (
     ArgumentCanonicalizer,
     CanonicalArgumentMap,
-    Opaque,
+    CanonicalFallback,
     Serializer,
-    make_opaque_marker,
+    make_fallback_marker,
     require_unreserved_canonical_mapping,
 )
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
@@ -23,14 +23,14 @@ from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
 class BareCanonicalizer(ArgumentCanonicalizer):
     def canonicalize(self, arguments) -> CanonicalArgumentMap:
-        # The opaque marker is the canonical format's, so writing and reserving
+        # The fallback marker is the canonical format's, so writing and reserving
         # it is part of implementing this, not an extra the contract asks for.
         return {name: _plain(value) for name, value in arguments.items()}
 
 
 def _plain(value: Any) -> Any:
-    if isinstance(value, Opaque):
-        return make_opaque_marker(_plain(value.representation))
+    if isinstance(value, CanonicalFallback):
+        return make_fallback_marker(_plain(value.representation))
     if isinstance(value, dict):
         require_unreserved_canonical_mapping(value)
         return {key: _plain(item) for key, item in value.items()}

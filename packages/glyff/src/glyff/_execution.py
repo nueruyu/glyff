@@ -19,43 +19,43 @@ CanonicalValue: TypeAlias = (
 
 CanonicalArgumentMap: TypeAlias = "dict[str, CanonicalValue]"
 
-RecordedArgumentValue: TypeAlias = "str | int | float | bool | None | Opaque | list[RecordedArgumentValue] | dict[str, RecordedArgumentValue]"  # noqa: E501
+RecordedArgumentValue: TypeAlias = "str | int | float | bool | None | CanonicalFallback | list[RecordedArgumentValue] | dict[str, RecordedArgumentValue]"  # noqa: E501
 
-_OPAQUE_MARKER_KEY = "__glyff_opaque__"
+_FALLBACK_MARKER_KEY = "__glyff_opaque__"
 
 
 @dataclass(frozen=True)
-class Opaque:
-    """A canonical value standing in for one with no value representation.
+class CanonicalFallback:
+    """A fallback representation read from canonical argument records.
 
-    :attr:`representation` is what an `OpaquePolicy` returned, not the value it
-    replaced — there is nothing to get back to. Canonicalizing one writes the
-    marker again, which is how a recorded argument goes back through a
-    canonicalizer without a mapping being able to pass itself off as one.
+    :attr:`representation` is what a `CanonicalFallbackRepresenter` returned,
+    not the value it replaced — there is nothing to get back to. Canonicalizing
+    one writes the marker again, so recorded arguments can pass through a
+    canonicalizer unchanged.
 
-    Passing one to a live call is a deliberate escape hatch: it declares the
-    representation outright, so no policy is consulted for it.
+    Passing one to a live call declares the representation outright, so no
+    fallback representer is consulted for it.
     """
 
     representation: CanonicalValue
 
 
-def make_opaque_marker(representation: CanonicalValue) -> CanonicalValue:
-    """The canonical form an opaque value is recorded as."""
-    return {_OPAQUE_MARKER_KEY: representation}
+def make_fallback_marker(representation: CanonicalValue) -> CanonicalValue:
+    """The tagged canonical form of a fallback representation."""
+    return {_FALLBACK_MARKER_KEY: representation}
 
 
 def require_unreserved_canonical_mapping(value: CanonicalValue) -> None:
     """Refuses a canonical mapping that claims the marker's key as its own.
 
     A canonicalizer owes this to every mapping it derives from a value: one
-    reaching the key by another route would share an opaque value's key, and
+    reaching the key by another route would share a fallback representation's key,
     read back as one.
     """
-    if isinstance(value, dict) and _OPAQUE_MARKER_KEY in value:
+    if isinstance(value, dict) and _FALLBACK_MARKER_KEY in value:
         raise ArgumentCanonicalizationError(
-            "A value canonicalizing to glyff's opaque marker would collide with "
-            "an opaque value's key, so the key is reserved. Name the mapping key "
+            "A value canonicalizing to glyff's fallback marker would collide with "
+            "a fallback representation, so the key is reserved. Name the mapping key "
             "or dataclass field something else."
         )
 
@@ -65,13 +65,12 @@ def restore_recorded_canonical_value(
 ) -> RecordedArgumentValue:
     """Reads a recorded canonical value back, markers and all.
 
-    A marker becomes an `Opaque` wherever it sits, which is what makes the form
-    canonicalize to itself again: handed back as it came, it writes the same
-    bytes, and a mapping cannot pass itself off as one on the way.
+    A marker becomes a `CanonicalFallback` wherever it sits, so handing a
+    recorded value back writes the same bytes.
     """
     if isinstance(value, dict):
-        if len(value) == 1 and _OPAQUE_MARKER_KEY in value:
-            return Opaque(value[_OPAQUE_MARKER_KEY])
+        if len(value) == 1 and _FALLBACK_MARKER_KEY in value:
+            return CanonicalFallback(value[_FALLBACK_MARKER_KEY])
         return {
             key: restore_recorded_canonical_value(item) for key, item in value.items()
         }
@@ -184,7 +183,7 @@ def _reject_json_constant(value: str) -> None:
 
 
 def _is_recorded_argument_value(value: object) -> bool:
-    if isinstance(value, Opaque):
+    if isinstance(value, CanonicalFallback):
         return _is_canonical_value(value.representation)
     if value is None or isinstance(value, (str, int, float, bool)):
         return not isinstance(value, float) or math.isfinite(value)

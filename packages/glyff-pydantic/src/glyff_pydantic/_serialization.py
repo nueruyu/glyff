@@ -10,12 +10,11 @@ import uuid
 from typing import Any
 
 from glyff.exceptions import SerializationError
-from glyff import CanonicalValue
+from glyff import CanonicalValue, make_fallback_marker
 from glyff.serialization import (
+    CanonicalFallbackRepresenter,
     JsonArgumentCanonicalizer,
     JsonSerializer,
-    OpaquePolicy,
-    RejectOpaque,
 )
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
@@ -85,32 +84,23 @@ _SCALARS = (
 )
 
 
-class _PydanticScalarPolicy(OpaquePolicy):
-    """Represents the scalar types pydantic knows, deferring everything else."""
-
-    def __init__(self, fallback: OpaquePolicy) -> None:
-        self._fallback = fallback
-
-    def represent(self, value: Any) -> Any:
-        if isinstance(value, enum.Enum):
-            # Not in the allowlist: a member's value can be a container, and
-            # pydantic would walk it. Unwrap and let the shared walk take it.
-            return value.value
-        if isinstance(value, _SCALARS):
-            return to_jsonable_python(value)
-        return self._fallback.represent(value)
-
-
 class PydanticArgumentCanonicalizer(JsonArgumentCanonicalizer):
     """An ArgumentCanonicalizer that understands Pydantic models."""
 
-    def __init__(self, opaque_policy: OpaquePolicy | None = None) -> None:
-        fallback = RejectOpaque() if opaque_policy is None else opaque_policy
-        super().__init__(_PydanticScalarPolicy(fallback))
+    def __init__(
+        self,
+        fallback_representer: CanonicalFallbackRepresenter | None = None,
+    ) -> None:
+        super().__init__(fallback_representer)
 
     def canonicalize_value(self, obj: Any) -> CanonicalValue:
         if isinstance(obj, BaseModel):
             # Keep container traversal in the shared walk, so a model's mapping
             # collision checks and set ordering match every other argument.
             return super().canonicalize_value(obj.model_dump(mode="python"))
+        if isinstance(obj, enum.Enum):
+            return make_fallback_marker(self.canonicalize_value(obj.value))
+        if isinstance(obj, _SCALARS):
+            value: CanonicalValue = to_jsonable_python(obj)
+            return make_fallback_marker(value)
         return super().canonicalize_value(obj)

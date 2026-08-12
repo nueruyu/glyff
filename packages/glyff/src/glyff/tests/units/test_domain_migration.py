@@ -11,7 +11,7 @@ from glyff import (
     DomainId,
     DomainVersionMap,
     Execution,
-    Opaque,
+    CanonicalFallback,
     SerializedValue,
 )
 from glyff.exceptions import MigrationError, MigrationOrdinalAmbiguityError
@@ -173,7 +173,7 @@ def test_a_default_the_new_boundary_gained_is_written_out_by_the_migration():
     assert recorded(migrated) == {"order": "ord_1", "currency": "JPY"}
 
 
-# -- Opaque arguments --------------------------------------------------------
+# -- Canonical fallback arguments --------------------------------------------
 
 
 def test_an_opaque_argument_reaches_the_conversion_as_itself():
@@ -191,7 +191,7 @@ def test_an_opaque_argument_reaches_the_conversion_as_itself():
     )
     migrate(migration, session(execution))
 
-    assert seen == [Opaque("com.example.PaymentClient")]
+    assert seen == [CanonicalFallback("com.example.PaymentClient")]
 
 
 def test_an_opaque_argument_passed_through_keys_the_call_as_it_did_before():

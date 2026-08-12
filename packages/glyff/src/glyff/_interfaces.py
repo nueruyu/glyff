@@ -92,7 +92,8 @@ class ArgumentCanonicalizer(ABC):
     def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArgumentMap:
         """Normalizes a call's bound arguments into the JSON data model.
 
-        Writes :func:`~glyff.make_opaque_marker` for an :class:`~glyff.Opaque`,
+        Writes :func:`~glyff.make_fallback_marker` for a
+        :class:`~glyff.CanonicalFallback`,
         and validates derived mappings with
         :func:`~glyff.require_unreserved_canonical_mapping`. A form read back by
         :func:`~glyff.restore_recorded_canonical_value` then canonicalizes to

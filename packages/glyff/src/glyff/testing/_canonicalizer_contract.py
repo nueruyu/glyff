@@ -13,7 +13,7 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
-from .._execution import CanonicalArguments, Opaque, make_opaque_marker
+from .._execution import CanonicalArguments, CanonicalFallback, make_fallback_marker
 from ..exceptions import ArgumentCanonicalizationError
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]
@@ -91,16 +91,16 @@ class ArgumentCanonicalizerContract:
     def test_an_opaque_value_canonicalizes_to_the_marker(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        assert canonicalizer.canonicalize({"a": Opaque("com.example.Service")}) == {
-            "a": make_opaque_marker("com.example.Service")
-        }
+        assert canonicalizer.canonicalize(
+            {"a": CanonicalFallback("com.example.Service")}
+        ) == {"a": make_fallback_marker("com.example.Service")}
 
     def test_a_value_claiming_the_marker_is_refused(
         self, canonicalizer: ArgumentCanonicalizer
     ):
         with pytest.raises(ArgumentCanonicalizationError):
             canonicalizer.canonicalize(
-                {"a": dict(make_opaque_marker("com.example.Service"))}  # type: ignore[arg-type]
+                {"a": dict(make_fallback_marker("com.example.Service"))}  # type: ignore[arg-type]
             )
 
     def test_a_later_instance_agrees_on_the_form(

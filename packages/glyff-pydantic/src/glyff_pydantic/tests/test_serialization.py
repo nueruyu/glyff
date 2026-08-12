@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from glyff import ArgumentCanonicalizer, Serializer
 from glyff.exceptions import ArgumentCanonicalizationError, SerializationError
-from glyff.serialization import OpaqueByTypeQualname
+from glyff.serialization import FallbackByTypeQualname
 from pydantic import BaseModel, ConfigDict
 
 from glyff_pydantic import PydanticArgumentCanonicalizer, PydanticSerializer
@@ -122,11 +122,13 @@ def test_a_model_holding_an_opaque_member_is_refused_by_default(
         )
 
 
-def test_a_policy_reaches_an_opaque_member_of_a_model():
+def test_a_fallback_representer_reaches_an_unsupported_model_member():
     # The shape an agent object usually has: identity is the model's state,
     # carried alongside a dependency that has none.
     Agent, Tool = _agent_model_with_opaque_member()
-    canonicalizer = PydanticArgumentCanonicalizer(opaque_policy=OpaqueByTypeQualname())
+    canonicalizer = PydanticArgumentCanonicalizer(
+        fallback_representer=FallbackByTypeQualname()
+    )
 
     assert canonicalizer.canonicalize(
         {"self": Agent(name="researcher", tool=Tool(1))}
@@ -207,7 +209,7 @@ def test_a_mapping_valued_enum_is_not_handed_over_as_a_scalar(
         argument_canonicalizer.canonicalize({"a": Colliding.VALUE})
 
 
-def test_a_generator_is_left_to_the_opaque_policy(
+def test_a_generator_is_left_to_the_fallback_representer(
     argument_canonicalizer: ArgumentCanonicalizer,
 ):
     # Pydantic would happily walk an iterable, which would both bypass the shared

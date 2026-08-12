@@ -127,7 +127,7 @@ class ExecutionName:
 class ArgumentsDigest:
     """A digest over canonical arguments.
 
-    Opaque: glyff neither reads nor constrains its characters, so a store must
+    Opaque by design: glyff neither reads nor constrains its characters, so a store must
     round-trip whatever it is handed.
     """
 

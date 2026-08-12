@@ -3,15 +3,19 @@ import functools
 
 import pytest
 
-from glyff import CanonicalValue, Opaque
+from glyff import CanonicalValue, CanonicalFallback
 from glyff._execution import encode_canonical
 from glyff.exceptions import ArgumentCanonicalizationError
-from glyff.serialization import OpaqueByTypeQualname
-from glyff.serialization._utils import (
+from glyff.serialization import (
+    CanonicalFallbackRepresenter,
+    FallbackByTypeQualname,
+)
+from glyff.serialization._canonicalization import (
     _canonicalize_set,
-    stable_json_dumps,
     to_canonical,
 )
+from glyff.serialization._fallback import fallback_representer_or_reject
+from glyff.serialization._utils import stable_json_dumps
 
 
 @dataclasses.dataclass
@@ -19,8 +23,11 @@ class _TagField:
     __glyff_opaque__: str
 
 
-def canonical(obj: object, **kwargs) -> CanonicalValue:
-    return to_canonical(obj, **kwargs)
+def canonical(
+    obj: object,
+    fallback_representer: CanonicalFallbackRepresenter | None = None,
+) -> CanonicalValue:
+    return to_canonical(obj, fallback_representer_or_reject(fallback_representer))
 
 
 def test_sorted_canonical_is_stable_for_partial_order_elements():
@@ -28,7 +35,7 @@ def test_sorted_canonical_is_stable_for_partial_order_elements():
     # incomparable elements in process-randomized input order. _canonicalize_set must
     # instead order them by their encoded form.
     values = {frozenset({"a", "b"}), frozenset({"c", "d"}), frozenset({"e"})}
-    ordered = _canonicalize_set(values, to_canonical)
+    ordered = _canonicalize_set(values, canonical)
     assert ordered == sorted(ordered, key=encode_canonical)
 
 
@@ -142,25 +149,27 @@ def test_canonical_rejects_unrepresentable_mapping_keys():
         canonical({(1, 2): "a"})
 
 
-def test_canonical_rejects_opaque_values_by_default():
+def test_canonical_rejects_values_without_a_representation_by_default():
     class Service:
         pass
 
-    with pytest.raises(ArgumentCanonicalizationError, match="no value representation"):
+    with pytest.raises(
+        ArgumentCanonicalizationError, match="no canonical representation"
+    ):
         canonical(Service())
 
 
-def test_canonical_tags_policy_output_so_it_cannot_collide():
+def test_canonical_tags_fallback_output_so_it_cannot_collide():
     class Service:
         pass
 
-    tagged = canonical(Service(), policy=OpaqueByTypeQualname())
-    assert tagged != canonical(f"{__name__}.test_canonical_tags_policy_output.Service")
+    tagged = canonical(Service(), fallback_representer=FallbackByTypeQualname())
+    assert tagged != canonical(f"{Service.__module__}.{Service.__qualname__}")
     assert list(tagged) == ["__glyff_opaque__"]  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("value", [{"__glyff_opaque__": "x"}, _TagField("x")])
-def test_canonical_refuses_a_value_that_claims_the_policy_tag(value):
+def test_canonical_refuses_a_value_that_claims_the_fallback_tag(value):
     # The marker is how a value with no representation is written down. Anything
     # else canonicalizing to it would share that value's key, whichever branch
     # of the walk built the mapping — a native one or a dataclass's fields.
@@ -168,19 +177,32 @@ def test_canonical_refuses_a_value_that_claims_the_policy_tag(value):
         canonical(value)
 
 
-def test_canonical_keeps_a_recorded_opaque_value_as_its_marker():
+def test_canonical_keeps_a_recorded_fallback_as_its_marker():
     class Service:
         pass
 
-    recorded = canonical(Service(), policy=OpaqueByTypeQualname())
+    recorded = canonical(Service(), fallback_representer=FallbackByTypeQualname())
 
-    assert canonical(Opaque(f"{__name__}.{Service.__qualname__}")) == recorded
+    assert (
+        canonical(CanonicalFallback(f"{__name__}.{Service.__qualname__}")) == recorded
+    )
 
 
-def test_canonical_applies_the_policy_at_any_depth():
+def test_canonical_applies_the_fallback_at_any_depth():
     class Service:
         pass
 
-    assert canonical({"a": [Service()]}, policy=OpaqueByTypeQualname()) == {
-        "a": [{"__glyff_opaque__": f"{__name__}.{Service.__qualname__}"}]
-    }
+    assert canonical(
+        {"a": [Service()]}, fallback_representer=FallbackByTypeQualname()
+    ) == {"a": [{"__glyff_opaque__": f"{__name__}.{Service.__qualname__}"}]}
+
+
+def test_a_fallback_representer_must_return_a_canonical_value():
+    class InvalidFallback(CanonicalFallbackRepresenter):
+        def represent(self, value) -> CanonicalValue:
+            return object()  # type: ignore[return-value]
+
+    with pytest.raises(
+        ArgumentCanonicalizationError, match="not in the JSON data model"
+    ):
+        canonical(object(), fallback_representer=InvalidFallback())

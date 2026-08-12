@@ -13,8 +13,8 @@ from glyff.exceptions import ArgumentCanonicalizationError, SerializationError
 from glyff.serialization import (
     JsonArgumentCanonicalizer,
     JsonSerializer,
-    OpaqueByTypeQualname,
-    OpaquePolicy,
+    FallbackByTypeQualname,
+    CanonicalFallbackRepresenter,
 )
 
 
@@ -33,11 +33,13 @@ def argument_canonicalizer() -> JsonArgumentCanonicalizer:
     return JsonArgumentCanonicalizer()
 
 
-# -- The shipped opaque policies ---------------------------------------------
+# -- The shipped fallback representer ----------------------------------------
 
 
-def test_the_qualname_policy_identifies_a_value_by_its_class():
-    canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeQualname())
+def test_the_qualname_representer_identifies_a_value_by_its_class():
+    canonicalizer = JsonArgumentCanonicalizer(
+        fallback_representer=FallbackByTypeQualname()
+    )
 
     first = canonicalizer.canonicalize({"a": MyPlainClass("id1")})
     second = canonicalizer.canonicalize({"a": MyPlainClass("id2")})
@@ -48,9 +50,11 @@ def test_the_qualname_policy_identifies_a_value_by_its_class():
 
 
 def test_a_qualname_rendered_value_does_not_collide_with_that_literal_string():
-    # The policy renders MyPlainClass as its qualified name, so a string equal to
-    # that name would key the same call unless opaque output carried a tag.
-    canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeQualname())
+    # The representer returns MyPlainClass's qualified name, so a string equal to
+    # that name would key the same call unless fallback output carried a tag.
+    canonicalizer = JsonArgumentCanonicalizer(
+        fallback_representer=FallbackByTypeQualname()
+    )
     qualname = f"{MyPlainClass.__module__}.{MyPlainClass.__qualname__}"
 
     assert canonicalizer.canonicalize(
@@ -58,7 +62,7 @@ def test_a_qualname_rendered_value_does_not_collide_with_that_literal_string():
     ) != canonicalizer.canonicalize({"a": qualname})
 
 
-def test_the_qualname_policy_reaches_an_opaque_member_of_a_dataclass():
+def test_the_qualname_fallback_reaches_an_unsupported_dataclass_member():
     # The realistic shape: an agent whose identity is its state, holding
     # dependencies that cannot even be deep-copied.
     import threading
@@ -79,7 +83,9 @@ def test_the_qualname_policy_reaches_an_opaque_member_of_a_dataclass():
     with pytest.raises(ArgumentCanonicalizationError):
         JsonArgumentCanonicalizer().canonicalize({"self": a1, "query": "hi"})
 
-    canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeQualname())
+    canonicalizer = JsonArgumentCanonicalizer(
+        fallback_representer=FallbackByTypeQualname()
+    )
     assert canonicalizer.canonicalize(
         {"self": a1, "query": "hi"}
     ) == canonicalizer.canonicalize({"self": a2, "query": "hi"})
@@ -88,7 +94,7 @@ def test_the_qualname_policy_reaches_an_opaque_member_of_a_dataclass():
     ) != canonicalizer.canonicalize({"self": a3, "query": "hi"})
 
 
-def test_a_policy_governs_opaque_members_of_a_set():
+def test_a_fallback_governs_unsupported_members_of_a_set():
     # A set is ordered by a sort key before it becomes a list, which is a second
     # path a value can take through the walk.
     class Svc:
@@ -99,54 +105,56 @@ def test_a_policy_governs_opaque_members_of_a_set():
     with pytest.raises(ArgumentCanonicalizationError):
         JsonArgumentCanonicalizer().canonicalize({"a": values})
 
-    canonicalizer = JsonArgumentCanonicalizer(opaque_policy=OpaqueByTypeQualname())
+    canonicalizer = JsonArgumentCanonicalizer(
+        fallback_representer=FallbackByTypeQualname()
+    )
     assert canonicalizer.canonicalize({"a": values}) is not None
 
 
-# -- Holding the policy it was given -----------------------------------------
+# -- Holding the fallback representer it was given ---------------------------
 
 
-def test_the_policy_is_handed_the_value_itself():
+def test_the_representer_is_handed_the_value_itself():
     class Marker:
         pass
 
     seen: list = []
 
-    class RecordingPolicy(OpaquePolicy):
+    class RecordingRepresenter(CanonicalFallbackRepresenter):
         def represent(self, value):
             seen.append(value)
             return "recorded"
 
     marker = Marker()
-    JsonArgumentCanonicalizer(opaque_policy=RecordingPolicy()).canonicalize(
+    JsonArgumentCanonicalizer(fallback_representer=RecordingRepresenter()).canonicalize(
         {"a": marker}
     )
 
     assert seen == [marker]
 
 
-def test_what_a_policy_returns_is_what_reaches_the_form():
+def test_what_a_representer_returns_is_what_reaches_the_form():
     # Being handed the value is not enough: a canonicalizer that called the
-    # policy and then rendered the value its own way would still tell two
-    # instances apart, so only a policy that disagrees with that rendering
+    # representer and then rendered the value its own way would still tell two
+    # instances apart, so only a representer that disagrees with that rendering
     # catches it.
     class Svc:
         def __init__(self, name: str):
             self.name = name
 
-    class ByName(OpaquePolicy):
+    class ByName(CanonicalFallbackRepresenter):
         def represent(self, value):
             return value.name
 
-    canonicalizer = JsonArgumentCanonicalizer(opaque_policy=ByName())
+    canonicalizer = JsonArgumentCanonicalizer(fallback_representer=ByName())
 
     assert canonicalizer.canonicalize({"a": Svc("one")}) != canonicalizer.canonicalize(
         {"a": Svc("two")}
     )
 
 
-def test_a_falsy_policy_is_not_mistaken_for_no_policy():
-    class FalsyPolicy(OpaquePolicy):
+def test_a_falsy_representer_is_not_mistaken_for_no_representer():
+    class FalsyRepresenter(CanonicalFallbackRepresenter):
         def __bool__(self):
             return False
 
@@ -156,9 +164,9 @@ def test_a_falsy_policy_is_not_mistaken_for_no_policy():
     class Svc:
         pass
 
-    canonicalizer = JsonArgumentCanonicalizer(opaque_policy=FalsyPolicy())
+    canonicalizer = JsonArgumentCanonicalizer(fallback_representer=FalsyRepresenter())
 
-    # Would raise if the falsy policy were dropped in favour of RejectOpaque.
+    # Would raise if the falsy representer were mistaken for no representer.
     assert canonicalizer.canonicalize({"a": Svc()}) is not None
 
 

@@ -147,9 +147,9 @@ verbatim — anything that re-encoded them would break the key. It is what lets 
 argument and recompute the key from the record alone.
 
 A canonical form is already in the JSON data model, so canonicalizing one again
-returns it unchanged — provided the markers in it go back as `Opaque` values,
-since a plain mapping claiming that key is refused. That is what lets a migration
-hand an argument back untouched and have it key the call exactly as it did.
+returns it unchanged — provided the markers in it go back as
+`CanonicalFallback` values, since a plain mapping claiming that key is refused.
+That lets a migration hand an argument back untouched and preserve its key.
 
 Canonicalizing is **not** serializing. It is one-way and deliberately lossy,
 keeping only what identity depends on:
@@ -166,36 +166,35 @@ keeping only what identity depends on:
 
 A value with no value representation raises rather than being approximated.
 
-For values that are deliberately opaque — a service object passed as `self`, a
-client handle — glyff owns the canonicalization contract, not the taxonomy of
-what counts as opaque in your application.
-`JsonArgumentCanonicalizer(opaque_policy=...)` takes an `OpaquePolicy`, and
-`glyff.serialization` ships two:
+When the standard rules cannot derive a canonical representation — for example,
+for a service object passed as `self` or a client handle —
+`JsonArgumentCanonicalizer(fallback_representer=...)` takes a
+`CanonicalFallbackRepresenter`. `glyff.serialization` ships one:
 
 | Policy | Behavior |
 | --- | --- |
-| `RejectOpaque` (default) | Rejects the value with `ArgumentCanonicalizationError`, so distinct instances never silently collide. |
-| `OpaqueByTypeQualname` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
+| `FallbackByTypeQualname` | Represents the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when instance state should not distinguish calls — a stateless client handle, not a per-user session. |
 
-Policy return values are namespaced, so a policy that returns `"pkg.Cls"` cannot
+Fallback representations are tagged, so a representer returning `"pkg.Cls"` cannot
 collide with a plain string argument of the same text. The key that namespaces
 them is glyff's: a value canonicalizing to it — a mapping using it, a dataclass
-field named it — is refused rather than allowed to share an opaque value's key.
-`Opaque` is that marker as a value: canonicalizing one writes the marker, so a
-recorded argument can go back through a canonicalizer unchanged. Passing one to
-a live call declares the representation outright, and no policy is consulted.
-The same classification governs what is *stored*, not just what is hashed — an
-opaque value the policy rejects never reaches the store.
+field named it — is refused rather than allowed to share a fallback's key.
+`CanonicalFallback` is that marker as a value: canonicalizing one writes the
+marker, so a recorded argument can go back through a canonicalizer unchanged.
+Passing one to a live call declares the representation outright, and no
+representer is consulted. Without a fallback representer, unsupported values
+raise `ArgumentCanonicalizationError` and never reach the store.
 
 > **Compatibility.** The key was not reserved before this landed, so a store
 > written by an earlier build may hold a mapping shaped like the marker, which is
-> now read back as an opaque value. Nothing distinguishes the two, so check
+> now read back as a `CanonicalFallback`. Nothing distinguishes the two, so check
 > paused sessions for an argument mapping whose only key is `__glyff_opaque__`
 > before upgrading.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard
 > composable policies (marker attribute, type list, predicate). Today anything
-> beyond `OpaqueByTypeQualname` means implementing `OpaquePolicy` yourself.
+> beyond `FallbackByTypeQualname` means implementing
+> `CanonicalFallbackRepresenter` yourself.
 
 ## Choosing engrave boundaries
 

@@ -1,10 +1,9 @@
 from ._json import JsonArgumentCanonicalizer, JsonSerializer
-from ._utils import OpaquePolicy, OpaqueByTypeQualname, RejectOpaque
+from ._fallback import CanonicalFallbackRepresenter, FallbackByTypeQualname
 
 __all__ = [
     "JsonSerializer",
     "JsonArgumentCanonicalizer",
-    "OpaquePolicy",
-    "RejectOpaque",
-    "OpaqueByTypeQualname",
+    "CanonicalFallbackRepresenter",
+    "FallbackByTypeQualname",
 ]
