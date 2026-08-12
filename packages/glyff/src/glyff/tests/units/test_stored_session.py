@@ -70,12 +70,14 @@ def test_the_recorded_versions_cannot_be_written_through():
 
 def test_a_reports_versions_are_not_the_callers_mappings():
     before, after = {PAYMENTS: "v1"}, {PAYMENTS: "v2"}
-    report = MigrationReport(from_domain_versions=before, to_domain_versions=after)
+    report = MigrationReport(
+        source_domain_versions=before, target_domain_versions=after
+    )
 
     before[PAYMENTS], after[PAYMENTS] = "changed", "changed"
 
-    assert report.from_domain_versions == {PAYMENTS: "v1"}
-    assert report.to_domain_versions == {PAYMENTS: "v2"}
+    assert report.source_domain_versions == {PAYMENTS: "v1"}
+    assert report.target_domain_versions == {PAYMENTS: "v2"}
 
 
 def test_an_empty_domain_version_is_refused():
@@ -86,4 +88,6 @@ def test_an_empty_domain_version_is_refused():
 
 def test_a_report_with_an_empty_version_is_refused():
     with pytest.raises(MigrationError):
-        MigrationReport(from_domain_versions={PAYMENTS: ""}, to_domain_versions={})
+        MigrationReport(
+            source_domain_versions={PAYMENTS: ""}, target_domain_versions={}
+        )

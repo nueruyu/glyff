@@ -122,8 +122,6 @@ def test_a_boundary_can_move_to_another_domain():
     migration = migrator(
         {
             PAY: DomainVersionTransition("v1", "v2"),
-            # Unchanged, but named: a rule reaching it has to say which
-            # generation it was written against.
             SHIP: DomainVersionTransition("v7", "v7"),
         }
     )
@@ -136,8 +134,6 @@ def test_a_boundary_can_move_to_another_domain():
     )
 
     assert replacement.executions[0].id.domain == SHIP
-    # A migration names the domains it owns; one it says nothing about keeps the
-    # version it had.
     assert replacement.metadata.domain_versions == {PAY: "v2", SHIP: "v7"}
 
 
@@ -162,8 +158,6 @@ def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
 
 
 def test_a_default_the_new_boundary_gained_is_written_out_by_the_migration():
-    # Defaults are part of a bound call, so a migration states them rather than
-    # having them applied from a signature it deliberately does not read.
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
@@ -215,8 +209,6 @@ def test_an_opaque_argument_passed_through_keys_the_call_as_it_did_before():
     )
     [migrated] = migrate(migration, session(execution))
 
-    # Byte-for-byte: the marker is glyff's own, so a migration that never
-    # touched the argument must not be able to change how it is recorded.
     assert migrated.arguments.data == execution.arguments.data
 
 
@@ -295,9 +287,6 @@ def test_repeated_calls_keep_the_ordinals_that_tell_them_apart():
 
 
 def test_an_ordinal_is_carried_over_rather_than_re_derived():
-    # An ordinal orders this call among the ones the resumed code will make. A
-    # record at 1 is what a second identical call replays; moving it to 0 would
-    # hand it to the first one instead.
     survivor = started("retry", sequence=1)
 
     migrated = migrate(migrator(), session(survivor))
@@ -306,8 +295,6 @@ def test_an_ordinal_is_carried_over_rather_than_re_derived():
 
 
 def test_a_migration_leaves_another_domains_ordinals_alone():
-    # A migration names the domains it touches, so it must not renumber a
-    # record in one it said nothing about.
     elsewhere = started("label", sequence=1, domain=SHIP)
 
     migrated = migrate(migrator(), session(elsewhere, versions={PAY: "v1", SHIP: "v7"}))
@@ -421,8 +408,6 @@ def test_a_rename_that_changes_the_parameters_needs_a_conversion():
 
 
 def test_a_rule_reaching_an_undeclared_domain_is_refused():
-    # Shapes carry no version, so the transitions are the only thing saying
-    # which generation a rule was written against.
     migration = migrator()
 
     with pytest.raises(MigrationError, match="declares no version transition"):
@@ -461,12 +446,10 @@ def test_a_boundary_registered_twice_is_refused():
     [
         lambda: DomainVersionTransition("v1", ""),
         lambda: DomainVersionTransition("", "v2"),
-        lambda: DomainVersionTransition.claiming(""),
+        lambda: DomainVersionTransition.from_unclaimed(""),
     ],
 )
 def test_a_transition_to_or_from_an_empty_version_is_refused(build):
-    # A version no `Domain` could declare would match nothing; refused where it
-    # is written rather than where it is used.
     with pytest.raises(ValueError, match="cannot be empty"):
         build()
 
@@ -477,8 +460,6 @@ def test_a_boundary_naming_one_parameter_twice_is_refused():
 
 
 def test_one_domain_declared_twice_is_refused():
-    # Two spellings of a domain are two Python keys but one generation guard, so
-    # the second would quietly replace the first.
     with pytest.raises(MigrationError, match="more than one version transition"):
         migrator(
             {
@@ -489,8 +470,6 @@ def test_one_domain_declared_twice_is_refused():
 
 
 def test_an_opaque_nested_in_a_container_survives_a_conversion():
-    # The canonicalizer applies a policy at any depth, so a recorded marker can
-    # sit anywhere. Converting one argument must not cost another its key.
     execution = started(
         "authorize",
         arguments={
@@ -532,7 +511,7 @@ def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
     migration = migrator(
         {
             PAY: DomainVersionTransition("v1", "v2"),
-            SHIP: DomainVersionTransition.claiming("v1"),
+            SHIP: DomainVersionTransition.from_unclaimed("v1"),
         }
     )
     migration.remap(
@@ -551,7 +530,7 @@ def test_claiming_a_domain_the_session_already_records_is_refused():
     migration = migrator(
         {
             PAY: DomainVersionTransition("v1", "v2"),
-            SHIP: DomainVersionTransition.claiming("v1"),
+            SHIP: DomainVersionTransition.from_unclaimed("v1"),
         }
     )
 
@@ -567,8 +546,6 @@ def test_a_session_that_never_entered_the_domain_is_refused():
 
 
 def test_a_drop_is_held_to_the_shape_it_declares():
-    # The destructive half, so at least as strict as a rewrite: a migration
-    # describing another generation must not delete this one's records.
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()

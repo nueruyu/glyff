@@ -146,7 +146,7 @@ Every side is then checked against what is actually there:
   these are the only thing tying a rule to a generation, so **every domain a
   rule touches needs one**: a domain that only carries records across unchanged
   declares the same version twice, and one the session has never entered uses
-  `DomainVersionTransition.claiming("1")`. Domains no rule touches keep the
+  `DomainVersionTransition.from_unclaimed("1")`. Domains no rule touches keep the
   versions they had, so a library can publish a migration for its own domain
   without knowing what else the session has entered.
 - Records whose argument names are not the ones declared are refused, and so is

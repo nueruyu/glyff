@@ -93,8 +93,8 @@ def _domains_in(execution_id: ExecutionId) -> set[DomainId]:
 class MigrationReport:
     """The versions recorded before and after a migration."""
 
-    from_domain_versions: Mapping[DomainId, str]
-    to_domain_versions: Mapping[DomainId, str]
+    source_domain_versions: Mapping[DomainId, str]
+    target_domain_versions: Mapping[DomainId, str]
 
     @classmethod
     def between(
@@ -102,18 +102,18 @@ class MigrationReport:
     ) -> MigrationReport:
         """What a store read and what it stored, which is all a report is."""
         return cls(
-            from_domain_versions=source.metadata.domain_versions,
-            to_domain_versions=replacement.metadata.domain_versions,
+            source_domain_versions=source.metadata.domain_versions,
+            target_domain_versions=replacement.metadata.domain_versions,
         )
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
-            "from_domain_versions",
-            _validated_domain_versions(self.from_domain_versions),
+            "source_domain_versions",
+            _validated_domain_versions(self.source_domain_versions),
         )
         object.__setattr__(
             self,
-            "to_domain_versions",
-            _validated_domain_versions(self.to_domain_versions),
+            "target_domain_versions",
+            _validated_domain_versions(self.target_domain_versions),
         )

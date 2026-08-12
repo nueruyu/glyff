@@ -163,7 +163,8 @@ class SessionMigrationContract:
         )
 
         assert report == MigrationReport(
-            from_domain_versions={DOMAIN: "v1"}, to_domain_versions={DOMAIN: "v2"}
+            source_domain_versions={DOMAIN: "v1"},
+            target_domain_versions={DOMAIN: "v2"},
         )
         assert [e.id for e in await _executions(backend)] == [after.id]
         assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v2"

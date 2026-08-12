@@ -11,8 +11,8 @@ from .._execution import (
     CanonicalValue,
     Opaque,
     encode_canonical,
-    opaque_marker,
-    require_unreserved,
+    make_opaque_marker,
+    require_unreserved_canonical_mapping,
 )
 from ..exceptions import ArgumentCanonicalizationError
 from .constants import JSON_SEPARATORS
@@ -138,12 +138,12 @@ def to_canonical(
 
     if isinstance(obj, Opaque):
         # Already the policy's answer, so it is kept rather than asked again.
-        return opaque_marker(recurse(obj.representation))
+        return make_opaque_marker(recurse(obj.representation))
 
     derived = _derive_canonical(obj, policy, recurse)
     if derived is _UNREPRESENTABLE:
-        return opaque_marker(recurse(policy.represent(obj)))
-    require_unreserved(derived)
+        return make_opaque_marker(recurse(policy.represent(obj)))
+    require_unreserved_canonical_mapping(derived)
     return derived
 
 

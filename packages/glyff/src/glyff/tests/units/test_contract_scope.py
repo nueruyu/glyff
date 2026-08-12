@@ -15,8 +15,8 @@ from glyff import (
     CanonicalArgumentMap,
     Opaque,
     Serializer,
-    opaque_marker,
-    require_unreserved,
+    make_opaque_marker,
+    require_unreserved_canonical_mapping,
 )
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
@@ -30,9 +30,9 @@ class BareCanonicalizer(ArgumentCanonicalizer):
 
 def _plain(value: Any) -> Any:
     if isinstance(value, Opaque):
-        return opaque_marker(_plain(value.representation))
+        return make_opaque_marker(_plain(value.representation))
     if isinstance(value, dict):
-        require_unreserved(value)
+        require_unreserved_canonical_mapping(value)
         return {key: _plain(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_plain(item) for item in value]

@@ -27,12 +27,10 @@ PAUSE = {"at_finish": True}
 
 
 class Paused(Exception):
-    """Stands in for whatever pauses a session."""
+    pass
 
 
 # -- The generation that recorded the session --------------------------------
-#
-# Every boundary is renamed in the next generation, so both live in one module.
 
 
 @V1.engrave
@@ -139,8 +137,6 @@ async def test_a_migrated_session_resumes_on_the_next_generation(
             await checkout_v1("ord_1")
     assert CALLS == ["authorize", "capture", "finish"]
 
-    # The new code refuses the session rather than replaying its records into a
-    # generation nothing agreed on.
     CALLS.clear()
     with pytest.raises(DomainVersionMismatchError):
         async with make_session(
@@ -153,18 +149,14 @@ async def test_a_migrated_session_resumes_on_the_next_generation(
     report = await backend.session_migration.run(
         session, _migration(argument_canonicalizer)
     )
-    assert report.from_domain_versions == {PAY: "1"}
-    assert report.to_domain_versions == {PAY: "2"}
+    assert report.source_domain_versions == {PAY: "1"}
+    assert report.target_domain_versions == {PAY: "2"}
 
     CALLS.clear()
     PAUSE["at_finish"] = False
-    # A handle that wrote none of it, as a worker picking the session up holds.
     async with make_session(
         session, SQLiteBackend(database), argument_canonicalizer, serializer
     ):
         assert await checkout_v2("ord_1") == "auth:ord_1/cap:ord_1/done:ord_1"
 
-    # The two that had finished came back from records written under other
-    # names, and under other arguments in `capture_cents`' case. Only the one
-    # that had not finished ran.
     assert CALLS == ["complete"]

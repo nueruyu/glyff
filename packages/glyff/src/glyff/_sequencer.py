@@ -6,19 +6,19 @@ from ._identity import (
     DomainId,
     ExecutionId,
     ExecutionName,
-    SequenceScope,
+    ExecutionSequenceScope,
 )
 
 
 class Sequencer:
     """
     Generates sequential integers for ExecutionIds in a concurrency-safe manner.
-    Each `SequenceScope` has its own independent sequence.
+    Each `ExecutionSequenceScope` has its own independent sequence.
     """
 
     def __init__(self):
-        self._locks: dict[SequenceScope, asyncio.Lock] = {}
-        self._counters: dict[SequenceScope, int] = defaultdict(int)
+        self._locks: dict[ExecutionSequenceScope, asyncio.Lock] = {}
+        self._counters: dict[ExecutionSequenceScope, int] = defaultdict(int)
         self._meta_lock = asyncio.Lock()
 
     async def next(
@@ -29,7 +29,7 @@ class Sequencer:
         arguments_digest: ArgumentsDigest,
     ) -> int:
         """Returns the next sequence number for the given content scope."""
-        key = SequenceScope(parent, domain, name, arguments_digest)
+        key = ExecutionSequenceScope(parent, domain, name, arguments_digest)
 
         async with self._meta_lock:
             if key not in self._locks:

@@ -13,7 +13,7 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
-from .._execution import CanonicalArguments, Opaque, opaque_marker
+from .._execution import CanonicalArguments, Opaque, make_opaque_marker
 from ..exceptions import ArgumentCanonicalizationError
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]
@@ -46,8 +46,6 @@ class ArgumentCanonicalizerContract:
     def test_the_bound_name_is_part_of_the_form(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # One value, two names: a canonicalizer carrying only the values would
-        # key `f(a=1)` and `f(b=1)` the same way.
         assert canonicalizer.canonicalize({"a": 1}) != canonicalizer.canonicalize(
             {"b": 1}
         )
@@ -83,9 +81,6 @@ class ArgumentCanonicalizerContract:
     def test_a_canonical_form_canonicalizes_to_itself(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # A migration reads recorded canonical arguments and hands back the ones
-        # the call should be keyed by. An argument it passed through untouched
-        # has to come out of here keying the call the way it already did.
         form = canonicalizer.canonicalize(
             {"a": 1, "b": ["x", None], "c": {"d": True}, "e": "text"}
         )
@@ -96,29 +91,21 @@ class ArgumentCanonicalizerContract:
     def test_an_opaque_value_canonicalizes_to_the_marker(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # The marker is the canonical format's, not any one canonicalizer's: a
-        # migration reads recorded arguments by it, so a form written another
-        # way would not be read back as opaque at all.
         assert canonicalizer.canonicalize({"a": Opaque("com.example.Service")}) == {
-            "a": opaque_marker("com.example.Service")
+            "a": make_opaque_marker("com.example.Service")
         }
 
     def test_a_value_claiming_the_marker_is_refused(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # Reserved for the same reason: a value canonicalizing to the marker
-        # would share an opaque value's key, and read back as one.
         with pytest.raises(ArgumentCanonicalizationError):
             canonicalizer.canonicalize(
-                {"a": dict(opaque_marker("com.example.Service"))}  # type: ignore[arg-type]
+                {"a": dict(make_opaque_marker("com.example.Service"))}  # type: ignore[arg-type]
             )
 
     def test_a_later_instance_agrees_on_the_form(
         self, canonicalizer_factory: CanonicalizerFactory
     ):
-        # The form is the execution's key, and a session that resumes a paused
-        # run is handed a canonicalizer it built itself. A form that depended on
-        # the instance would miss every record the run before it wrote.
         arguments = {"a": 1, "b": "two"}
 
         assert canonicalizer_factory().canonicalize(arguments) == (

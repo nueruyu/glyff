@@ -138,7 +138,7 @@ class ExecutionId:
 
 
 @dataclass(frozen=True)
-class SequenceScope:
+class ExecutionSequenceScope:
     """Everything of an identity except the ordinal, which counts within it.
 
     A `sequence` orders calls inside one of these and means nothing outside it.
@@ -152,7 +152,7 @@ class SequenceScope:
     arguments_digest: ArgumentsDigest
 
     @classmethod
-    def from_execution_id(cls, execution_id: ExecutionId) -> SequenceScope:
+    def from_execution_id(cls, execution_id: ExecutionId) -> ExecutionSequenceScope:
         return cls(
             parent_id=execution_id.parent_id,
             domain=execution_id.domain,

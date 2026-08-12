@@ -11,20 +11,14 @@ from typing import Any, TypeAlias
 from ._identity import ArgumentsDigest, ExecutionId
 from .exceptions import ArgumentCanonicalizationError, InvalidExecutionError
 
-# A value in the JSON data model, which is what canonicalizing a call's arguments
-# produces.
 CanonicalValue: TypeAlias = (
     "str | int | float | bool | None | list[CanonicalValue] | dict[str, CanonicalValue]"
 )
 
-# A whole call's arguments, canonicalized. Always a mapping, because it is keyed
-# by the names the call was bound to.
 CanonicalArgumentMap: TypeAlias = "dict[str, CanonicalValue]"
 
-# One recorded argument value, with the markers glyff wrote given a name.
 RecordedArgumentValue: TypeAlias = "str | int | float | bool | None | Opaque | list[RecordedArgumentValue] | dict[str, RecordedArgumentValue]"  # noqa: E501
 
-# Reserved marker for opaque canonical values.
 _OPAQUE_MARKER_KEY = "__glyff_opaque__"
 
 
@@ -44,12 +38,12 @@ class Opaque:
     representation: CanonicalValue
 
 
-def opaque_marker(representation: CanonicalValue) -> CanonicalValue:
+def make_opaque_marker(representation: CanonicalValue) -> CanonicalValue:
     """The canonical form an opaque value is recorded as."""
     return {_OPAQUE_MARKER_KEY: representation}
 
 
-def require_unreserved(value: CanonicalValue) -> None:
+def require_unreserved_canonical_mapping(value: CanonicalValue) -> None:
     """Refuses a canonical mapping that claims the marker's key as its own.
 
     A canonicalizer owes this to every mapping it derives from a value: one
@@ -64,7 +58,9 @@ def require_unreserved(value: CanonicalValue) -> None:
         )
 
 
-def from_recorded(value: CanonicalValue) -> RecordedArgumentValue:
+def restore_recorded_canonical_value(
+    value: CanonicalValue,
+) -> RecordedArgumentValue:
     """Reads a recorded canonical value back, markers and all.
 
     A marker becomes an `Opaque` wherever it sits, which is what makes the form
@@ -74,9 +70,11 @@ def from_recorded(value: CanonicalValue) -> RecordedArgumentValue:
     if isinstance(value, dict):
         if len(value) == 1 and _OPAQUE_MARKER_KEY in value:
             return Opaque(value[_OPAQUE_MARKER_KEY])
-        return {key: from_recorded(item) for key, item in value.items()}
+        return {
+            key: restore_recorded_canonical_value(item) for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [from_recorded(item) for item in value]
+        return [restore_recorded_canonical_value(item) for item in value]
     return value
 
 

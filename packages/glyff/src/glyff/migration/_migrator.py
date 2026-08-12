@@ -11,9 +11,9 @@ from .._execution import (
     CanonicalArguments,
     Execution,
     RecordedArgumentValue,
-    from_recorded,
+    restore_recorded_canonical_value,
 )
-from .._identity import DomainId, ExecutionId, ExecutionName, SequenceScope
+from .._identity import DomainId, ExecutionId, ExecutionName, ExecutionSequenceScope
 from .._interfaces import ArgumentCanonicalizer
 from ..exceptions import MigrationError, MigrationOrdinalAmbiguityError
 from ._interfaces import SessionMigrator
@@ -35,12 +35,11 @@ class DomainVersionTransition:
     target: str
 
     def __post_init__(self) -> None:
-        # Refused where it is written rather than where it is used.
         if not self.target or self.source == "":
             raise ValueError("A domain version cannot be empty.")
 
     @classmethod
-    def claiming(cls, target: str) -> DomainVersionTransition:
+    def from_unclaimed(cls, target: str) -> DomainVersionTransition:
         """A domain the session has not entered, which this migration claims."""
         return cls(source=None, target=target)
 
@@ -211,8 +210,10 @@ class ExecutionMigrator(SessionMigrator):
         children = _children_by_parent(source.executions)
 
         migrated: list[Execution] = []
-        arguments_by_source_scope: dict[SequenceScope, CanonicalArguments] = {}
-        source_scopes_by_target: dict[SequenceScope, set[SequenceScope]] = {}
+        arguments_by_source_scope: dict[ExecutionSequenceScope, CanonicalArguments] = {}
+        source_scopes_by_target: dict[
+            ExecutionSequenceScope, set[ExecutionSequenceScope]
+        ] = {}
 
         # Ancestors first, so a parent's own key is settled before anything that
         # names it. Depth-first only because that keeps the walk iterative.
@@ -224,14 +225,12 @@ class ExecutionMigrator(SessionMigrator):
             ):
                 rule = self._rules.get((execution.id.domain, execution.id.name))
                 if isinstance(rule, _Drop):
-                    # Checked before deleting, not only before rewriting: this
-                    # is the destructive half.
                     self._recorded(execution, rule.source)
                     continue
 
                 # Memoized per source scope: its members are recorded with the
                 # same bytes, so one conversion answers for all of them.
-                source_scope = SequenceScope.from_execution_id(execution.id)
+                source_scope = ExecutionSequenceScope.from_execution_id(execution.id)
                 if source_scope not in arguments_by_source_scope:
                     arguments_by_source_scope[source_scope] = self._arguments(
                         execution, rule
@@ -239,7 +238,7 @@ class ExecutionMigrator(SessionMigrator):
                 arguments = arguments_by_source_scope[source_scope]
 
                 target = rule.target if rule is not None else None
-                scope = SequenceScope(
+                scope = ExecutionSequenceScope(
                     parent_id=new_parent,
                     domain=target.domain if target else execution.id.domain,
                     name=target.name if target else execution.id.name,
@@ -301,7 +300,10 @@ class ExecutionMigrator(SessionMigrator):
                 f"describes it as {_format_argument_names(source.argument_names)}. "
                 "It describes another generation of these records."
             )
-        return {name: from_recorded(value) for name, value in stored.items()}
+        return {
+            name: restore_recorded_canonical_value(value)
+            for name, value in stored.items()
+        }
 
 
 def _normalized_transitions(
@@ -342,9 +344,9 @@ def _children_by_parent(
 
 
 def _require_one_source_scope(
-    source_scopes_by_target: dict[SequenceScope, set[SequenceScope]],
-    target: SequenceScope,
-    source: SequenceScope,
+    source_scopes_by_target: dict[ExecutionSequenceScope, set[ExecutionSequenceScope]],
+    target: ExecutionSequenceScope,
+    source: ExecutionSequenceScope,
 ) -> None:
     # An ordinal orders calls within one scope and means nothing across two, so
     # carrying one over is sound only while a scope's members all came from one.
