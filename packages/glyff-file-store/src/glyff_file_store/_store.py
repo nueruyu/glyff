@@ -5,6 +5,7 @@ from pathlib import Path
 
 from glyff import (
     DomainId,
+    DomainVersion,
     Execution,
     ExecutionId,
     ExecutionRepository,
@@ -131,6 +132,11 @@ class JsonFileBackend(MigratableBackend):
         return self._session_migration
 
     async def claim_domain(
-        self, session_id: SessionId, domain: DomainId, version: str
-    ) -> str:
-        return await self._client.claim_domain(session_id.value, domain, version)
+        self,
+        session_id: SessionId,
+        domain: DomainId,
+        version: DomainVersion,
+    ) -> DomainVersion:
+        return DomainVersion(
+            await self._client.claim_domain(session_id.value, domain, version.value)
+        )

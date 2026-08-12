@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from glyff import DomainId, Execution, SessionId, TransactionScope
+from glyff import DomainId, DomainVersion, Execution, SessionId, TransactionScope
 from glyff.migration import (
     SessionMetadata,
     SessionMigrator,
@@ -30,7 +30,7 @@ class ReplacingMigrator(SessionMigrator):
 
     def migrate(self, source: StoredSession) -> StoredSession:
         return StoredSession(
-            metadata=SessionMetadata(domain_versions={DOMAIN: self._version}),
+            metadata=SessionMetadata.from_strings({DOMAIN: self._version}),
             executions=self._executions,
         )
 
@@ -66,7 +66,7 @@ def backend(tmp_path: Path) -> SQLiteBackend:
 
 
 async def seed(backend: SQLiteBackend, *names: str) -> list[Execution]:
-    await backend.claim_domain(SESSION, DOMAIN, "v1")
+    await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
     seeded = []
     for name in names:
         execution = started(name)
@@ -99,7 +99,9 @@ async def test_a_failed_execution_write_leaves_the_version_alone(
 
     monkeypatch.undo()
     assert [e.id for e in await stored(backend)] == [e.id for e in seeded]
-    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+    assert (
+        await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v-later"))
+    ).value == "v1"
 
 
 async def test_a_failed_version_write_leaves_the_executions_alone(
@@ -115,7 +117,9 @@ async def test_a_failed_version_write_leaves_the_executions_alone(
 
     monkeypatch.undo()
     assert [e.id for e in await stored(backend)] == [e.id for e in seeded]
-    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+    assert (
+        await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v-later"))
+    ).value == "v1"
 
 
 async def test_a_failed_migration_leaves_nothing_behind_on_disk(
@@ -136,4 +140,6 @@ async def test_a_failed_migration_leaves_nothing_behind_on_disk(
     assert [e.id async for e in reopened.repository.executions(SESSION)] == [
         e.id for e in seeded
     ]
-    assert await reopened.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+    assert (
+        await reopened.claim_domain(SESSION, DOMAIN, DomainVersion("v-later"))
+    ).value == "v1"

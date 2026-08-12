@@ -19,7 +19,7 @@ from glyff_file_store._store import FORMAT_VERSION
 _CLAIMER = """
 import asyncio, json, sys, time
 from pathlib import Path
-from glyff import DomainId, SessionId
+from glyff import DomainId, DomainVersion, SessionId
 from glyff_file_store import JsonFileBackend
 
 base_dir, version, signals = sys.argv[1], sys.argv[2], Path(sys.argv[3])
@@ -30,9 +30,11 @@ async def main() -> None:
     while not (signals / "go").exists():
         time.sleep(0.001)
     claimed = await backend.claim_domain(
-        SessionId("orders"), DomainId("com.example.payments"), version
+        SessionId("orders"),
+        DomainId("com.example.payments"),
+        DomainVersion(version),
     )
-    print(json.dumps(claimed))
+    print(json.dumps(claimed.value))
 
 asyncio.run(main())
 """

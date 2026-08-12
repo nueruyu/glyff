@@ -4,7 +4,7 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from glyff import Domain, DomainId, Session, SessionId
+from glyff import Domain, DomainId, DomainVersion, Session, SessionId
 from glyff.exceptions import DomainVersionMismatchError
 
 from glyff_sqlite import SQLiteBackend
@@ -13,7 +13,7 @@ PAYMENTS = DomainId("com.example.payments")
 
 
 async def _enter(db: Path, version: str, serializer, argument_canonicalizer) -> None:
-    domain = Domain(PAYMENTS, version=version)
+    domain = Domain(PAYMENTS, version=DomainVersion(version))
 
     @domain.engrave
     async def task() -> str:

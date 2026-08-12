@@ -1,4 +1,4 @@
-from ._identity import DomainId
+from ._identity import DomainId, DomainVersion
 
 
 class GlyffException(Exception):
@@ -109,8 +109,8 @@ class DomainVersionMismatchError(GlyffError):
         message: str,
         *,
         domain_id: DomainId,
-        recorded_version: str,
-        current_version: str,
+        recorded_version: DomainVersion,
+        current_version: DomainVersion,
     ) -> None:
         super().__init__(message)
         self.domain_id = domain_id

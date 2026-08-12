@@ -117,7 +117,9 @@ from glyff.migration import DomainVersionTransition, ExecutionMigrator, Executio
 
 migrator = ExecutionMigrator(
     canonicalizer=canonicalizer,
-    version_transitions={"com.example.payments": DomainVersionTransition("1", "2")},
+    version_transitions={
+        "com.example.payments": DomainVersionTransition.between("1", "2")
+    },
 )
 migrator.remap(
     ExecutionShape.from_names("com.example.payments", "authorize", "order", "units"),

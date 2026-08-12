@@ -8,7 +8,15 @@ two halves are proved against each other here rather than in glyff's own tests.
 from pathlib import Path
 
 import pytest
-from glyff import ArgumentCanonicalizer, Domain, DomainId, Serializer, SessionId
+from glyff import (
+    ArgumentCanonicalizer,
+    Domain,
+    DomainId,
+    DomainVersion,
+    DomainVersionMap,
+    Serializer,
+    SessionId,
+)
 from glyff.exceptions import DomainVersionMismatchError
 from glyff.migration import (
     DomainVersionTransition,
@@ -19,8 +27,8 @@ from glyff.testing import make_session
 from glyff_sqlite import SQLiteBackend
 
 PAY = DomainId("com.example.payments")
-V1 = Domain(PAY, version="1")
-V2 = Domain(PAY, version="2")
+V1 = Domain(PAY, version=DomainVersion("1"))
+V2 = Domain(PAY, version=DomainVersion("2"))
 
 CALLS: list[str] = []
 PAUSE = {"at_finish": True}
@@ -91,7 +99,7 @@ async def checkout_v2(order: str) -> str:
 def _migration(canonicalizer: ArgumentCanonicalizer) -> ExecutionMigrator:
     migrator = ExecutionMigrator(
         canonicalizer=canonicalizer,
-        version_transitions={PAY: DomainVersionTransition("1", "2")},
+        version_transitions={PAY: DomainVersionTransition.between("1", "2")},
     )
     migrator.remap(
         ExecutionShape.from_names(PAY, "checkout_v1", "order"),
@@ -149,8 +157,8 @@ async def test_a_migrated_session_resumes_on_the_next_generation(
     report = await backend.session_migration.run(
         session, _migration(argument_canonicalizer)
     )
-    assert report.source_domain_versions == {PAY: "1"}
-    assert report.target_domain_versions == {PAY: "2"}
+    assert report.source_domain_versions == DomainVersionMap({PAY: "1"})
+    assert report.target_domain_versions == DomainVersionMap({PAY: "2"})
 
     CALLS.clear()
     PAUSE["at_finish"] = False

@@ -7,6 +7,7 @@ from ._execution import (
     CanonicalValue,
     Opaque,
     RecordedArgumentValue,
+    RecordedArguments,
     make_opaque_marker,
     require_unreserved_canonical_mapping,
     restore_recorded_canonical_value,
@@ -15,7 +16,15 @@ from ._execution import (
     Metadata,
     SerializedValue,
 )
-from ._identity import ArgumentsDigest, DomainId, ExecutionId, ExecutionName, SessionId
+from ._identity import (
+    ArgumentsDigest,
+    DomainId,
+    DomainVersion,
+    DomainVersionMap,
+    ExecutionId,
+    ExecutionName,
+    SessionId,
+)
 from ._interfaces import (
     ArgumentCanonicalizer,
     Backend,
@@ -29,6 +38,8 @@ from ._session import Session
 __all__ = [
     "Domain",
     "DomainId",
+    "DomainVersion",
+    "DomainVersionMap",
     "Session",
     "Event",
     "EventHandler",
@@ -49,6 +60,7 @@ __all__ = [
     "require_unreserved_canonical_mapping",
     "restore_recorded_canonical_value",
     "RecordedArgumentValue",
+    "RecordedArguments",
     "Execution",
     "ExecutionId",
     "ExecutionName",

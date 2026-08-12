@@ -1,7 +1,7 @@
 """What a session snapshot refuses to be."""
 
 import pytest
-from glyff import DomainId, Execution
+from glyff import DomainId, DomainVersionMap, Execution
 from glyff.exceptions import MigrationCollisionError, MigrationError
 from glyff.migration import MigrationReport, SessionMetadata, StoredSession
 from glyff.testing import canonical_arguments, make_execution_id
@@ -18,7 +18,7 @@ def started(name: str, *, domain: DomainId = PAYMENTS, parent=None) -> Execution
 
 def session(versions: dict[DomainId, str], *executions: Execution) -> StoredSession:
     return StoredSession(
-        metadata=SessionMetadata(domain_versions=versions), executions=executions
+        metadata=SessionMetadata.from_strings(versions), executions=executions
     )
 
 
@@ -58,7 +58,7 @@ def test_the_recorded_versions_are_not_the_callers_mapping():
 
     versions[PAYMENTS] = "v2"
 
-    assert stored.metadata.domain_versions == {PAYMENTS: "v1"}
+    assert stored.metadata.domain_versions == DomainVersionMap({PAYMENTS: "v1"})
 
 
 def test_the_recorded_versions_cannot_be_written_through():
@@ -70,24 +70,23 @@ def test_the_recorded_versions_cannot_be_written_through():
 
 def test_a_reports_versions_are_not_the_callers_mappings():
     before, after = {PAYMENTS: "v1"}, {PAYMENTS: "v2"}
-    report = MigrationReport(
+    report = MigrationReport.from_strings(
         source_domain_versions=before, target_domain_versions=after
     )
 
     before[PAYMENTS], after[PAYMENTS] = "changed", "changed"
 
-    assert report.source_domain_versions == {PAYMENTS: "v1"}
-    assert report.target_domain_versions == {PAYMENTS: "v2"}
+    assert report.source_domain_versions == DomainVersionMap({PAYMENTS: "v1"})
+    assert report.target_domain_versions == DomainVersionMap({PAYMENTS: "v2"})
 
 
 def test_an_empty_domain_version_is_refused():
-    # `Domain` refuses one at declaration; migration is the only other way in.
-    with pytest.raises(MigrationError, match="com.example.payments"):
+    with pytest.raises(ValueError, match="cannot be empty"):
         session({PAYMENTS: ""}, started("task"))
 
 
 def test_a_report_with_an_empty_version_is_refused():
-    with pytest.raises(MigrationError):
-        MigrationReport(
+    with pytest.raises(ValueError):
+        MigrationReport.from_strings(
             source_domain_versions={PAYMENTS: ""}, target_domain_versions={}
         )

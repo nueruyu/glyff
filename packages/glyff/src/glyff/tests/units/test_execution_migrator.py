@@ -5,7 +5,14 @@ import itertools
 import json
 
 import pytest
-from glyff import CanonicalValue, DomainId, Execution, Opaque, SerializedValue
+from glyff import (
+    CanonicalValue,
+    DomainId,
+    DomainVersionMap,
+    Execution,
+    Opaque,
+    SerializedValue,
+)
 from glyff.exceptions import MigrationError, MigrationOrdinalAmbiguityError
 from glyff.migration import (
     DomainVersionTransition,
@@ -45,7 +52,9 @@ def session(
     *executions: Execution, versions: dict[DomainId, str] | None = None
 ) -> StoredSession:
     return StoredSession(
-        metadata=SessionMetadata(domain_versions=versions or {PAY: "v1"}),
+        metadata=SessionMetadata(
+            domain_versions=DomainVersionMap(versions or {PAY: "v1"})
+        ),
         executions=executions,
     )
 
@@ -55,7 +64,8 @@ def migrator(
 ) -> ExecutionMigrator:
     return ExecutionMigrator(
         canonicalizer=JsonArgumentCanonicalizer(),
-        version_transitions=transitions or {PAY: DomainVersionTransition("v1", "v2")},
+        version_transitions=transitions
+        or {PAY: DomainVersionTransition.between("v1", "v2")},
     )
 
 
@@ -121,8 +131,8 @@ def test_a_boundary_can_move_to_another_domain():
 
     migration = migrator(
         {
-            PAY: DomainVersionTransition("v1", "v2"),
-            SHIP: DomainVersionTransition("v7", "v7"),
+            PAY: DomainVersionTransition.between("v1", "v2"),
+            SHIP: DomainVersionTransition.between("v7", "v7"),
         }
     )
     migration.remap(
@@ -134,7 +144,9 @@ def test_a_boundary_can_move_to_another_domain():
     )
 
     assert replacement.executions[0].id.domain == SHIP
-    assert replacement.metadata.domain_versions == {PAY: "v2", SHIP: "v7"}
+    assert replacement.metadata.domain_versions == DomainVersionMap(
+        {PAY: "v2", SHIP: "v7"}
+    )
 
 
 def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
@@ -444,8 +456,8 @@ def test_a_boundary_registered_twice_is_refused():
 @pytest.mark.parametrize(
     "build",
     [
-        lambda: DomainVersionTransition("v1", ""),
-        lambda: DomainVersionTransition("", "v2"),
+        lambda: DomainVersionTransition.between("v1", ""),
+        lambda: DomainVersionTransition.between("", "v2"),
         lambda: DomainVersionTransition.from_unclaimed(""),
     ],
 )
@@ -459,12 +471,17 @@ def test_a_boundary_naming_one_parameter_twice_is_refused():
         ExecutionShape.from_names(PAY, "authorize", "order", "order")
 
 
+def test_an_execution_shape_constructor_requires_value_objects():
+    with pytest.raises(TypeError):
+        ExecutionShape(PAY.value, "authorize", frozenset({"order"}))  # type: ignore[arg-type]
+
+
 def test_one_domain_declared_twice_is_refused():
     with pytest.raises(MigrationError, match="more than one version transition"):
         migrator(
             {
-                PAY: DomainVersionTransition("v1", "v2"),
-                PAY.value: DomainVersionTransition("v1", "v3"),
+                PAY: DomainVersionTransition.between("v1", "v2"),
+                PAY.value: DomainVersionTransition.between("v1", "v3"),
             }
         )
 
@@ -510,7 +527,7 @@ def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
 
     migration = migrator(
         {
-            PAY: DomainVersionTransition("v1", "v2"),
+            PAY: DomainVersionTransition.between("v1", "v2"),
             SHIP: DomainVersionTransition.from_unclaimed("v1"),
         }
     )
@@ -521,7 +538,9 @@ def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
     replacement = migration.migrate(session(execution))
 
     assert replacement.executions[0].id.domain == SHIP
-    assert replacement.metadata.domain_versions == {PAY: "v2", SHIP: "v1"}
+    assert replacement.metadata.domain_versions == DomainVersionMap(
+        {PAY: "v2", SHIP: "v1"}
+    )
 
 
 def test_claiming_a_domain_the_session_already_records_is_refused():
@@ -529,7 +548,7 @@ def test_claiming_a_domain_the_session_already_records_is_refused():
 
     migration = migrator(
         {
-            PAY: DomainVersionTransition("v1", "v2"),
+            PAY: DomainVersionTransition.between("v1", "v2"),
             SHIP: DomainVersionTransition.from_unclaimed("v1"),
         }
     )
@@ -563,4 +582,4 @@ def test_the_replacement_carries_the_versions_it_was_migrated_to():
 
     replacement = migrator().migrate(session(execution))
 
-    assert replacement.metadata.domain_versions == {PAY: "v2"}
+    assert replacement.metadata.domain_versions == DomainVersionMap({PAY: "v2"})

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any, TypeAlias
@@ -11,11 +10,21 @@ from .._execution import (
     CanonicalArguments,
     Execution,
     RecordedArgumentValue,
-    restore_recorded_canonical_value,
 )
-from .._identity import DomainId, ExecutionId, ExecutionName, ExecutionSequenceScope
+from .._identity import (
+    DomainId,
+    DomainVersion,
+    DomainVersionMap,
+    ExecutionId,
+    ExecutionName,
+    ExecutionSequenceScope,
+)
 from .._interfaces import ArgumentCanonicalizer
-from ..exceptions import MigrationError, MigrationOrdinalAmbiguityError
+from ..exceptions import (
+    InvalidExecutionError,
+    MigrationError,
+    MigrationOrdinalAmbiguityError,
+)
 from ._interfaces import SessionMigrator
 from ._models import SessionMetadata, StoredSession
 
@@ -31,17 +40,23 @@ class DomainVersionTransition:
     records across unchanged declares the same version twice.
     """
 
-    source: str | None
-    target: str
+    source: DomainVersion | None
+    target: DomainVersion
 
     def __post_init__(self) -> None:
-        if not self.target or self.source == "":
-            raise ValueError("A domain version cannot be empty.")
+        if self.source is not None and not isinstance(self.source, DomainVersion):
+            raise TypeError("A transition source must be a DomainVersion or None.")
+        if not isinstance(self.target, DomainVersion):
+            raise TypeError("A transition target must be a DomainVersion.")
+
+    @classmethod
+    def between(cls, source: str, target: str) -> DomainVersionTransition:
+        return cls(DomainVersion(source), DomainVersion(target))
 
     @classmethod
     def from_unclaimed(cls, target: str) -> DomainVersionTransition:
         """A domain the session has not entered, which this migration claims."""
-        return cls(source=None, target=target)
+        return cls(source=None, target=DomainVersion(target))
 
 
 @dataclass(frozen=True)
@@ -55,6 +70,18 @@ class ExecutionShape:
     domain: DomainId
     name: ExecutionName
     argument_names: frozenset[str]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.domain, DomainId):
+            raise TypeError("ExecutionShape.domain must be a DomainId.")
+        if not isinstance(self.name, ExecutionName):
+            raise TypeError("ExecutionShape.name must be an ExecutionName.")
+        if not isinstance(self.argument_names, frozenset) or not all(
+            isinstance(name, str) for name in self.argument_names
+        ):
+            raise TypeError(
+                "ExecutionShape.argument_names must be a frozenset of strings."
+            )
 
     @classmethod
     def from_names(
@@ -145,13 +172,12 @@ class ExecutionMigrator(SessionMigrator):
     def migrate(self, source: StoredSession) -> StoredSession:
         recorded_versions = source.metadata.domain_versions
         self._require_source_versions(recorded_versions)
-        migrated_versions = {
-            **recorded_versions,
-            **{
+        migrated_versions = recorded_versions.replacing(
+            {
                 domain: transition.target
                 for domain, transition in self._transitions.items()
-            },
-        }
+            }
+        )
         return StoredSession(
             metadata=SessionMetadata(domain_versions=migrated_versions),
             executions=self._rebuild(source),
@@ -180,27 +206,27 @@ class ExecutionMigrator(SessionMigrator):
             )
         self._rules[key] = rule
 
-    def _require_source_versions(self, recorded: Mapping[DomainId, str]) -> None:
+    def _require_source_versions(self, recorded: DomainVersionMap) -> None:
         for domain, transition in self._transitions.items():
             if transition.source is None:
                 if domain in recorded:
                     raise MigrationError(
                         f"This migration claims {domain} as a domain the "
                         f"session has not entered, but it records "
-                        f"{recorded[domain]!r} for it."
+                        f"{recorded[domain].value!r} for it."
                     )
                 continue
             if domain not in recorded:
                 raise MigrationError(
                     f"This migration reads {domain} at version "
-                    f"{transition.source!r}, but the session records no version "
+                    f"{transition.source.value!r}, but the session records no version "
                     "for that domain."
                 )
             if recorded[domain] != transition.source:
                 raise MigrationError(
                     f"This migration reads {domain} at version "
-                    f"{transition.source!r}, but the session records "
-                    f"{recorded[domain]!r}. It describes another generation of "
+                    f"{transition.source.value!r}, but the session records "
+                    f"{recorded[domain].value!r}. It describes another generation of "
                     "these records."
                 )
 
@@ -292,7 +318,12 @@ class ExecutionMigrator(SessionMigrator):
     def _recorded(
         execution: Execution, source: ExecutionShape
     ) -> dict[str, RecordedArgumentValue]:
-        stored = json.loads(execution.arguments.data)
+        try:
+            stored = execution.arguments.recorded()
+        except InvalidExecutionError as error:
+            raise MigrationError(
+                f"Cannot migrate {execution.id.name} in {execution.id.domain}: {error}"
+            ) from error
         if set(stored) != source.argument_names:
             raise MigrationError(
                 f"{execution.id.name} in {execution.id.domain} is recorded with "
@@ -300,10 +331,7 @@ class ExecutionMigrator(SessionMigrator):
                 f"describes it as {_format_argument_names(source.argument_names)}. "
                 "It describes another generation of these records."
             )
-        return {
-            name: restore_recorded_canonical_value(value)
-            for name, value in stored.items()
-        }
+        return dict(stored)
 
 
 def _normalized_transitions(

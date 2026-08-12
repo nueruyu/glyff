@@ -6,13 +6,14 @@ from glyff import (
     ArgumentsDigest,
     Domain,
     DomainId,
+    DomainVersion,
     Execution,
     SessionId,
 )
 from glyff.testing import BackendFactory, make_session
 
 DOMAIN = DomainId("test")
-engrave = Domain(DOMAIN, version="1").engrave
+engrave = Domain(DOMAIN, version=DomainVersion("1")).engrave
 
 
 @engrave

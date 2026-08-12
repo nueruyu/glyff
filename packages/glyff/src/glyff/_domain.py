@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass
 from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
 from ._execution import CanonicalArguments
 from ._executor import execute
 from ._function import FunctionDefinition
-from ._identity import DomainId, ExecutionId
+from ._identity import DomainId, DomainVersion, ExecutionId
 from .exceptions import ArgumentCanonicalizationError
 
 P = ParamSpec("P")
@@ -46,7 +45,6 @@ async def _resolve_call_identity(
     return execution_id, encoded
 
 
-@dataclass(frozen=True)
 class Domain:
     """A versioned ownership boundary for engraved functions.
 
@@ -56,14 +54,34 @@ class Domain:
     version says which generation of the owner's code the records belong to.
     """
 
-    id: DomainId
-    version: str
+    __slots__ = ("_id", "_version")
 
-    def __init__(self, id: DomainId | str, *, version: str) -> None:
-        object.__setattr__(self, "id", DomainId(id) if isinstance(id, str) else id)
-        object.__setattr__(self, "version", version)
-        if not version:
-            raise ValueError(f"Domain {self.id} cannot have an empty version.")
+    def __init__(self, id: DomainId | str, *, version: DomainVersion | str) -> None:
+        self._id = id if isinstance(id, DomainId) else DomainId(id)
+        self._version = (
+            version if isinstance(version, DomainVersion) else DomainVersion(version)
+        )
+
+    @property
+    def id(self) -> DomainId:
+        return self._id
+
+    @property
+    def version(self) -> DomainVersion:
+        return self._version
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, Domain)
+            and self.id == other.id
+            and self.version == other.version
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.id, self.version))
+
+    def __repr__(self) -> str:
+        return f"Domain(id={self.id!r}, version={self.version!r})"
 
     def engrave(self, func: Callable[P, R]) -> Callable[P, R]:
         """Makes an async function engraveable and resumable within this domain.

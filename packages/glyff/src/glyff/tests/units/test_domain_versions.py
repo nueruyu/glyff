@@ -7,6 +7,7 @@ from glyff import (
     ArgumentCanonicalizer,
     Domain,
     DomainId,
+    DomainVersion,
     Serializer,
     Session,
     SessionId,
@@ -17,6 +18,10 @@ from glyff.store import MemoryBackend
 SESSION = SessionId("session")
 PAYMENTS = DomainId("com.example.payments")
 SHIPPING = DomainId("com.example.shipping")
+
+
+def domain(id: DomainId, version: str) -> Domain:
+    return Domain(id, version=DomainVersion(version))
 
 
 def _session(
@@ -37,8 +42,8 @@ def _task(domain: Domain, calls: list[str] | None = None):
     @domain.engrave
     async def task() -> str:
         if calls is not None:
-            calls.append(domain.version)
-        return domain.version
+            calls.append(domain.version.value)
+        return domain.version.value
 
     return task
 
@@ -47,19 +52,21 @@ async def test_a_first_call_records_the_domains_version(
     serializer, argument_canonicalizer
 ):
     backend = MemoryBackend()
-    task = _task(Domain(PAYMENTS, version="v1"))
+    task = _task(domain(PAYMENTS, "v1"))
 
     async with _session(backend, serializer, argument_canonicalizer):
         await task()
 
-    assert await backend.claim_domain(SESSION, PAYMENTS, "v2") == "v1"
+    assert await backend.claim_domain(
+        SESSION, PAYMENTS, DomainVersion("v2")
+    ) == DomainVersion("v1")
 
 
 async def test_entering_under_the_recorded_version_is_accepted(
     serializer, argument_canonicalizer
 ):
     backend = MemoryBackend()
-    task = _task(Domain(PAYMENTS, version="v1"))
+    task = _task(domain(PAYMENTS, "v1"))
 
     for _ in range(2):
         async with _session(backend, serializer, argument_canonicalizer):
@@ -69,27 +76,29 @@ async def test_entering_under_the_recorded_version_is_accepted(
 async def test_a_different_version_is_refused(serializer, argument_canonicalizer):
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
-        await _task(Domain(PAYMENTS, version="v1"))()
+        await _task(domain(PAYMENTS, "v1"))()
 
     async with _session(backend, serializer, argument_canonicalizer):
         with pytest.raises(DomainVersionMismatchError) as raised:
-            await _task(Domain(PAYMENTS, version="v2"))()
+            await _task(domain(PAYMENTS, "v2"))()
 
     assert raised.value.domain_id == PAYMENTS
-    assert raised.value.recorded_version == "v1"
-    assert raised.value.current_version == "v2"
+    assert raised.value.recorded_version == DomainVersion("v1")
+    assert raised.value.current_version == DomainVersion("v2")
 
 
 async def test_a_mismatch_leaves_the_session_alone(serializer, argument_canonicalizer):
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
-        await _task(Domain(PAYMENTS, version="v1"))()
+        await _task(domain(PAYMENTS, "v1"))()
 
     async with _session(backend, serializer, argument_canonicalizer):
         with pytest.raises(DomainVersionMismatchError):
-            await _task(Domain(PAYMENTS, version="v2"))()
+            await _task(domain(PAYMENTS, "v2"))()
 
-    assert await backend.claim_domain(SESSION, PAYMENTS, "v-later") == "v1"
+    assert await backend.claim_domain(
+        SESSION, PAYMENTS, DomainVersion("v-later")
+    ) == DomainVersion("v1")
     async with _session(backend, serializer, argument_canonicalizer):
         assert [
             e.id.name.value async for e in backend.repository.executions(SESSION)
@@ -101,10 +110,10 @@ async def test_a_mismatch_is_raised_on_entering_the_domain_not_the_session(
 ):
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
-        await _task(Domain(PAYMENTS, version="v1"))()
+        await _task(domain(PAYMENTS, "v1"))()
 
-    shipping = _task(Domain(SHIPPING, version="v1"))
-    payments = _task(Domain(PAYMENTS, version="v2"))
+    shipping = _task(domain(SHIPPING, "v1"))
+    payments = _task(domain(PAYMENTS, "v2"))
 
     async with _session(backend, serializer, argument_canonicalizer):
         await shipping()
@@ -118,11 +127,15 @@ async def test_domains_in_one_session_carry_their_own_versions(
     backend = MemoryBackend()
 
     async with _session(backend, serializer, argument_canonicalizer):
-        await _task(Domain(PAYMENTS, version="v1"))()
-        await _task(Domain(SHIPPING, version="v2"))()
+        await _task(domain(PAYMENTS, "v1"))()
+        await _task(domain(SHIPPING, "v2"))()
 
-    assert await backend.claim_domain(SESSION, PAYMENTS, "other") == "v1"
-    assert await backend.claim_domain(SESSION, SHIPPING, "other") == "v2"
+    assert await backend.claim_domain(
+        SESSION, PAYMENTS, DomainVersion("other")
+    ) == DomainVersion("v1")
+    assert await backend.claim_domain(
+        SESSION, SHIPPING, DomainVersion("other")
+    ) == DomainVersion("v2")
 
 
 async def test_sessions_in_one_backend_carry_their_own_versions(
@@ -132,18 +145,22 @@ async def test_sessions_in_one_backend_carry_their_own_versions(
     orders, refunds = SessionId("orders"), SessionId("refunds")
 
     async with _session(backend, serializer, argument_canonicalizer, orders):
-        await _task(Domain(PAYMENTS, version="v1"))()
+        await _task(domain(PAYMENTS, "v1"))()
     async with _session(backend, serializer, argument_canonicalizer, refunds):
-        await _task(Domain(PAYMENTS, version="v2"))()
+        await _task(domain(PAYMENTS, "v2"))()
 
-    assert await backend.claim_domain(orders, PAYMENTS, "other") == "v1"
-    assert await backend.claim_domain(refunds, PAYMENTS, "other") == "v2"
+    assert await backend.claim_domain(
+        orders, PAYMENTS, DomainVersion("other")
+    ) == DomainVersion("v1")
+    assert await backend.claim_domain(
+        refunds, PAYMENTS, DomainVersion("other")
+    ) == DomainVersion("v2")
 
 
 async def test_concurrent_first_calls_claim_once(serializer, argument_canonicalizer):
     backend = MemoryBackend()
-    domain = Domain(PAYMENTS, version="v1")
-    tasks = [_task(domain) for _ in range(8)]
+    payment_domain = domain(PAYMENTS, "v1")
+    tasks = [_task(payment_domain) for _ in range(8)]
     claims = 0
     claim_domain = backend.claim_domain
 
@@ -165,7 +182,7 @@ async def test_a_mismatch_is_observed_without_a_second_round_trip(
 ):
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
-        await _task(Domain(PAYMENTS, version="v1"))()
+        await _task(domain(PAYMENTS, "v1"))()
 
     claims = 0
     claim_domain = backend.claim_domain
@@ -179,8 +196,8 @@ async def test_a_mismatch_is_observed_without_a_second_round_trip(
 
     async with _session(backend, serializer, argument_canonicalizer):
         with pytest.raises(DomainVersionMismatchError):
-            await _task(Domain(PAYMENTS, version="v2"))()
-        assert await _task(Domain(PAYMENTS, version="v1"))() == "v1"
+            await _task(domain(PAYMENTS, "v2"))()
+        assert await _task(domain(PAYMENTS, "v1"))() == "v1"
 
     assert claims == 1
 

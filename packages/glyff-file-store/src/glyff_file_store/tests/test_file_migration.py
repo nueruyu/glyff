@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from glyff import DomainId, Execution, SessionId, TransactionScope
+from glyff import DomainId, DomainVersion, Execution, SessionId, TransactionScope
 from glyff.migration import (
     SessionMetadata,
     SessionMigrator,
@@ -32,7 +32,7 @@ class ReplacingMigrator(SessionMigrator):
 
     def migrate(self, source: StoredSession) -> StoredSession:
         return StoredSession(
-            metadata=SessionMetadata(domain_versions={DOMAIN: self._version}),
+            metadata=SessionMetadata.from_strings({DOMAIN: self._version}),
             executions=self._executions,
         )
 
@@ -49,7 +49,7 @@ async def _save(backend: JsonFileBackend, execution: Execution) -> None:
 
 
 async def seed(backend: JsonFileBackend, *names: str) -> list[Execution]:
-    await backend.claim_domain(SESSION, DOMAIN, "v1")
+    await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
     seeded = []
     for name in names:
         execution = started(name)
@@ -83,7 +83,9 @@ async def test_a_failed_replacement_changes_neither_half(
     assert [e.id async for e in backend.repository.executions(SESSION)] == [
         e.id for e in seeded
     ]
-    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+    assert (
+        await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v-later"))
+    ).value == "v1"
 
 
 async def test_a_failed_replacement_strands_no_temporary(

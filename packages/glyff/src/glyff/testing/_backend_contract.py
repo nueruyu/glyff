@@ -17,6 +17,7 @@ from glyff import (
     CanonicalValue,
     CanonicalArguments,
     DomainId,
+    DomainVersion,
     Execution,
     ExecutionId,
     ExecutionName,
@@ -813,13 +814,17 @@ class DomainVersionContract:
     ):
         backend = backend_factory("version-claim")
 
-        assert await backend.claim_domain(SESSION, DOMAIN, "v1") == "v1"
+        assert await backend.claim_domain(
+            SESSION, DOMAIN, DomainVersion("v1")
+        ) == DomainVersion("v1")
 
     async def test_claim_yields_to_the_incumbent(self, backend_factory: BackendFactory):
         backend = backend_factory("version-claim-taken")
-        await backend.claim_domain(SESSION, DOMAIN, "v1")
+        await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
 
-        assert await backend.claim_domain(SESSION, DOMAIN, "v2") == "v1"
+        assert await backend.claim_domain(
+            SESSION, DOMAIN, DomainVersion("v2")
+        ) == DomainVersion("v1")
 
     async def test_concurrent_claims_agree_on_one_winner(
         self, backend_factory: BackendFactory
@@ -830,15 +835,15 @@ class DomainVersionContract:
 
         outcomes = await asyncio.gather(
             *(
-                backend.claim_domain(SESSION, DOMAIN, f"v{index}")
+                backend.claim_domain(SESSION, DOMAIN, DomainVersion(f"v{index}"))
                 for index, backend in enumerate(backends)
             )
         )
 
         recorded = await backend_factory("version-claim-race").claim_domain(
-            SESSION, DOMAIN, "v-later"
+            SESSION, DOMAIN, DomainVersion("v-later")
         )
-        assert recorded != "v-later"
+        assert recorded != DomainVersion("v-later")
         assert set(outcomes) == {recorded}
 
     async def test_domains_are_claimed_independently(
@@ -846,24 +851,38 @@ class DomainVersionContract:
     ):
         backend = backend_factory("version-per-domain")
 
-        assert await backend.claim_domain(SESSION, DOMAIN, "v1") == "v1"
-        assert await backend.claim_domain(SESSION, OTHER_DOMAIN, "v2") == "v2"
-        assert await backend.claim_domain(SESSION, DOMAIN, "v3") == "v1"
+        assert await backend.claim_domain(
+            SESSION, DOMAIN, DomainVersion("v1")
+        ) == DomainVersion("v1")
+        assert await backend.claim_domain(
+            SESSION, OTHER_DOMAIN, DomainVersion("v2")
+        ) == DomainVersion("v2")
+        assert await backend.claim_domain(
+            SESSION, DOMAIN, DomainVersion("v3")
+        ) == DomainVersion("v1")
 
     async def test_sessions_are_claimed_independently(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("version-per-session")
 
-        assert await backend.claim_domain(SESSION, DOMAIN, "v1") == "v1"
-        assert await backend.claim_domain(OTHER_SESSION, DOMAIN, "v2") == "v2"
-        assert await backend.claim_domain(SESSION, DOMAIN, "v3") == "v1"
+        assert await backend.claim_domain(
+            SESSION, DOMAIN, DomainVersion("v1")
+        ) == DomainVersion("v1")
+        assert await backend.claim_domain(
+            OTHER_SESSION, DOMAIN, DomainVersion("v2")
+        ) == DomainVersion("v2")
+        assert await backend.claim_domain(
+            SESSION, DOMAIN, DomainVersion("v3")
+        ) == DomainVersion("v1")
 
     async def test_claim_does_not_need_a_transaction(
         self, backend_factory: BackendFactory
     ):
         backend = backend_factory("version-claim-no-tx")
-        assert await backend.claim_domain(SESSION, DOMAIN, "v1") == "v1"
+        assert await backend.claim_domain(
+            SESSION, DOMAIN, DomainVersion("v1")
+        ) == DomainVersion("v1")
 
 
 class DurableBackendContract:
@@ -947,10 +966,12 @@ class DurableBackendContract:
     ):
         store = "durable-version"
         backend = backend_factory(store)
-        await backend.claim_domain(SESSION, DOMAIN, "v1")
+        await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
 
         reopened = backend_factory(store)
-        assert await reopened.claim_domain(SESSION, DOMAIN, "v2") == "v1"
+        assert await reopened.claim_domain(
+            SESSION, DOMAIN, DomainVersion("v2")
+        ) == DomainVersion("v1")
 
     async def test_json_value_survives_reopen(self, backend_factory: BackendFactory):
         session_id = "durable-json"

@@ -6,6 +6,7 @@ from typing import Any, NamedTuple
 from glyff import (
     Backend,
     DomainId,
+    DomainVersion,
     Execution,
     ExecutionId,
     ExecutionRepository,
@@ -117,8 +118,8 @@ class StubBackend(Backend):
         self._repository = repository
 
     async def claim_domain(
-        self, session_id: SessionId, domain: DomainId, version: str
-    ) -> str:
+        self, session_id: SessionId, domain: DomainId, version: DomainVersion
+    ) -> DomainVersion:
         self._record("claim_domain", session_id, domain, version)
         return await self._backend.claim_domain(session_id, domain, version)
 

@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator, Iterable, Mapping
 from typing import Any
 
 from ._execution import CanonicalArgumentMap, Execution, ExecutionStatus
-from ._identity import DomainId, ExecutionId, SessionId
+from ._identity import DomainId, DomainVersion, ExecutionId, SessionId
 
 
 class Transaction(ABC):
@@ -114,8 +114,11 @@ class Backend(ABC):
 
     @abstractmethod
     async def claim_domain(
-        self, session_id: SessionId, domain: DomainId, version: str
-    ) -> str:
+        self,
+        session_id: SessionId,
+        domain: DomainId,
+        version: DomainVersion,
+    ) -> DomainVersion:
         """Records ``version`` for a domain this session carries none for, and
         returns the version the pair carries afterwards.
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from ._identity import DomainId, SessionId
+from ._identity import DomainId, DomainVersion, SessionId
 from ._interfaces import Backend
 from .exceptions import DomainVersionMismatchError
 
@@ -20,11 +20,11 @@ class DomainClaims:
         # What the store said, not what was agreed: a version read while
         # refusing a mismatch still spares the round trip for a process that
         # goes on to carry the right one.
-        self._observed: dict[DomainId, str] = {}
+        self._observed: dict[DomainId, DomainVersion] = {}
         self._locks: dict[DomainId, asyncio.Lock] = {}
         self._meta_lock = asyncio.Lock()
 
-    async def ensure(self, domain_id: DomainId, version: str) -> None:
+    async def ensure(self, domain_id: DomainId, version: DomainVersion) -> None:
         """Claims or verifies ``version`` for ``domain_id`` in this session.
 
         Raises :class:`DomainVersionMismatchError` if the session's records
@@ -35,7 +35,9 @@ class DomainClaims:
             observed = await self._observe(domain_id, version)
         self._require(domain_id, version, observed)
 
-    async def _observe(self, domain_id: DomainId, version: str) -> str:
+    async def _observe(
+        self, domain_id: DomainId, version: DomainVersion
+    ) -> DomainVersion:
         async with self._meta_lock:
             lock = self._locks.setdefault(domain_id, asyncio.Lock())
 
@@ -51,11 +53,14 @@ class DomainClaims:
                 self._observed[domain_id] = observed
             return observed
 
-    def _require(self, domain_id: DomainId, version: str, recorded: str) -> None:
+    def _require(
+        self, domain_id: DomainId, version: DomainVersion, recorded: DomainVersion
+    ) -> None:
         if recorded != version:
             raise DomainVersionMismatchError(
                 f"Session {self._session_id} recorded domain {domain_id} at "
-                f"version {recorded!r}, but this process runs {version!r}. Take "
+                f"version {recorded.value!r}, but this process runs "
+                f"{version.value!r}. Take "
                 "the session offline and migrate it, pin it to the code that "
                 "started it, or start a new one.",
                 domain_id=domain_id,

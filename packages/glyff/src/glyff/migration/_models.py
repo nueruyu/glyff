@@ -2,39 +2,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 
 from .._execution import Execution
-from .._identity import DomainId, ExecutionId
+from .._identity import DomainId, DomainVersionMap, ExecutionId
 from ..exceptions import MigrationCollisionError, MigrationError
-
-
-def _validated_domain_versions(
-    versions: Mapping[DomainId, str],
-) -> Mapping[DomainId, str]:
-    # A version no `Domain` could ever declare is one nothing would match again,
-    # and migration is the only way into this mapping that does not go through
-    # one.
-    empty = sorted(domain.value for domain, version in versions.items() if not version)
-    if empty:
-        raise MigrationError(
-            f"Domains {', '.join(empty)} carry an empty version. A domain "
-            "version cannot be empty."
-        )
-    return MappingProxyType(dict(versions))
 
 
 @dataclass(frozen=True)
 class SessionMetadata:
     """What a store records about a session itself, not about its executions."""
 
-    domain_versions: Mapping[DomainId, str]
+    domain_versions: DomainVersionMap
 
-    def __post_init__(self) -> None:
-        # Copied: ``frozen`` protects the attribute, not the mapping behind it.
-        object.__setattr__(
-            self, "domain_versions", _validated_domain_versions(self.domain_versions)
-        )
+    @classmethod
+    def from_strings(cls, domain_versions: Mapping[DomainId, str]) -> SessionMetadata:
+        return cls(DomainVersionMap(domain_versions))
 
 
 @dataclass(frozen=True)
@@ -93,8 +75,19 @@ def _domains_in(execution_id: ExecutionId) -> set[DomainId]:
 class MigrationReport:
     """The versions recorded before and after a migration."""
 
-    source_domain_versions: Mapping[DomainId, str]
-    target_domain_versions: Mapping[DomainId, str]
+    source_domain_versions: DomainVersionMap
+    target_domain_versions: DomainVersionMap
+
+    @classmethod
+    def from_strings(
+        cls,
+        source_domain_versions: Mapping[DomainId, str],
+        target_domain_versions: Mapping[DomainId, str],
+    ) -> MigrationReport:
+        return cls(
+            DomainVersionMap(source_domain_versions),
+            DomainVersionMap(target_domain_versions),
+        )
 
     @classmethod
     def between(
@@ -104,16 +97,4 @@ class MigrationReport:
         return cls(
             source_domain_versions=source.metadata.domain_versions,
             target_domain_versions=replacement.metadata.domain_versions,
-        )
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "source_domain_versions",
-            _validated_domain_versions(self.source_domain_versions),
-        )
-        object.__setattr__(
-            self,
-            "target_domain_versions",
-            _validated_domain_versions(self.target_domain_versions),
         )

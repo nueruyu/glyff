@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from glyff import DomainId, SessionId
+from glyff import DomainId, DomainVersionMap, SessionId
 from glyff.exceptions import MigrationError
 from glyff.migration import (
     MigrationReport,
@@ -38,7 +38,7 @@ class FileSessionMigration(SessionMigration):
 
             document.setdefault(_SESSIONS_KEY, {})[session_id.value] = {
                 _DOMAIN_VERSIONS_KEY: {
-                    domain.value: version
+                    domain.value: version.value
                     for domain, version in replacement.metadata.domain_versions.items()
                 },
                 _EXECUTIONS_KEY: {
@@ -62,9 +62,9 @@ class FileSessionMigration(SessionMigration):
         executions = session.get(_EXECUTIONS_KEY, {})
         return StoredSession(
             metadata=SessionMetadata(
-                domain_versions={
-                    DomainId(domain): version for domain, version in versions.items()
-                }
+                domain_versions=DomainVersionMap(
+                    {DomainId(domain): version for domain, version in versions.items()}
+                )
             ),
             # Lexicographic path order is ancestor-first.
             executions=tuple(
