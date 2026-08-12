@@ -18,11 +18,7 @@ from glyff import (
     SessionId,
 )
 from glyff.exceptions import DomainVersionMismatchError
-from glyff.migration import (
-    DomainVersionTransition,
-    ExecutionMigrator,
-    ExecutionShape,
-)
+from glyff.migration import DomainMigration, ExecutionShape
 from glyff.testing import make_session
 from glyff_sqlite import SQLiteBackend
 
@@ -96,29 +92,27 @@ async def checkout_v2(order: str) -> str:
     )
 
 
-def _migration(canonicalizer: ArgumentCanonicalizer) -> ExecutionMigrator:
-    migrator = ExecutionMigrator(
-        canonicalizer=canonicalizer,
-        version_transitions={PAY: DomainVersionTransition.between("1", "2")},
+def _migration(canonicalizer: ArgumentCanonicalizer) -> DomainMigration:
+    migration = DomainMigration(V2, canonicalizer=canonicalizer)
+    transition = migration.transition("1", "2")
+    transition.remap(
+        ExecutionShape.from_names("checkout_v1", "order"),
+        ExecutionShape.from_names("checkout_v2", "order"),
     )
-    migrator.remap(
-        ExecutionShape.from_names(PAY, "checkout_v1", "order"),
-        ExecutionShape.from_names(PAY, "checkout_v2", "order"),
+    transition.remap(
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order"),
     )
-    migrator.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
-    )
-    migrator.remap(
-        ExecutionShape.from_names(PAY, "capture", "order"),
-        ExecutionShape.from_names(PAY, "capture_cents", "order", "cents"),
+    transition.remap(
+        ExecutionShape.from_names("capture", "order"),
+        ExecutionShape.from_names("capture_cents", "order", "cents"),
         convert_arguments=lambda order: {"order": order, "cents": 1200},
     )
-    migrator.remap(
-        ExecutionShape.from_names(PAY, "finish", "order"),
-        ExecutionShape.from_names(PAY, "complete", "order"),
+    transition.remap(
+        ExecutionShape.from_names("finish", "order"),
+        ExecutionShape.from_names("complete", "order"),
     )
-    return migrator
+    return migration
 
 
 @pytest.fixture(autouse=True)

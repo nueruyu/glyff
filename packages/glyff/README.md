@@ -52,7 +52,7 @@ pip install glyff
 
 `glyff.migration` carries the offline half: `MigratableBackend` and
 `SessionMigration` for a store that can replace a session atomically,
-`SessionMigrator` for what a session should become, and `ExecutionMigrator` —
+`SessionMigrator` for what a session should become, and `DomainMigration` —
 declared as the `ExecutionShape` pairs that changed shape — as the one glyff
 ships.
 See [migration](https://github.com/nueruyu/glyff/blob/main/docs/migration.md).

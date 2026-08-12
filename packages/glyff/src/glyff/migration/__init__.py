@@ -11,11 +11,11 @@ from ._models import (
     SessionMetadata,
     StoredSession,
 )
-from ._migrator import DomainVersionTransition, ExecutionMigrator, ExecutionShape
+from ._migrator import DomainMigration, DomainVersionTransition, ExecutionShape
 
 __all__ = [
+    "DomainMigration",
     "DomainVersionTransition",
-    "ExecutionMigrator",
     "ExecutionShape",
     "MigratableBackend",
     "MigrationReport",

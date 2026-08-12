@@ -7,6 +7,7 @@ import json
 import pytest
 from glyff import (
     CanonicalValue,
+    Domain,
     DomainId,
     DomainVersionMap,
     Execution,
@@ -15,8 +16,8 @@ from glyff import (
 )
 from glyff.exceptions import MigrationError, MigrationOrdinalAmbiguityError
 from glyff.migration import (
+    DomainMigration,
     DomainVersionTransition,
-    ExecutionMigrator,
     ExecutionShape,
     SessionMetadata,
     StoredSession,
@@ -59,14 +60,26 @@ def session(
     )
 
 
-def migrator(
-    transitions: dict[DomainId | str, DomainVersionTransition] | None = None,
-) -> ExecutionMigrator:
-    return ExecutionMigrator(
-        canonicalizer=JsonArgumentCanonicalizer(),
-        version_transitions=transitions
-        or {PAY: DomainVersionTransition.between("v1", "v2")},
-    )
+class MigrationFixture:
+    def __init__(self, source: str = "v1", target: str = "v2") -> None:
+        self.migration = DomainMigration(
+            Domain(PAY, version=target),
+            canonicalizer=JsonArgumentCanonicalizer(),
+        )
+        self.transition = self.migration.transition(source, target)
+
+    def remap(self, *args, **kwargs) -> DomainVersionTransition:
+        return self.transition.remap(*args, **kwargs)
+
+    def drop(self, *args, **kwargs) -> DomainVersionTransition:
+        return self.transition.drop(*args, **kwargs)
+
+    def migrate(self, source: StoredSession) -> StoredSession:
+        return self.migration.migrate(source)
+
+
+def migrator() -> MigrationFixture:
+    return MigrationFixture()
 
 
 def recorded(execution: Execution) -> CanonicalValue:
@@ -75,7 +88,7 @@ def recorded(execution: Execution) -> CanonicalValue:
     return json.loads(execution.arguments.data)
 
 
-def migrate(migration: ExecutionMigrator, source: StoredSession) -> list[Execution]:
+def migrate(migration: MigrationFixture, source: StoredSession) -> list[Execution]:
     return list(migration.migrate(source).executions)
 
 
@@ -98,8 +111,8 @@ def test_a_migrated_execution_keeps_its_result_and_metadata():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order"),
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -116,8 +129,8 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order"),
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -126,36 +139,13 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
     assert migrated.arguments.data == execution.arguments.data
 
 
-def test_a_boundary_can_move_to_another_domain():
-    execution = started("authorize", arguments={"order": "ord_1"})
-
-    migration = migrator(
-        {
-            PAY: DomainVersionTransition.between("v1", "v2"),
-            SHIP: DomainVersionTransition.between("v7", "v7"),
-        }
-    )
-    migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(SHIP, "authorize", "order"),
-    )
-    replacement = migration.migrate(
-        session(execution, versions={PAY: "v1", SHIP: "v7"})
-    )
-
-    assert replacement.executions[0].id.domain_id == SHIP
-    assert replacement.metadata.domain_versions == DomainVersionMap(
-        {PAY: "v2", SHIP: "v7"}
-    )
-
-
 def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
     execution = started("authorize", arguments={"order": {"id": "ord_1"}, "units": 12})
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order", "units"),
-        ExecutionShape.from_names(PAY, "charge", "order_id", "cents"),
+        ExecutionShape.from_names("authorize", "order", "units"),
+        ExecutionShape.from_names("charge", "order_id", "cents"),
         convert_arguments=lambda order, units: {
             "order_id": order["id"],
             "cents": units * 100,
@@ -174,8 +164,8 @@ def test_a_default_the_new_boundary_gained_is_written_out_by_the_migration():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "authorize", "order", "currency"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("authorize", "order", "currency"),
         convert_arguments=lambda order: {"order": order, "currency": "JPY"},
     )
     [migrated] = migrate(migration, session(execution))
@@ -195,8 +185,8 @@ def test_an_opaque_argument_reaches_the_conversion_as_itself():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "client"),
-        ExecutionShape.from_names(PAY, "charge", "client"),
+        ExecutionShape.from_names("authorize", "client"),
+        ExecutionShape.from_names("charge", "client"),
         convert_arguments=lambda client: seen.append(client) or {"client": client},
     )
     migrate(migration, session(execution))
@@ -215,8 +205,8 @@ def test_an_opaque_argument_passed_through_keys_the_call_as_it_did_before():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "client", "order"),
-        ExecutionShape.from_names(PAY, "charge", "client", "order"),
+        ExecutionShape.from_names("authorize", "client", "order"),
+        ExecutionShape.from_names("charge", "client", "order"),
         convert_arguments=lambda client, order: {"client": client, "order": order},
     )
     [migrated] = migrate(migration, session(execution))
@@ -233,8 +223,8 @@ def test_a_child_follows_its_remapped_parent():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order"),
     )
     migrated = migrate(migration, session(parent, child))
     by_name = {execution.id.name.value: execution for execution in migrated}
@@ -249,8 +239,8 @@ def test_a_grandchild_follows_too():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order"),
     )
     migrated = migrate(migration, session(root, child, grandchild))
     by_name = {execution.id.name.value: execution for execution in migrated}
@@ -276,7 +266,7 @@ def test_dropping_a_boundary_takes_what_was_recorded_beneath_it():
     kept = started("notify", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.drop(ExecutionShape.from_names(PAY, "authorize", "order"))
+    migration.drop(ExecutionShape.from_names("authorize", "order"))
     migrated = migrate(migration, session(root, child, kept))
 
     assert [execution.id.name.value for execution in migrated] == ["notify"]
@@ -289,8 +279,8 @@ def test_repeated_calls_keep_the_ordinals_that_tell_them_apart():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "retry"),
-        ExecutionShape.from_names(PAY, "retried"),
+        ExecutionShape.from_names("retry"),
+        ExecutionShape.from_names("retried"),
     )
     migrated = migrate(migration, session(first, second))
 
@@ -321,8 +311,8 @@ def test_identical_repeated_calls_are_converted_once_between_them():
     conversions = itertools.count()
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "retry", "order"),
-        ExecutionShape.from_names(PAY, "retried", "order"),
+        ExecutionShape.from_names("retry", "order"),
+        ExecutionShape.from_names("retried", "order"),
         convert_arguments=lambda order: {"order": f"{order}-{next(conversions)}"},
     )
 
@@ -350,8 +340,8 @@ def test_gathering_separate_calls_into_one_class_is_refused():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "at_all"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "at_all"),
         convert_arguments=lambda order: {"at_all": True},
     )
 
@@ -365,12 +355,12 @@ def test_two_boundaries_may_share_a_name_while_their_calls_stay_apart():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order"),
     )
     migration.remap(
-        ExecutionShape.from_names(PAY, "capture", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
+        ExecutionShape.from_names("capture", "order"),
+        ExecutionShape.from_names("charge", "order"),
     )
     migrated = migrate(migration, session(authorize, capture))
 
@@ -386,8 +376,8 @@ def test_records_of_another_generation_are_refused():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order", "currency"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
+        ExecutionShape.from_names("authorize", "order", "currency"),
+        ExecutionShape.from_names("charge", "order"),
         convert_arguments=lambda order, currency: {"order": order},
     )
 
@@ -400,8 +390,8 @@ def test_a_conversion_that_misses_an_argument_is_refused():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order_id", "cents"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order_id", "cents"),
         convert_arguments=lambda order: {"order_id": order},
     )
 
@@ -414,76 +404,30 @@ def test_a_rename_that_changes_the_parameters_needs_a_conversion():
 
     with pytest.raises(MigrationError, match="conversion between them"):
         migration.remap(
-            ExecutionShape.from_names(PAY, "authorize", "order"),
-            ExecutionShape.from_names(PAY, "charge", "order_id"),
-        )
-
-
-def test_a_rule_reaching_an_undeclared_domain_is_refused():
-    migration = migrator()
-
-    with pytest.raises(MigrationError, match="declares no version transition"):
-        migration.remap(
-            ExecutionShape.from_names(SHIP, "authorize", "order"),
-            ExecutionShape.from_names(SHIP, "charge", "order"),
-        )
-
-    with pytest.raises(MigrationError, match="declares no version transition"):
-        migration.drop(ExecutionShape.from_names(SHIP, "authorize", "order"))
-
-
-def test_a_rewrite_into_an_undeclared_domain_is_refused():
-    migration = migrator()
-
-    with pytest.raises(MigrationError, match="declares no version transition"):
-        migration.remap(
-            ExecutionShape.from_names(PAY, "authorize", "order"),
-            ExecutionShape.from_names(SHIP, "authorize", "order"),
+            ExecutionShape.from_names("authorize", "order"),
+            ExecutionShape.from_names("charge", "order_id"),
         )
 
 
 def test_a_boundary_registered_twice_is_refused():
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(PAY, "charge", "order"),
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order"),
     )
 
     with pytest.raises(MigrationError, match="already registered"):
-        migration.drop(ExecutionShape.from_names(PAY, "authorize", "order"))
-
-
-@pytest.mark.parametrize(
-    "build",
-    [
-        lambda: DomainVersionTransition.between("v1", ""),
-        lambda: DomainVersionTransition.between("", "v2"),
-        lambda: DomainVersionTransition.from_unclaimed(""),
-    ],
-)
-def test_a_transition_to_or_from_an_empty_version_is_refused(build):
-    with pytest.raises(ValueError, match="cannot be empty"):
-        build()
+        migration.drop(ExecutionShape.from_names("authorize", "order"))
 
 
 def test_a_boundary_naming_one_parameter_twice_is_refused():
     with pytest.raises(ValueError, match="more than once"):
-        ExecutionShape.from_names(PAY, "authorize", "order", "order")
+        ExecutionShape.from_names("authorize", "order", "order")
 
 
 def test_an_execution_shape_constructor_requires_value_objects():
     with pytest.raises(TypeError):
-        ExecutionShape(PAY.value, "authorize", frozenset({"order"}))  # type: ignore[arg-type]
-
-
-def test_one_domain_declared_twice_is_refused():
-    with pytest.raises(MigrationError, match="more than one version transition"):
-        migrator(
-            {
-                PAY: DomainVersionTransition.between("v1", "v2"),
-                PAY.value: DomainVersionTransition.between("v1", "v3"),
-            }
-        )
+        ExecutionShape("authorize", frozenset({"order"}))  # type: ignore[arg-type]
 
 
 def test_an_opaque_nested_in_a_container_survives_a_conversion():
@@ -497,8 +441,8 @@ def test_an_opaque_nested_in_a_container_survives_a_conversion():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "clients", "units"),
-        ExecutionShape.from_names(PAY, "charge", "clients", "cents"),
+        ExecutionShape.from_names("authorize", "clients", "units"),
+        ExecutionShape.from_names("charge", "clients", "cents"),
         convert_arguments=lambda clients, units: {
             "clients": clients,
             "cents": units * 100,
@@ -518,43 +462,8 @@ def test_an_opaque_nested_in_a_container_survives_a_conversion():
 def test_a_session_at_another_version_is_refused():
     execution = started("authorize", arguments={"order": "ord_1"})
 
-    with pytest.raises(MigrationError, match="another generation"):
+    with pytest.raises(MigrationError, match="No migration path"):
         migrate(migrator(), session(execution, versions={PAY: "v0"}))
-
-
-def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
-    execution = started("authorize", arguments={"order": "ord_1"})
-
-    migration = migrator(
-        {
-            PAY: DomainVersionTransition.between("v1", "v2"),
-            SHIP: DomainVersionTransition.from_unclaimed("v1"),
-        }
-    )
-    migration.remap(
-        ExecutionShape.from_names(PAY, "authorize", "order"),
-        ExecutionShape.from_names(SHIP, "authorize", "order"),
-    )
-    replacement = migration.migrate(session(execution))
-
-    assert replacement.executions[0].id.domain_id == SHIP
-    assert replacement.metadata.domain_versions == DomainVersionMap(
-        {PAY: "v2", SHIP: "v1"}
-    )
-
-
-def test_claiming_a_domain_the_session_already_records_is_refused():
-    execution = started("authorize", arguments={"order": "ord_1"})
-
-    migration = migrator(
-        {
-            PAY: DomainVersionTransition.between("v1", "v2"),
-            SHIP: DomainVersionTransition.from_unclaimed("v1"),
-        }
-    )
-
-    with pytest.raises(MigrationError, match="has not entered"):
-        migrate(migration, session(execution, versions={PAY: "v1", SHIP: "v7"}))
 
 
 def test_a_session_that_never_entered_the_domain_is_refused():
@@ -568,7 +477,7 @@ def test_a_drop_is_held_to_the_shape_it_declares():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.drop(ExecutionShape.from_names(PAY, "authorize", "order", "currency"))
+    migration.drop(ExecutionShape.from_names("authorize", "order", "currency"))
 
     with pytest.raises(MigrationError, match="another generation"):
         migrate(migration, session(execution))
@@ -583,3 +492,69 @@ def test_the_replacement_carries_the_versions_it_was_migrated_to():
     replacement = migrator().migrate(session(execution))
 
     assert replacement.metadata.domain_versions == DomainVersionMap({PAY: "v2"})
+
+
+# -- Facade and migration paths ---------------------------------------------
+
+
+def test_registered_transitions_run_to_the_domains_current_version():
+    migration = DomainMigration(
+        Domain(PAY, version="v3"), canonicalizer=JsonArgumentCanonicalizer()
+    )
+    migration.transition("v1", "v2").remap(
+        ExecutionShape.from_names("authorize", "order"),
+        ExecutionShape.from_names("charge", "order"),
+    )
+    migration.transition("v2", "v3").remap(
+        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape.from_names("capture", "order"),
+    )
+
+    replacement = migration.execute(
+        session(started("authorize", arguments={"order": "ord_1"}))
+    )
+
+    assert (
+        replacement.executions[0].id.name
+        == ExecutionShape.from_names("capture", "order").name
+    )
+    assert replacement.metadata.domain_versions[PAY].value == "v3"
+
+
+def test_a_session_already_at_the_current_version_is_unchanged():
+    source = session(versions={PAY: "v2"})
+    migration = DomainMigration(
+        Domain(PAY, version="v2"), canonicalizer=JsonArgumentCanonicalizer()
+    )
+
+    assert migration.execute(source) is source
+
+
+def test_a_missing_transition_to_the_current_version_is_refused():
+    migration = DomainMigration(
+        Domain(PAY, version="v3"), canonicalizer=JsonArgumentCanonicalizer()
+    )
+    migration.transition("v1", "v2")
+
+    with pytest.raises(MigrationError, match="No migration path"):
+        migration.execute(session())
+
+
+def test_two_transitions_cannot_leave_the_same_version():
+    migration = DomainMigration(
+        Domain(PAY, version="v3"), canonicalizer=JsonArgumentCanonicalizer()
+    )
+    migration.transition("v1", "v2")
+
+    with pytest.raises(MigrationError, match="already has a migration"):
+        migration.transition("v1", "v3")
+
+
+def test_a_cycle_is_refused_when_registered():
+    migration = DomainMigration(
+        Domain(PAY, version="v3"), canonicalizer=JsonArgumentCanonicalizer()
+    )
+    migration.transition("v1", "v2")
+
+    with pytest.raises(MigrationError, match="cycle"):
+        migration.transition("v2", "v1")

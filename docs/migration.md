@@ -108,49 +108,45 @@ writes are the keys that session goes looking for.
 
 ### Writing one
 
-`ExecutionMigrator` is the `SessionMigrator` to reach for. A migration is the
-boundaries that changed shape — what each one was, what it became, and the
-conversion between their arguments:
+`DomainMigration` collects the version transitions for one domain. Each
+transition declares the boundaries that changed shape — what each one was, what
+it became, and the conversion between their arguments:
 
 ```python
-from glyff.migration import DomainVersionTransition, ExecutionMigrator, ExecutionShape
+from glyff import Domain, SessionId
+from glyff.migration import DomainMigration, ExecutionShape
 
-migrator = ExecutionMigrator(
+migration = DomainMigration(
+    Domain("com.example.payments", version="3"),
     canonicalizer=canonicalizer,
-    version_transitions={
-        "com.example.payments": DomainVersionTransition.between("1", "2")
-    },
 )
-migrator.remap(
-    ExecutionShape.from_names("com.example.payments", "authorize", "order", "units"),
-    ExecutionShape.from_names("com.example.payments", "charge", "order_id", "cents"),
+migration.transition("1", "2").remap(
+    ExecutionShape.from_names("authorize", "order", "units"),
+    ExecutionShape.from_names("charge", "order_id", "cents"),
     convert_arguments=lambda order, units: {
         "order_id": order["id"],
         "cents": units * 100,
     },
 )
+migration.transition("2", "3")  # No execution identity changed in this transition.
 
-report = await backend.session_migration.run(SessionId("order-42"), migrator)
+report = await backend.session_migration.run(SessionId("order-42"), migration)
 ```
 
-An `ExecutionShape` is a `domain_id`, the name records carry, and the names of the
-arguments a call is bound to — no Python signature and no version. It is spelled
-out rather than read off the function it names, because taking it from a live
-signature would let a later, unrelated change there silently reshape records the
-migration claims to know.
+An `ExecutionShape` is the name records carry and the names of the arguments a
+call is bound to — no Python signature, domain, or version. The enclosing
+`DomainMigration` supplies the domain. A shape is spelled out rather than read
+off the function it names, because taking it from a live signature would let a
+later, unrelated change there silently reshape records the migration claims to
+know.
 
 Every side is then checked against what is actually there:
 
-- `version_transitions` names the generations this migration is *for* — the
-  version it reads and the version it writes, per domain. A session recording
-  anything else is refused, so a v1→v2 migration cannot be applied to a v3
-  session whose boundaries happen to match. Because a shape carries no version,
-  these are the only thing tying a rule to a generation, so **every domain a
-  rule touches needs one**: a domain that only carries records across unchanged
-  declares the same version twice, and one the session has never entered uses
-  `DomainVersionTransition.from_unclaimed("1")`. Domains no rule touches keep the
-  versions they had, so a library can publish a migration for its own domain
-  without knowing what else the session has entered.
+- `transition(source, target)` registers one direct version transition. Starting
+  at the version the session records, glyff follows registered transitions until
+  it reaches the `Domain`'s current version. A missing transition, a cycle, or
+  two transitions leaving the same version is refused. Other domains and their
+  versions are untouched.
 - Records whose argument names are not the ones declared are refused, and so is
   a conversion that returns the wrong names. Dropping is held to the same check,
   since it is the destructive one.
@@ -196,11 +192,8 @@ conversion that maps distinct arguments onto one value — is refused with
 `MigrationOrdinalAmbiguityError` rather than given an order glyff invented. Give
 those calls arguments that tell them apart, or drop one.
 
-> **Planned** — migration chains, so a session whose stamp trails the code by
-> more than one generation applies the steps in sequence, and a published form so
-> a library can ship the migrations for its own domain
-> ([#39](https://github.com/nueruyu/glyff/issues/39)). Today a migration
-> describes one step, and running it is the application's.
+All required transitions run in memory before the backend replaces the session,
+so an intermediate domain version is never stored on its own.
 
 ## Running without migration
 
