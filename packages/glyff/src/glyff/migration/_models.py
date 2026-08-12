@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .._execution import Execution
@@ -13,10 +12,6 @@ class SessionMetadata:
     """What a store records about a session itself, not about its executions."""
 
     domain_versions: DomainVersionMap
-
-    @classmethod
-    def from_strings(cls, domain_versions: Mapping[DomainId, str]) -> SessionMetadata:
-        return cls(DomainVersionMap(domain_versions))
 
 
 @dataclass(frozen=True)
@@ -77,17 +72,6 @@ class MigrationReport:
 
     source_domain_versions: DomainVersionMap
     target_domain_versions: DomainVersionMap
-
-    @classmethod
-    def from_strings(
-        cls,
-        source_domain_versions: Mapping[DomainId, str],
-        target_domain_versions: Mapping[DomainId, str],
-    ) -> MigrationReport:
-        return cls(
-            DomainVersionMap(source_domain_versions),
-            DomainVersionMap(target_domain_versions),
-        )
 
     @classmethod
     def between(

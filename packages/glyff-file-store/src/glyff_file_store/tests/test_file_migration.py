@@ -10,7 +10,14 @@ import threading
 from pathlib import Path
 
 import pytest
-from glyff import DomainId, DomainVersion, Execution, SessionId, TransactionScope
+from glyff import (
+    DomainId,
+    DomainVersion,
+    DomainVersionMap,
+    Execution,
+    SessionId,
+    TransactionScope,
+)
 from glyff.migration import (
     SessionMetadata,
     SessionMigrator,
@@ -32,7 +39,7 @@ class ReplacingMigrator(SessionMigrator):
 
     def migrate(self, source: StoredSession) -> StoredSession:
         return StoredSession(
-            metadata=SessionMetadata.from_strings({DOMAIN: self._version}),
+            metadata=SessionMetadata(DomainVersionMap({DOMAIN: self._version})),
             executions=self._executions,
         )
 

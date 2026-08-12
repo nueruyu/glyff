@@ -19,7 +19,7 @@ def started(name: str, *, domain_id: DomainId = PAYMENTS, parent=None) -> Execut
 
 def session(versions: dict[DomainId, str], *executions: Execution) -> StoredSession:
     return StoredSession(
-        metadata=SessionMetadata.from_strings(versions), executions=executions
+        metadata=SessionMetadata(DomainVersionMap(versions)), executions=executions
     )
 
 
@@ -71,8 +71,9 @@ def test_the_recorded_versions_cannot_be_written_through():
 
 def test_a_reports_versions_are_not_the_callers_mappings():
     before, after = {PAYMENTS: "v1"}, {PAYMENTS: "v2"}
-    report = MigrationReport.from_strings(
-        source_domain_versions=before, target_domain_versions=after
+    report = MigrationReport(
+        source_domain_versions=DomainVersionMap(before),
+        target_domain_versions=DomainVersionMap(after),
     )
 
     before[PAYMENTS], after[PAYMENTS] = "changed", "changed"
@@ -88,6 +89,7 @@ def test_an_empty_domain_version_is_refused():
 
 def test_a_report_with_an_empty_version_is_refused():
     with pytest.raises(ValueError):
-        MigrationReport.from_strings(
-            source_domain_versions={PAYMENTS: ""}, target_domain_versions={}
+        MigrationReport(
+            source_domain_versions=DomainVersionMap({PAYMENTS: ""}),
+            target_domain_versions=DomainVersionMap({}),
         )

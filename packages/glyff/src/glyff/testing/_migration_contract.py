@@ -16,6 +16,7 @@ from glyff import (
     Backend,
     DomainId,
     DomainVersion,
+    DomainVersionMap,
     Execution,
     SessionId,
     TransactionScope,
@@ -78,7 +79,7 @@ class RecordingMigrator(SessionMigrator):
             session = self._transform(source)
         else:
             session = StoredSession(
-                metadata=SessionMetadata.from_strings(self._domain_versions),
+                metadata=SessionMetadata(DomainVersionMap(self._domain_versions)),
                 executions=(
                     source.executions if self._executions is None else self._executions
                 ),
@@ -130,7 +131,9 @@ class SessionMigrationContract:
         await backend.session_migration.run(SESSION, migrator)
 
         assert migrator.source is not None
-        assert migrator.source.metadata == SessionMetadata.from_strings({DOMAIN: "v1"})
+        assert migrator.source.metadata == SessionMetadata(
+            DomainVersionMap({DOMAIN: "v1"})
+        )
         assert list(migrator.source.executions) == seeded
 
     async def test_the_source_holds_only_the_named_session(
@@ -173,9 +176,9 @@ class SessionMigrationContract:
             RecordingMigrator(domain_versions={DOMAIN: "v2"}, executions=(after,)),
         )
 
-        assert report == MigrationReport.from_strings(
-            source_domain_versions={DOMAIN: "v1"},
-            target_domain_versions={DOMAIN: "v2"},
+        assert report == MigrationReport(
+            source_domain_versions=DomainVersionMap({DOMAIN: "v1"}),
+            target_domain_versions=DomainVersionMap({DOMAIN: "v2"}),
         )
         assert [e.id for e in await _executions(backend)] == [after.id]
         assert await _claim_domain(
@@ -311,7 +314,7 @@ class SessionMigrationContract:
             # Building the result is where the collision is caught, so the store
             # is never asked to keep whichever copy is written last.
             return StoredSession(
-                metadata=SessionMetadata.from_strings({DOMAIN: "v2"}),
+                metadata=SessionMetadata(DomainVersionMap({DOMAIN: "v2"})),
                 executions=(collided, replace(collided)),
             )
 
