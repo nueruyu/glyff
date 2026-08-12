@@ -10,7 +10,8 @@ import uuid
 from typing import Any
 
 from glyff.exceptions import SerializationError
-from glyff import CanonicalValue, make_fallback_marker
+from glyff import CanonicalArgumentValue, CanonicalFallback, CanonicalValue
+from glyff._canonical_arguments import _encode_argument_value
 from glyff.serialization import (
     CanonicalFallbackRepresenter,
     JsonArgumentCanonicalizer,
@@ -93,14 +94,16 @@ class PydanticArgumentCanonicalizer(JsonArgumentCanonicalizer):
     ) -> None:
         super().__init__(fallback_representer)
 
-    def canonicalize_value(self, obj: Any) -> CanonicalValue:
+    def canonicalize_value(self, obj: Any) -> CanonicalArgumentValue:
         if isinstance(obj, BaseModel):
             # Keep container traversal in the shared walk, so a model's mapping
             # collision checks and set ordering match every other argument.
             return super().canonicalize_value(obj.model_dump(mode="python"))
         if isinstance(obj, enum.Enum):
-            return make_fallback_marker(self.canonicalize_value(obj.value))
+            return CanonicalFallback(
+                _encode_argument_value(self.canonicalize_value(obj.value))
+            )
         if isinstance(obj, _SCALARS):
             value: CanonicalValue = to_jsonable_python(obj)
-            return make_fallback_marker(value)
+            return CanonicalFallback(value)
         return super().canonicalize_value(obj)

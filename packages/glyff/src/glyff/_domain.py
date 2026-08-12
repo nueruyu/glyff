@@ -4,7 +4,7 @@ import functools
 from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
-from ._execution import CanonicalArguments
+from ._canonical_arguments import CanonicalArguments
 from ._executor import execute
 from ._function import FunctionDefinition
 from ._identity import DomainId, DomainVersion, ExecutionId
@@ -25,7 +25,7 @@ async def _resolve_call_identity(
     parent_id = ctx.current_execution_id
     arguments = definition.bind(args, kwargs)
     try:
-        canonical = ctx.argument_canonicalizer.canonicalize(arguments)
+        canonical_arguments = ctx.argument_canonicalizer.canonicalize(arguments)
     except ArgumentCanonicalizationError as e:
         # The canonicalizer sees values, not the call they came from, so the
         # function is named here or nowhere.
@@ -33,18 +33,17 @@ async def _resolve_call_identity(
             f"Arguments to '{definition.name}' could not be canonicalized. "
             f"Ensure all arguments have a value representation. Original error: {e}"
         ) from e
-    encoded = CanonicalArguments.from_canonical(canonical)
     seq = await ctx.sequencer.next(
-        parent_id, domain_id, definition.name, encoded.digest
+        parent_id, domain_id, definition.name, canonical_arguments.digest
     )
     execution_id = ExecutionId(
         parent_id=parent_id,
         domain_id=domain_id,
         name=definition.name,
         sequence=seq,
-        arguments_digest=encoded.digest,
+        arguments_digest=canonical_arguments.digest,
     )
-    return execution_id, encoded
+    return execution_id, canonical_arguments
 
 
 class Domain:

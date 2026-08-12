@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .._canonical_arguments import CanonicalArguments
 from .._execution import (
-    CanonicalArguments,
     Execution,
     ExecutionStatus,
     Metadata,
@@ -111,7 +111,9 @@ def execution_from_dict(execution_id: ExecutionId, stored: dict[str, Any]) -> Ex
     return Execution(
         id=execution_id,
         status=status,
-        arguments=CanonicalArguments(stored["arguments"].encode(DEFAULT_ENCODING)),
+        arguments=CanonicalArguments._from_recorded_bytes(
+            stored["arguments"].encode(DEFAULT_ENCODING)
+        ),
         result=_unpack_value(stored.get("result"))
         if status is ExecutionStatus.COMPLETED
         else None,

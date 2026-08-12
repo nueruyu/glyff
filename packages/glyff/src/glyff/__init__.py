@@ -1,16 +1,15 @@
 from ._context import MetadataAccessor, TransactionScope, get_context
 from ._domain import Domain
 from ._event_system import Event, EventEmitter, EventHandler
-from ._execution import (
-    CanonicalArgumentMap,
+from ._canonical_arguments import (
+    CanonicalArgumentValue,
     CanonicalArguments,
     CanonicalValue,
     CanonicalFallback,
     RecordedArgumentValue,
     RecordedArguments,
-    make_fallback_marker,
-    require_unreserved_canonical_mapping,
-    restore_recorded_canonical_value,
+)
+from ._execution import (
     Execution,
     ExecutionStatus,
     Metadata,
@@ -53,12 +52,9 @@ __all__ = [
     "ExecutionRepository",
     "ArgumentsDigest",
     "CanonicalValue",
-    "CanonicalArgumentMap",
+    "CanonicalArgumentValue",
     "CanonicalArguments",
     "CanonicalFallback",
-    "make_fallback_marker",
-    "require_unreserved_canonical_mapping",
-    "restore_recorded_canonical_value",
     "RecordedArgumentValue",
     "RecordedArguments",
     "Execution",

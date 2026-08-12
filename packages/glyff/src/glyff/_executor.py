@@ -1,7 +1,8 @@
 from typing import Any, Callable
 
 from ._context import Context
-from ._execution import CanonicalArguments, Execution, ExecutionStatus, SerializedValue
+from ._canonical_arguments import CanonicalArguments
+from ._execution import Execution, ExecutionStatus, SerializedValue
 from ._identity import ExecutionId
 from .events import ExecutionCompleted, ExecutionFailed
 

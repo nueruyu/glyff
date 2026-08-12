@@ -7,11 +7,11 @@ from dataclasses import dataclass, replace
 from typing import Any, TypeAlias
 
 from .._domain import Domain
-from .._execution import (
+from .._canonical_arguments import (
     CanonicalArguments,
-    Execution,
     RecordedArgumentValue,
 )
+from .._execution import Execution
 from .._identity import (
     DomainId,
     DomainVersion,
@@ -380,9 +380,7 @@ class _ExecutionMigrationRunner:
                 f"{_format_argument_names(set(converted))}, but it is keyed by "
                 f"{_format_argument_names(remap.target.argument_names)}."
             )
-        return CanonicalArguments.from_canonical(
-            self._canonicalizer.canonicalize(converted)
-        )
+        return self._canonicalizer.canonicalize(converted)
 
     @staticmethod
     def _recorded(

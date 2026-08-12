@@ -129,10 +129,10 @@ not to be persisted.
 Identity runs through a **canonical form**, not directly through a hash. A call
 is bound to a name-to-value mapping first (`_function.py`, the one place that
 reads Python's reflection API), and the session's `ArgumentCanonicalizer`
-normalizes that mapping into the JSON data model — it never sees the callable or
-its signature. glyff encodes the result once, and those bytes are both digested into
-`arguments_digest` and recorded on the execution. So for every recorded
-execution:
+normalizes that mapping into `CanonicalArguments` — it never sees the callable
+or its signature. Constructing `CanonicalArguments` encodes the logical values
+once, and those bytes are both digested into `arguments_digest` and recorded on
+the execution. So for every recorded execution:
 
 ```
 id.arguments_digest == execution.arguments.digest
@@ -146,10 +146,11 @@ verbatim — anything that re-encoded them would break the key. It is what lets 
 [migration](./migration.md#in-flight-sessions-across-code-changes) rewrite an
 argument and recompute the key from the record alone.
 
-A canonical form is already in the JSON data model, so canonicalizing one again
-returns it unchanged — provided the markers in it go back as
-`CanonicalFallback` values, since a plain mapping claiming that key is refused.
-That lets a migration hand an argument back untouched and preserve its key.
+A recorded canonical form reads back as logical `CanonicalArgumentValue`s,
+including `CanonicalFallback` values for fallback markers. Canonicalizing those
+values again produces the same `CanonicalArguments`; a plain mapping claiming
+the marker's key is refused. That lets a migration hand an argument back
+untouched and preserve its key.
 
 Canonicalizing is **not** serializing. It is one-way and deliberately lossy,
 keeping only what identity depends on:

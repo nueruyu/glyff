@@ -38,16 +38,16 @@ pip install glyff
 | `Execution`           | Aggregate Root for a recorded function execution.               |
 | `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`.                                   |
 | `SerializedValue`     | Serializer-neutral persisted value (results, metadata).         |
-| `CanonicalArguments`    | A call's canonical arguments, the preimage of its key.          |
-| `CanonicalArgumentMap` | A whole call's arguments, canonicalized.                        |
-| `CanonicalFallback`              | A recorded fallback representation for a canonical argument.    |
+| `CanonicalArguments`     | A call's encoded canonical arguments, the preimage of its key. |
+| `CanonicalArgumentValue` | A logical canonical value, including a fallback.              |
+| `CanonicalFallback`      | A fallback representation in a canonical argument.            |
 | `Metadata`            | Metadata entry owned by an `Execution`.                         |
 | `ExecutionRepository` | Repository for execution aggregates.                            |
 | `Transaction`         | Active transaction boundary.                                    |
 | `TransactionProvider` | Provider used by `TransactionScope`.                            |
 | `Serializer`          | Protocol for value serialization.                               |
 | `ArgumentCanonicalizer`   | Contract for normalizing bound call arguments into a canonical form. |
-| `CanonicalValue`      | The JSON data model value a canonicalizer returns.              |
+| `CanonicalValue`      | A value in the JSON data model.                                 |
 | `SessionId`           | The name a session's records are stored under.                  |
 
 `glyff.migration` carries the offline half: `MigratableBackend` and

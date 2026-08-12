@@ -14,7 +14,7 @@ import pytest
 
 from glyff import (
     Backend,
-    CanonicalValue,
+    CanonicalArgumentValue,
     CanonicalArguments,
     DomainId,
     DomainVersion,
@@ -51,7 +51,7 @@ def make_execution_id(
     *,
     parent: ExecutionId | None = None,
     sequence: int = 0,
-    arguments: dict[str, CanonicalValue] | None = None,
+    arguments: dict[str, CanonicalArgumentValue] | None = None,
     domain_id: DomainId = DOMAIN,
 ) -> ExecutionId:
     """An execution id keyed by ``arguments``, which :func:`canonical_arguments` records."""
@@ -65,10 +65,10 @@ def make_execution_id(
 
 
 def canonical_arguments(
-    arguments: dict[str, CanonicalValue] | None = None,
+    arguments: dict[str, CanonicalArgumentValue] | None = None,
 ) -> CanonicalArguments:
     """The bound arguments an id built by :func:`make_execution_id` is keyed by."""
-    return CanonicalArguments.from_canonical(arguments or {})
+    return CanonicalArguments(arguments or {})
 
 
 def serialized_value(raw: object = "value") -> SerializedValue:

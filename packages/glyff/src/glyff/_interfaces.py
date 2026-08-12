@@ -2,7 +2,8 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterable, Mapping
 from typing import Any
 
-from ._execution import CanonicalArgumentMap, Execution, ExecutionStatus
+from ._canonical_arguments import CanonicalArguments
+from ._execution import Execution, ExecutionStatus
 from ._identity import DomainId, DomainVersion, ExecutionId, SessionId
 
 
@@ -89,16 +90,8 @@ class ArgumentCanonicalizer(ABC):
     """
 
     @abstractmethod
-    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArgumentMap:
-        """Normalizes a call's bound arguments into the JSON data model.
-
-        Writes :func:`~glyff.make_fallback_marker` for a
-        :class:`~glyff.CanonicalFallback`,
-        and validates derived mappings with
-        :func:`~glyff.require_unreserved_canonical_mapping`. A form read back by
-        :func:`~glyff.restore_recorded_canonical_value` then canonicalizes to
-        itself.
-        """
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArguments:
+        """Returns the canonical arguments for one bound call."""
         ...
 
 

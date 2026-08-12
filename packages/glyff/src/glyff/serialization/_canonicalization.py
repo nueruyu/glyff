@@ -3,17 +3,17 @@ import functools
 import math
 from typing import Any, Callable, TypeAlias
 
-from .._execution import (
+from .._canonical_arguments import (
     CanonicalFallback,
+    CanonicalArgumentValue,
     CanonicalValue,
+    _encode_argument_value,
     encode_canonical,
-    make_fallback_marker,
-    require_unreserved_canonical_mapping,
 )
 from ..exceptions import ArgumentCanonicalizationError
 from ._fallback import CanonicalFallbackRepresenter
 
-_Recurse: TypeAlias = Callable[[Any], CanonicalValue]
+_Recurse: TypeAlias = Callable[[Any], CanonicalArgumentValue]
 _UNREPRESENTABLE = object()
 
 
@@ -50,8 +50,10 @@ def _canonical_key(key: Any) -> str:
     )
 
 
-def _canonical_mapping(obj: dict, recurse: _Recurse) -> dict[str, CanonicalValue]:
-    canonical: dict[str, CanonicalValue] = {}
+def _canonical_mapping(
+    obj: dict, recurse: _Recurse
+) -> dict[str, CanonicalArgumentValue]:
+    canonical: dict[str, CanonicalArgumentValue] = {}
     for key, value in obj.items():
         name = _canonical_key(key)
         if name in canonical:
@@ -64,12 +66,14 @@ def _canonical_mapping(obj: dict, recurse: _Recurse) -> dict[str, CanonicalValue
     return canonical
 
 
-def _canonicalize_set(values: Any, recurse: _Recurse) -> list[CanonicalValue]:
+def _canonicalize_set(values: Any, recurse: _Recurse) -> list[CanonicalArgumentValue]:
     members = [recurse(value) for value in values]
     try:
         return sorted(members)  # type: ignore[type-var]
     except TypeError:
-        return sorted(members, key=encode_canonical)
+        return sorted(
+            members, key=lambda member: encode_canonical(_encode_argument_value(member))
+        )
 
 
 def require_canonical_value(value: CanonicalValue) -> None:
@@ -81,7 +85,7 @@ def to_canonical(
     obj: Any,
     fallback_representer: CanonicalFallbackRepresenter,
     recurse: _Recurse | None = None,
-) -> CanonicalValue:
+) -> CanonicalArgumentValue:
     """Normalize one value into the JSON data model."""
     if recurse is None:
         recurse = functools.partial(
@@ -90,14 +94,13 @@ def to_canonical(
 
     if isinstance(obj, CanonicalFallback):
         require_canonical_value(obj.representation)
-        return make_fallback_marker(obj.representation)
+        return obj
 
     derived = _derive_canonical(obj, recurse)
     if derived is _UNREPRESENTABLE:
         representation = fallback_representer.represent(obj)
         require_canonical_value(representation)
-        return make_fallback_marker(representation)
-    require_unreserved_canonical_mapping(derived)
+        return CanonicalFallback(representation)
     return derived
 
 

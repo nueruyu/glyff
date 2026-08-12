@@ -2,7 +2,7 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from .._execution import CanonicalArgumentMap, CanonicalValue
+from .._canonical_arguments import CanonicalArgumentValue, CanonicalArguments
 from .._interfaces import ArgumentCanonicalizer, Serializer
 from ..exceptions import SerializationError
 from .constants import DEFAULT_ENCODING
@@ -61,7 +61,7 @@ class JsonArgumentCanonicalizer(ArgumentCanonicalizer):
             fallback_representer
         )
 
-    def canonicalize_value(self, obj: Any) -> CanonicalValue:
+    def canonicalize_value(self, obj: Any) -> CanonicalArgumentValue:
         """Canonicalizes one value. Override to support extra types.
 
         Passing this as the walk's recursion keeps an override in effect at every
@@ -69,7 +69,7 @@ class JsonArgumentCanonicalizer(ArgumentCanonicalizer):
         """
         return to_canonical(obj, self._fallback_representer, self.canonicalize_value)
 
-    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArgumentMap:
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArguments:
         canonical = self.canonicalize_value(dict(arguments))
         assert isinstance(canonical, dict)
-        return canonical
+        return CanonicalArguments(canonical)

@@ -12,27 +12,24 @@ from typing import Any
 import pytest
 from glyff import (
     ArgumentCanonicalizer,
-    CanonicalArgumentMap,
+    CanonicalArguments,
     CanonicalFallback,
     Serializer,
-    make_fallback_marker,
-    require_unreserved_canonical_mapping,
 )
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
 
 class BareCanonicalizer(ArgumentCanonicalizer):
-    def canonicalize(self, arguments) -> CanonicalArgumentMap:
-        # The fallback marker is the canonical format's, so writing and reserving
-        # it is part of implementing this, not an extra the contract asks for.
-        return {name: _plain(value) for name, value in arguments.items()}
+    def canonicalize(self, arguments) -> CanonicalArguments:
+        return CanonicalArguments(
+            {name: _plain(value) for name, value in arguments.items()}
+        )
 
 
 def _plain(value: Any) -> Any:
     if isinstance(value, CanonicalFallback):
-        return make_fallback_marker(_plain(value.representation))
+        return value
     if isinstance(value, dict):
-        require_unreserved_canonical_mapping(value)
         return {key: _plain(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_plain(item) for item in value]

@@ -13,7 +13,7 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
-from .._execution import CanonicalArguments, CanonicalFallback, make_fallback_marker
+from .._canonical_arguments import CanonicalArguments, CanonicalFallback
 from ..exceptions import ArgumentCanonicalizationError
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]
@@ -39,9 +39,7 @@ class ArgumentCanonicalizerContract:
     def test_a_canonical_form_encodes_into_a_key(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        form = canonicalizer.canonicalize({"a": 1, "b": "two", "c": None})
-
-        assert CanonicalArguments.from_canonical(form).data
+        assert canonicalizer.canonicalize({"a": 1, "b": "two", "c": None}).data
 
     def test_the_bound_name_is_part_of_the_form(
         self, canonicalizer: ArgumentCanonicalizer
@@ -74,33 +72,29 @@ class ArgumentCanonicalizerContract:
     def test_no_arguments_still_encodes_into_a_key(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        form = canonicalizer.canonicalize({})
-
-        assert CanonicalArguments.from_canonical(form).data
+        assert canonicalizer.canonicalize({}).data
 
     def test_a_canonical_form_canonicalizes_to_itself(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        form = canonicalizer.canonicalize(
+        canonical = canonicalizer.canonicalize(
             {"a": 1, "b": ["x", None], "c": {"d": True}, "e": "text"}
         )
-        assert isinstance(form, dict)
-
-        assert canonicalizer.canonicalize(form) == form
+        assert canonicalizer.canonicalize(canonical.recorded()) == canonical
 
     def test_an_opaque_value_canonicalizes_to_the_marker(
         self, canonicalizer: ArgumentCanonicalizer
     ):
         assert canonicalizer.canonicalize(
             {"a": CanonicalFallback("com.example.Service")}
-        ) == {"a": make_fallback_marker("com.example.Service")}
+        ) == CanonicalArguments({"a": CanonicalFallback("com.example.Service")})
 
     def test_a_value_claiming_the_marker_is_refused(
         self, canonicalizer: ArgumentCanonicalizer
     ):
         with pytest.raises(ArgumentCanonicalizationError):
             canonicalizer.canonicalize(
-                {"a": dict(make_fallback_marker("com.example.Service"))}  # type: ignore[arg-type]
+                {"a": {"__glyff_opaque__": "com.example.Service"}}
             )
 
     def test_a_later_instance_agrees_on_the_form(

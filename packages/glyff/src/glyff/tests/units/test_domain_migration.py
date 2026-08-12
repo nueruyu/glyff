@@ -6,6 +6,7 @@ import json
 
 import pytest
 from glyff import (
+    CanonicalArgumentValue,
     CanonicalValue,
     Domain,
     DomainId,
@@ -32,7 +33,7 @@ SHIP = DomainId("com.example.shipping")
 def started(
     name: str,
     *,
-    arguments: dict[str, CanonicalValue] | None = None,
+    arguments: dict[str, CanonicalArgumentValue] | None = None,
     parent=None,
     sequence: int = 0,
     domain_id: DomainId = PAY,
@@ -176,11 +177,11 @@ def test_a_default_the_new_boundary_gained_is_written_out_by_the_migration():
 # -- Canonical fallback arguments --------------------------------------------
 
 
-def test_an_opaque_argument_reaches_the_conversion_as_itself():
+def test_a_fallback_argument_reaches_the_conversion_as_itself():
     seen: list[object] = []
     execution = started(
         "authorize",
-        arguments={"client": {"__glyff_opaque__": "com.example.PaymentClient"}},
+        arguments={"client": CanonicalFallback("com.example.PaymentClient")},
     )
 
     migration = migrator()
@@ -194,11 +195,11 @@ def test_an_opaque_argument_reaches_the_conversion_as_itself():
     assert seen == [CanonicalFallback("com.example.PaymentClient")]
 
 
-def test_an_opaque_argument_passed_through_keys_the_call_as_it_did_before():
+def test_a_fallback_argument_passed_through_keys_the_call_as_it_did_before():
     execution = started(
         "authorize",
         arguments={
-            "client": {"__glyff_opaque__": "com.example.PaymentClient"},
+            "client": CanonicalFallback("com.example.PaymentClient"),
             "order": "ord_1",
         },
     )
@@ -430,11 +431,11 @@ def test_an_execution_shape_constructor_requires_value_objects():
         ExecutionShape("authorize", frozenset({"order"}))  # type: ignore[arg-type]
 
 
-def test_an_opaque_nested_in_a_container_survives_a_conversion():
+def test_a_fallback_nested_in_a_container_survives_a_conversion():
     execution = started(
         "authorize",
         arguments={
-            "clients": [{"__glyff_opaque__": "com.example.PaymentClient"}],
+            "clients": [CanonicalFallback("com.example.PaymentClient")],
             "units": 12,
         },
     )

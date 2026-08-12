@@ -11,7 +11,12 @@ import uuid
 from typing import Any
 
 import pytest
-from glyff import ArgumentCanonicalizer, Serializer
+from glyff import (
+    ArgumentCanonicalizer,
+    CanonicalArguments,
+    CanonicalFallback,
+    Serializer,
+)
 from glyff.exceptions import ArgumentCanonicalizationError, SerializationError
 from glyff.serialization import FallbackByTypeQualname
 from pydantic import BaseModel, ConfigDict
@@ -150,12 +155,14 @@ def test_a_scalar_pydantic_knows_is_represented_by_value(
 
     assert argument_canonicalizer.canonicalize(
         {"a": M(at=datetime.datetime(2024, 1, 1), ref=uuid.UUID(int=0))}
-    ) == {
-        "a": {
-            "at": {"__glyff_opaque__": "2024-01-01T00:00:00"},
-            "ref": {"__glyff_opaque__": "00000000-0000-0000-0000-000000000000"},
+    ) == CanonicalArguments(
+        {
+            "a": {
+                "at": CanonicalFallback("2024-01-01T00:00:00"),
+                "ref": CanonicalFallback("00000000-0000-0000-0000-000000000000"),
+            }
         }
-    }
+    )
 
 
 def test_a_scalar_valued_enum_is_represented_by_value(
@@ -164,9 +171,9 @@ def test_a_scalar_valued_enum_is_represented_by_value(
     class Colour(enum.Enum):
         RED = "red"
 
-    assert argument_canonicalizer.canonicalize({"a": Colour.RED}) == {
-        "a": {"__glyff_opaque__": "red"}
-    }
+    assert argument_canonicalizer.canonicalize({"a": Colour.RED}) == CanonicalArguments(
+        {"a": CanonicalFallback("red")}
+    )
 
 
 # -- Keeping Pydantic's encoder out of the walk ------------------------------
@@ -180,7 +187,7 @@ def test_a_models_set_field_keeps_the_shared_ordering(
 
     assert argument_canonicalizer.canonicalize(
         {"a": M(tags={"gamma", "alpha", "beta"})}
-    ) == {"a": {"tags": ["alpha", "beta", "gamma"]}}
+    ) == CanonicalArguments({"a": {"tags": ["alpha", "beta", "gamma"]}})
 
 
 def test_a_models_colliding_mapping_keys_are_still_refused(
