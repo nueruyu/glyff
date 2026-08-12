@@ -45,11 +45,11 @@ class StoredSession:
         # its version would leave records nothing has agreed a generation for.
         recorded = set(self.metadata.domain_versions)
         missing = sorted(
-            domain.value
-            for domain in {
-                domain
+            domain_id.value
+            for domain_id in {
+                domain_id
                 for execution in self.executions
-                for domain in _domains_in(execution.id)
+                for domain_id in _domains_in(execution.id)
             }
             - recorded
         )
@@ -66,7 +66,7 @@ def _domains_in(execution_id: ExecutionId) -> set[DomainId]:
     domains = set()
     current: ExecutionId | None = execution_id
     while current is not None:
-        domains.add(current.domain)
+        domains.add(current.domain_id)
         current = current.parent_id
     return domains
 

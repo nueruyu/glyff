@@ -13,10 +13,10 @@ than a bare string:
 | Component | Where it comes from |
 | --- | --- |
 | `parent_id` | The nearest engraved ancestor on the call stack, forming a chain up to the session root. |
-| `domain` | The `DomainId` of the [domain](#domains) whose `engrave` decorated the function. |
+| `domain_id` | The `DomainId` of the [domain](#domains) whose `engrave` decorated the function. |
 | `name` | An `ExecutionName`, derived from the engraved function's `__qualname__` ([explicit names are planned](#explicit-names-and-versions)). |
 | `arguments_digest` | An `ArgumentsDigest` over the canonical form of the bound arguments, produced by the session's `ArgumentCanonicalizer`. |
-| `sequence` | An ordinal from an independent counter per `(parent_id, domain, name, arguments_digest)` (`_sequencer.py`). |
+| `sequence` | An ordinal from an independent counter per `(parent_id, domain_id, name, arguments_digest)` (`_sequencer.py`). |
 
 Keys are **content-addressed, not positional**: the sequence counter is scoped to
 the exact `(parent, domain, name, args)` identity, not to a session-wide step

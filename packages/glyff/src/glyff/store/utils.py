@@ -42,7 +42,7 @@ def _decode_sequence(spelling: str) -> int:
 def _format_frame(eid: ExecutionId) -> str:
     """Formats a single ExecutionId frame into a string component."""
     return (
-        f"{_encode(eid.domain.value)}:{_encode(eid.name.value)}"
+        f"{_encode(eid.domain_id.value)}:{_encode(eid.name.value)}"
         f"#{eid.sequence}:{_encode(eid.arguments_digest.value)}"
     )
 
@@ -94,10 +94,10 @@ def path_to_execution_id(path: str) -> ExecutionId:
     parent: ExecutionId | None = None
     eid: ExecutionId | None = None
     for frame_str in path.split("/"):
-        domain, name, sequence, digest = _parse_frame_components(frame_str)
+        domain_id, name, sequence, digest = _parse_frame_components(frame_str)
         eid = ExecutionId(
             parent_id=parent,
-            domain=domain,
+            domain_id=domain_id,
             name=name,
             sequence=sequence,
             arguments_digest=digest,

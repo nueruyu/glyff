@@ -116,7 +116,7 @@ class Backend(ABC):
     async def claim_domain(
         self,
         session_id: SessionId,
-        domain: DomainId,
+        domain_id: DomainId,
         version: DomainVersion,
     ) -> DomainVersion:
         """Records ``version`` for a domain this session carries none for, and

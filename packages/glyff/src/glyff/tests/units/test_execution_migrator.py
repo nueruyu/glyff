@@ -34,7 +34,7 @@ def started(
     arguments: dict[str, CanonicalValue] | None = None,
     parent=None,
     sequence: int = 0,
-    domain: DomainId = PAY,
+    domain_id: DomainId = PAY,
 ) -> Execution:
     return Execution.start(
         make_execution_id(
@@ -42,7 +42,7 @@ def started(
             parent=parent,
             sequence=sequence,
             arguments=arguments,
-            domain=domain,
+            domain_id=domain_id,
         ),
         canonical_arguments(arguments),
     )
@@ -122,7 +122,7 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
     [migrated] = migrate(migration, session(execution))
 
     assert migrated.id.name.value == "charge"
-    assert migrated.id.domain == PAY
+    assert migrated.id.domain_id == PAY
     assert migrated.arguments.data == execution.arguments.data
 
 
@@ -143,7 +143,7 @@ def test_a_boundary_can_move_to_another_domain():
         session(execution, versions={PAY: "v1", SHIP: "v7"})
     )
 
-    assert replacement.executions[0].id.domain == SHIP
+    assert replacement.executions[0].id.domain_id == SHIP
     assert replacement.metadata.domain_versions == DomainVersionMap(
         {PAY: "v2", SHIP: "v7"}
     )
@@ -307,7 +307,7 @@ def test_an_ordinal_is_carried_over_rather_than_re_derived():
 
 
 def test_a_migration_leaves_another_domains_ordinals_alone():
-    elsewhere = started("label", sequence=1, domain=SHIP)
+    elsewhere = started("label", sequence=1, domain_id=SHIP)
 
     migrated = migrate(migrator(), session(elsewhere, versions={PAY: "v1", SHIP: "v7"}))
 
@@ -537,7 +537,7 @@ def test_a_rewrite_may_claim_a_domain_the_session_has_not_entered():
     )
     replacement = migration.migrate(session(execution))
 
-    assert replacement.executions[0].id.domain == SHIP
+    assert replacement.executions[0].id.domain_id == SHIP
     assert replacement.metadata.domain_versions == DomainVersionMap(
         {PAY: "v2", SHIP: "v1"}
     )
@@ -558,7 +558,7 @@ def test_claiming_a_domain_the_session_already_records_is_refused():
 
 
 def test_a_session_that_never_entered_the_domain_is_refused():
-    execution = started("authorize", arguments={"order": "ord_1"}, domain=SHIP)
+    execution = started("authorize", arguments={"order": "ord_1"}, domain_id=SHIP)
 
     with pytest.raises(MigrationError, match="records no version"):
         migrate(migrator(), session(execution, versions={SHIP: "v1"}))

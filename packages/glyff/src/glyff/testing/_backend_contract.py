@@ -52,12 +52,12 @@ def make_execution_id(
     parent: ExecutionId | None = None,
     sequence: int = 0,
     arguments: dict[str, CanonicalValue] | None = None,
-    domain: DomainId = DOMAIN,
+    domain_id: DomainId = DOMAIN,
 ) -> ExecutionId:
     """An execution id keyed by ``arguments``, which :func:`canonical_arguments` records."""
     return ExecutionId(
         parent_id=parent,
-        domain=domain,
+        domain_id=domain_id,
         name=ExecutionName(name),
         sequence=sequence,
         arguments_digest=canonical_arguments(arguments).digest,

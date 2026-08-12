@@ -56,7 +56,7 @@ class RefusingConnection:
 
 def started(name: str) -> Execution:
     return Execution.start(
-        make_execution_id(name, domain=DOMAIN), canonical_arguments()
+        make_execution_id(name, domain_id=DOMAIN), canonical_arguments()
     )
 
 

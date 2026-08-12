@@ -58,24 +58,24 @@ class DomainVersionMap(Mapping[DomainId, DomainVersion]):
 
     def __init__(self, versions: Mapping[Any, Any]) -> None:
         if not all(
-            isinstance(domain, (DomainId, str))
+            isinstance(domain_id, (DomainId, str))
             and isinstance(version, (DomainVersion, str))
-            for domain, version in versions.items()
+            for domain_id, version in versions.items()
         ):
             raise TypeError(
                 "DomainVersionMap requires domain identifiers and domain versions."
             )
         self._versions = {
-            domain if isinstance(domain, DomainId) else DomainId(domain): (
+            domain_id if isinstance(domain_id, DomainId) else DomainId(domain_id): (
                 version
                 if isinstance(version, DomainVersion)
                 else DomainVersion(version)
             )
-            for domain, version in versions.items()
+            for domain_id, version in versions.items()
         }
 
-    def __getitem__(self, domain: DomainId) -> DomainVersion:
-        return self._versions[domain]
+    def __getitem__(self, domain_id: DomainId) -> DomainVersion:
+        return self._versions[domain_id]
 
     def __iter__(self) -> Iterator[DomainId]:
         return iter(self._versions)
@@ -163,7 +163,7 @@ class ExecutionId:
     """
 
     parent_id: ExecutionId | None
-    domain: DomainId
+    domain_id: DomainId
     name: ExecutionName
     sequence: int
     arguments_digest: ArgumentsDigest
@@ -189,7 +189,7 @@ class ExecutionId:
             else ""
         )
         return (
-            f"ExecutionId(domain='{self.domain}', name='{self.name}', "
+            f"ExecutionId(domain_id='{self.domain_id}', name='{self.name}', "
             f"sequence={self.sequence}{parent_info})"
         )
 
@@ -204,7 +204,7 @@ class ExecutionSequenceScope:
     """
 
     parent_id: ExecutionId | None
-    domain: DomainId
+    domain_id: DomainId
     name: ExecutionName
     arguments_digest: ArgumentsDigest
 
@@ -212,7 +212,7 @@ class ExecutionSequenceScope:
     def from_execution_id(cls, execution_id: ExecutionId) -> ExecutionSequenceScope:
         return cls(
             parent_id=execution_id.parent_id,
-            domain=execution_id.domain,
+            domain_id=execution_id.domain_id,
             name=execution_id.name,
             arguments_digest=execution_id.arguments_digest,
         )

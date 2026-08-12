@@ -133,7 +133,7 @@ migrator.remap(
 report = await backend.session_migration.run(SessionId("order-42"), migrator)
 ```
 
-An `ExecutionShape` is a domain, the name records carry, and the names of the
+An `ExecutionShape` is a `domain_id`, the name records carry, and the names of the
 arguments a call is bound to — no Python signature and no version. It is spelled
 out rather than read off the function it names, because taking it from a live
 signature would let a later, unrelated change there silently reshape records the

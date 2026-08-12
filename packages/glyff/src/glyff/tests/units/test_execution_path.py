@@ -10,14 +10,14 @@ DOMAIN = DomainId("com.example.payments")
 def make(
     name: str = "task",
     *,
-    domain: DomainId = DOMAIN,
+    domain_id: DomainId = DOMAIN,
     digest: str = "d" * 64,
     sequence: int = 0,
     parent: ExecutionId | None = None,
 ) -> ExecutionId:
     return ExecutionId(
         parent_id=parent,
-        domain=domain,
+        domain_id=domain_id,
         name=ExecutionName(name),
         sequence=sequence,
         arguments_digest=ArgumentsDigest(digest),

@@ -83,7 +83,7 @@ def test_a_sequence_no_path_could_carry_is_refused(sequence):
     with pytest.raises(ValueError):
         ExecutionId(
             parent_id=None,
-            domain=DomainId("com.example.payments"),
+            domain_id=DomainId("com.example.payments"),
             name=ExecutionName("task"),
             sequence=sequence,  # type: ignore[arg-type]
             arguments_digest=ArgumentsDigest("d"),
@@ -94,7 +94,7 @@ def test_the_first_sequence_is_accepted():
     assert (
         ExecutionId(
             parent_id=None,
-            domain=DomainId("com.example.payments"),
+            domain_id=DomainId("com.example.payments"),
             name=ExecutionName("task"),
             sequence=0,
             arguments_digest=ArgumentsDigest("d"),

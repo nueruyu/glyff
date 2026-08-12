@@ -93,9 +93,9 @@ async def _executions(
 
 
 async def _claim_domain(
-    backend: Backend, session_id: SessionId, domain: DomainId, version: str
+    backend: Backend, session_id: SessionId, domain_id: DomainId, version: str
 ) -> DomainVersion:
-    return await backend.claim_domain(session_id, domain, DomainVersion(version))
+    return await backend.claim_domain(session_id, domain_id, DomainVersion(version))
 
 
 class SessionMigrationContract:

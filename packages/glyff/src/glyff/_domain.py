@@ -16,7 +16,7 @@ R = TypeVar("R")
 
 async def _resolve_call_identity(
     ctx: Context,
-    domain: DomainId,
+    domain_id: DomainId,
     definition: FunctionDefinition,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
@@ -34,10 +34,12 @@ async def _resolve_call_identity(
             f"Ensure all arguments have a value representation. Original error: {e}"
         ) from e
     encoded = CanonicalArguments.from_canonical(canonical)
-    seq = await ctx.sequencer.next(parent_id, domain, definition.name, encoded.digest)
+    seq = await ctx.sequencer.next(
+        parent_id, domain_id, definition.name, encoded.digest
+    )
     execution_id = ExecutionId(
         parent_id=parent_id,
-        domain=domain,
+        domain_id=domain_id,
         name=definition.name,
         sequence=seq,
         arguments_digest=encoded.digest,
@@ -90,16 +92,16 @@ class Domain:
         a property of the definition, not of whatever was in scope when it ran.
         """
         definition = FunctionDefinition.from_callable(func)
-        domain = self
+        owning_domain = self
 
         @functools.wraps(func)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             ctx = get_context()
             # Before identity is resolved, so a recorded result is never replayed
             # against a generation of code that has not been agreed with.
-            await ctx.domain_claims.ensure(domain.id, domain.version)
+            await ctx.domain_claims.ensure(owning_domain.id, owning_domain.version)
             execution_id, canonical_arguments = await _resolve_call_identity(
-                ctx, domain.id, definition, args, kwargs
+                ctx, owning_domain.id, definition, args, kwargs
             )
             result = await execute(
                 ctx=ctx,

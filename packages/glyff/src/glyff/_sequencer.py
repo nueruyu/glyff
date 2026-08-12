@@ -24,12 +24,12 @@ class Sequencer:
     async def next(
         self,
         parent: ExecutionId | None,
-        domain: DomainId,
+        domain_id: DomainId,
         name: ExecutionName,
         arguments_digest: ArgumentsDigest,
     ) -> int:
         """Returns the next sequence number for the given content scope."""
-        key = ExecutionSequenceScope(parent, domain, name, arguments_digest)
+        key = ExecutionSequenceScope(parent, domain_id, name, arguments_digest)
 
         async with self._meta_lock:
             if key not in self._locks:

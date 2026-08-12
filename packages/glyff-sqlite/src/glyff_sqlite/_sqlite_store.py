@@ -193,9 +193,9 @@ class SQLiteBackend(MigratableBackend):
     async def claim_domain(
         self,
         session_id: SessionId,
-        domain: DomainId,
+        domain_id: DomainId,
         version: DomainVersion,
     ) -> DomainVersion:
         return DomainVersion(
-            await self._client.claim_domain(session_id.value, domain, version.value)
+            await self._client.claim_domain(session_id.value, domain_id, version.value)
         )

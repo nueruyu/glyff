@@ -38,8 +38,8 @@ class FileSessionMigration(SessionMigration):
 
             document.setdefault(_SESSIONS_KEY, {})[session_id.value] = {
                 _DOMAIN_VERSIONS_KEY: {
-                    domain.value: version.value
-                    for domain, version in replacement.metadata.domain_versions.items()
+                    domain_id.value: version.value
+                    for domain_id, version in replacement.metadata.domain_versions.items()
                 },
                 _EXECUTIONS_KEY: {
                     execution_id_to_path(execution.id): execution_to_dict(execution)
@@ -63,7 +63,10 @@ class FileSessionMigration(SessionMigration):
         return StoredSession(
             metadata=SessionMetadata(
                 domain_versions=DomainVersionMap(
-                    {DomainId(domain): version for domain, version in versions.items()}
+                    {
+                        DomainId(domain_id): version
+                        for domain_id, version in versions.items()
+                    }
                 )
             ),
             # Lexicographic path order is ancestor-first.

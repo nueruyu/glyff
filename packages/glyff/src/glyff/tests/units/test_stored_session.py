@@ -10,9 +10,10 @@ PAYMENTS = DomainId("com.example.payments")
 SHIPPING = DomainId("com.example.shipping")
 
 
-def started(name: str, *, domain: DomainId = PAYMENTS, parent=None) -> Execution:
+def started(name: str, *, domain_id: DomainId = PAYMENTS, parent=None) -> Execution:
     return Execution.start(
-        make_execution_id(name, domain=domain, parent=parent), canonical_arguments()
+        make_execution_id(name, domain_id=domain_id, parent=parent),
+        canonical_arguments(),
     )
 
 
@@ -39,8 +40,8 @@ def test_an_execution_whose_domain_has_no_version_is_refused():
 
 
 def test_a_domain_that_only_appears_as_an_ancestor_is_still_required():
-    parent = started("parent", domain=PAYMENTS)
-    child = started("child", domain=SHIPPING, parent=parent.id)
+    parent = started("parent", domain_id=PAYMENTS)
+    child = started("child", domain_id=SHIPPING, parent=parent.id)
 
     with pytest.raises(MigrationError, match="com.example.payments"):
         session({SHIPPING: "v1"}, child)

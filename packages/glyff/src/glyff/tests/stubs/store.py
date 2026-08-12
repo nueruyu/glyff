@@ -118,10 +118,10 @@ class StubBackend(Backend):
         self._repository = repository
 
     async def claim_domain(
-        self, session_id: SessionId, domain: DomainId, version: DomainVersion
+        self, session_id: SessionId, domain_id: DomainId, version: DomainVersion
     ) -> DomainVersion:
-        self._record("claim_domain", session_id, domain, version)
-        return await self._backend.claim_domain(session_id, domain, version)
+        self._record("claim_domain", session_id, domain_id, version)
+        return await self._backend.claim_domain(session_id, domain_id, version)
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append(Call(name, args, kwargs))

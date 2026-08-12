@@ -157,12 +157,12 @@ class MemoryBackend(Backend):
     async def claim_domain(
         self,
         session_id: SessionId,
-        domain: DomainId,
+        domain_id: DomainId,
         version: DomainVersion,
     ) -> DomainVersion:
         # Nothing here outlives the process, so the claim only has to hold for
         # as long as the records do.
         async with self._claim_lock:
             return self._domain_versions.setdefault(
-                (session_id.value, domain.value), version
+                (session_id.value, domain_id.value), version
             )
