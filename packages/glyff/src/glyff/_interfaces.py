@@ -2,8 +2,9 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterable, Mapping
 from typing import Any
 
-from ._execution import CanonicalValue, Execution, ExecutionStatus
-from ._identity import DomainId, ExecutionId, SessionId
+from ._canonical_arguments import CanonicalArguments
+from ._execution import Execution, ExecutionStatus
+from ._types import DomainId, DomainVersion, ExecutionId, SessionId
 
 
 class Transaction(ABC):
@@ -89,8 +90,8 @@ class ArgumentCanonicalizer(ABC):
     """
 
     @abstractmethod
-    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalValue:
-        """Normalizes a call's bound arguments into the JSON data model."""
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArguments:
+        """Returns the canonical arguments for one bound call."""
         ...
 
 
@@ -107,8 +108,11 @@ class Backend(ABC):
 
     @abstractmethod
     async def claim_domain(
-        self, session_id: SessionId, domain: DomainId, version: str
-    ) -> str:
+        self,
+        session_id: SessionId,
+        domain_id: DomainId,
+        version: DomainVersion,
+    ) -> DomainVersion:
         """Records ``version`` for a domain this session carries none for, and
         returns the version the pair carries afterwards.
 

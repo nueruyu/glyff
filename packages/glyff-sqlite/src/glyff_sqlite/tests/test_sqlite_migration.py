@@ -10,11 +10,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from glyff import DomainId, Execution, SessionId, TransactionScope
+from glyff import (
+    DomainId,
+    DomainVersion,
+    DomainVersionMap,
+    Execution,
+    SessionId,
+    TransactionScope,
+)
 from glyff.migration import (
-    MigrationReport,
     SessionMetadata,
-    SessionMigrationResult,
     SessionMigrator,
     StoredSession,
 )
@@ -30,17 +35,10 @@ class ReplacingMigrator(SessionMigrator):
         self._executions = executions
         self._version = version
 
-    def migrate(self, source: StoredSession) -> SessionMigrationResult:
-        versions = {DOMAIN: self._version}
-        return SessionMigrationResult(
-            session=StoredSession(
-                metadata=SessionMetadata(domain_versions=versions),
-                executions=self._executions,
-            ),
-            report=MigrationReport(
-                from_domain_versions=source.metadata.domain_versions,
-                to_domain_versions=versions,
-            ),
+    def migrate(self, source: StoredSession) -> StoredSession:
+        return StoredSession(
+            metadata=SessionMetadata(DomainVersionMap({DOMAIN: self._version})),
+            executions=self._executions,
         )
 
 
@@ -65,7 +63,7 @@ class RefusingConnection:
 
 def started(name: str) -> Execution:
     return Execution.start(
-        make_execution_id(name, domain=DOMAIN), canonical_arguments()
+        make_execution_id(name, domain_id=DOMAIN), canonical_arguments()
     )
 
 
@@ -75,7 +73,7 @@ def backend(tmp_path: Path) -> SQLiteBackend:
 
 
 async def seed(backend: SQLiteBackend, *names: str) -> list[Execution]:
-    await backend.claim_domain(SESSION, DOMAIN, "v1")
+    await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
     seeded = []
     for name in names:
         execution = started(name)
@@ -108,7 +106,9 @@ async def test_a_failed_execution_write_leaves_the_version_alone(
 
     monkeypatch.undo()
     assert [e.id for e in await stored(backend)] == [e.id for e in seeded]
-    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+    assert (
+        await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v-later"))
+    ).value == "v1"
 
 
 async def test_a_failed_version_write_leaves_the_executions_alone(
@@ -124,7 +124,9 @@ async def test_a_failed_version_write_leaves_the_executions_alone(
 
     monkeypatch.undo()
     assert [e.id for e in await stored(backend)] == [e.id for e in seeded]
-    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+    assert (
+        await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v-later"))
+    ).value == "v1"
 
 
 async def test_a_failed_migration_leaves_nothing_behind_on_disk(
@@ -145,4 +147,6 @@ async def test_a_failed_migration_leaves_nothing_behind_on_disk(
     assert [e.id async for e in reopened.repository.executions(SESSION)] == [
         e.id for e in seeded
     ]
-    assert await reopened.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+    assert (
+        await reopened.claim_domain(SESSION, DOMAIN, DomainVersion("v-later"))
+    ).value == "v1"

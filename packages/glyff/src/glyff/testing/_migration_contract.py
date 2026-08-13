@@ -12,13 +12,20 @@ from dataclasses import replace
 
 import pytest
 
-from glyff import Backend, DomainId, Execution, SessionId, TransactionScope
+from glyff import (
+    Backend,
+    DomainId,
+    DomainVersion,
+    DomainVersionMap,
+    Execution,
+    SessionId,
+    TransactionScope,
+)
 from glyff.exceptions import MigrationCollisionError, MigrationError
 from glyff.migration import (
     MigratableBackend,
     MigrationReport,
     SessionMetadata,
-    SessionMigrationResult,
     SessionMigrator,
     StoredSession,
 )
@@ -61,7 +68,7 @@ class RecordingMigrator(SessionMigrator):
         self._before_return = before_return
         self.source: StoredSession | None = None
 
-    def migrate(self, source: StoredSession) -> SessionMigrationResult:
+    def migrate(self, source: StoredSession) -> StoredSession:
         self.source = source
         if self._raises is not None:
             raise self._raises
@@ -72,24 +79,24 @@ class RecordingMigrator(SessionMigrator):
             session = self._transform(source)
         else:
             session = StoredSession(
-                metadata=SessionMetadata(domain_versions=self._domain_versions),
+                metadata=SessionMetadata(DomainVersionMap(self._domain_versions)),
                 executions=(
                     source.executions if self._executions is None else self._executions
                 ),
             )
-        return SessionMigrationResult(
-            session=session,
-            report=MigrationReport(
-                from_domain_versions=source.metadata.domain_versions,
-                to_domain_versions=session.metadata.domain_versions,
-            ),
-        )
+        return session
 
 
 async def _executions(
     backend: Backend, session_id: SessionId = SESSION
 ) -> list[Execution]:
     return [execution async for execution in backend.repository.executions(session_id)]
+
+
+async def _claim_domain(
+    backend: Backend, session_id: SessionId, domain_id: DomainId, version: str
+) -> DomainVersion:
+    return await backend.claim_domain(session_id, domain_id, DomainVersion(version))
 
 
 class SessionMigrationContract:
@@ -104,7 +111,7 @@ class SessionMigrationContract:
     async def _seeded(
         self, backend: MigratableBackend, *names: str, version: str = "v1"
     ) -> list[Execution]:
-        await backend.claim_domain(SESSION, DOMAIN, version)
+        await _claim_domain(backend, SESSION, DOMAIN, version)
         seeded = []
         for name in names:
             execution = Execution.start(make_execution_id(name), canonical_arguments())
@@ -125,7 +132,7 @@ class SessionMigrationContract:
 
         assert migrator.source is not None
         assert migrator.source.metadata == SessionMetadata(
-            domain_versions={DOMAIN: "v1"}
+            DomainVersionMap({DOMAIN: "v1"})
         )
         assert list(migrator.source.executions) == seeded
 
@@ -134,7 +141,7 @@ class SessionMigrationContract:
     ):
         backend = backend_factory("source-scope")
         await self._seeded(backend, "mine")
-        await backend.claim_domain(OTHER_SESSION, DOMAIN, "v1")
+        await _claim_domain(backend, OTHER_SESSION, DOMAIN, "v1")
         await save_execution(
             backend,
             Execution.start(make_execution_id("theirs"), canonical_arguments()),
@@ -170,10 +177,13 @@ class SessionMigrationContract:
         )
 
         assert report == MigrationReport(
-            from_domain_versions={DOMAIN: "v1"}, to_domain_versions={DOMAIN: "v2"}
+            source_domain_versions=DomainVersionMap({DOMAIN: "v1"}),
+            target_domain_versions=DomainVersionMap({DOMAIN: "v2"}),
         )
         assert [e.id for e in await _executions(backend)] == [after.id]
-        assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v2"
+        assert await _claim_domain(
+            backend, SESSION, DOMAIN, "v-later"
+        ) == DomainVersion("v2")
 
     async def test_executions_the_migrator_dropped_are_gone(
         self, backend_factory: MigratableBackendFactory
@@ -194,21 +204,21 @@ class SessionMigrationContract:
         # carry over must not survive as a row an upsert would have left.
         backend = backend_factory("replace-versions")
         await self._seeded(backend, "task")
-        await backend.claim_domain(SESSION, DROPPED_DOMAIN, "v1")
+        await _claim_domain(backend, SESSION, DROPPED_DOMAIN, "v1")
 
         await backend.session_migration.run(
             SESSION, RecordingMigrator(domain_versions={DOMAIN: "v2"})
         )
 
-        assert await backend.claim_domain(SESSION, DROPPED_DOMAIN, "v-later") == (
-            "v-later"
-        )
+        assert await _claim_domain(
+            backend, SESSION, DROPPED_DOMAIN, "v-later"
+        ) == DomainVersion("v-later")
 
     async def test_a_migrated_execution_keeps_its_result_and_metadata(
         self, backend_factory: MigratableBackendFactory
     ):
         backend = backend_factory("replace-payload")
-        await backend.claim_domain(SESSION, DOMAIN, "v1")
+        await _claim_domain(backend, SESSION, DOMAIN, "v1")
         execution = Execution.start(make_execution_id("task"), canonical_arguments())
         execution.complete(serialized_value("result"))
         execution.set_metadata("trace", serialized_value("trace"))
@@ -224,7 +234,7 @@ class SessionMigrationContract:
     ):
         backend = backend_factory("replace-scope")
         await self._seeded(backend, "mine")
-        await backend.claim_domain(OTHER_SESSION, DOMAIN, "v1")
+        await _claim_domain(backend, OTHER_SESSION, DOMAIN, "v1")
         theirs = Execution.start(make_execution_id("theirs"), canonical_arguments())
         await save_execution(backend, theirs, OTHER_SESSION)
 
@@ -233,7 +243,9 @@ class SessionMigrationContract:
         )
 
         assert [e.id for e in await _executions(backend, OTHER_SESSION)] == [theirs.id]
-        assert await backend.claim_domain(OTHER_SESSION, DOMAIN, "v-later") == "v1"
+        assert await _claim_domain(
+            backend, OTHER_SESSION, DOMAIN, "v-later"
+        ) == DomainVersion("v1")
 
     async def test_the_result_survives_reopening_the_store(
         self, backend_factory: MigratableBackendFactory
@@ -250,7 +262,9 @@ class SessionMigrationContract:
 
         reopened = backend_factory(store)
         assert [e.id for e in await _executions(reopened)] == [migrated.id]
-        assert await reopened.claim_domain(SESSION, DOMAIN, "v-later") == "v2"
+        assert await _claim_domain(
+            reopened, SESSION, DOMAIN, "v-later"
+        ) == DomainVersion("v2")
         assert await reopened.repository.get(SESSION, seeded.id) is None
 
     # -- Nothing by halves ---------------------------------------------------
@@ -267,7 +281,9 @@ class SessionMigrationContract:
             )
 
         assert [e.id for e in await _executions(backend)] == [e.id for e in seeded]
-        assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+        assert await _claim_domain(
+            backend, SESSION, DOMAIN, "v-later"
+        ) == DomainVersion("v1")
 
     async def test_a_migrator_that_raises_changes_nothing_on_disk_either(
         self, backend_factory: MigratableBackendFactory
@@ -283,7 +299,9 @@ class SessionMigrationContract:
 
         reopened = backend_factory(store)
         assert [e.id for e in await _executions(reopened)] == [e.id for e in seeded]
-        assert await reopened.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+        assert await _claim_domain(
+            reopened, SESSION, DOMAIN, "v-later"
+        ) == DomainVersion("v1")
 
     async def test_two_executions_on_one_id_are_refused_before_anything_is_written(
         self, backend_factory: MigratableBackendFactory
@@ -296,7 +314,7 @@ class SessionMigrationContract:
             # Building the result is where the collision is caught, so the store
             # is never asked to keep whichever copy is written last.
             return StoredSession(
-                metadata=SessionMetadata(domain_versions={DOMAIN: "v2"}),
+                metadata=SessionMetadata(DomainVersionMap({DOMAIN: "v2"})),
                 executions=(collided, replace(collided)),
             )
 
@@ -306,7 +324,9 @@ class SessionMigrationContract:
             )
 
         assert [e.id for e in await _executions(backend)] == [seeded.id]
-        assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+        assert await _claim_domain(
+            backend, SESSION, DOMAIN, "v-later"
+        ) == DomainVersion("v1")
 
     # -- Exclusion -----------------------------------------------------------
 
@@ -348,7 +368,9 @@ class SessionMigrationContract:
             await migration
 
         assert [e.id for e in await _executions(backend)] == [after.id]
-        assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v2"
+        assert await _claim_domain(
+            backend, SESSION, DOMAIN, "v-later"
+        ) == DomainVersion("v2")
 
     async def test_another_writer_cannot_land_while_a_migration_holds_the_session(
         self, backend_factory: MigratableBackendFactory

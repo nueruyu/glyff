@@ -2,17 +2,17 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from .._execution import CanonicalValue
+from .._canonical_arguments import CanonicalArguments
+from .._types import CanonicalArgumentValue
 from .._interfaces import ArgumentCanonicalizer, Serializer
 from ..exceptions import SerializationError
 from .constants import DEFAULT_ENCODING
-from ._utils import (
-    OpaquePolicy,
-    RejectOpaque,
-    stable_json_dumps,
-    to_canonical,
-    to_serializable,
+from ._canonicalization import to_canonical
+from ._fallback import (
+    CanonicalFallbackRepresenter,
+    fallback_representer_or_reject,
 )
+from ._utils import stable_json_dumps, to_serializable
 
 
 class JsonSerializer(Serializer):
@@ -54,19 +54,23 @@ class JsonSerializer(Serializer):
 class JsonArgumentCanonicalizer(ArgumentCanonicalizer):
     """An ArgumentCanonicalizer that normalizes into the JSON data model."""
 
-    def __init__(self, opaque_policy: OpaquePolicy | None = None) -> None:
-        # How to represent values with no value representation. Defaults to raising,
-        # so distinct instances never silently collide on their class name. Compare
-        # to None explicitly: a custom policy may be a falsy object.
-        self._opaque_policy = RejectOpaque() if opaque_policy is None else opaque_policy
+    def __init__(
+        self,
+        fallback_representer: CanonicalFallbackRepresenter | None = None,
+    ) -> None:
+        self._fallback_representer = fallback_representer_or_reject(
+            fallback_representer
+        )
 
-    def canonicalize_value(self, obj: Any) -> CanonicalValue:
+    def canonicalize_value(self, obj: Any) -> CanonicalArgumentValue:
         """Canonicalizes one value. Override to support extra types.
 
         Passing this as the walk's recursion keeps an override in effect at every
         depth, not just for top-level arguments.
         """
-        return to_canonical(obj, self._opaque_policy, self.canonicalize_value)
+        return to_canonical(obj, self._fallback_representer, self.canonicalize_value)
 
-    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalValue:
-        return self.canonicalize_value(dict(arguments))
+    def canonicalize(self, arguments: Mapping[str, Any]) -> CanonicalArguments:
+        canonical = self.canonicalize_value(dict(arguments))
+        assert isinstance(canonical, dict)
+        return CanonicalArguments(canonical)

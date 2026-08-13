@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from glyff import DomainId, SessionId
+from glyff import DomainId, DomainVersionMap, SessionId
 from glyff.exceptions import MigrationError
 from glyff.migration import (
     MigrationReport,
@@ -34,19 +34,19 @@ class FileSessionMigration(SessionMigration):
     ) -> MigrationReport:
         def migrate(document: dict[str, Any]) -> DocumentUpdate[MigrationReport]:
             source = self._read(document, session_id.value)
-            result = migrator.migrate(source)
+            replacement = migrator.migrate(source)
 
             document.setdefault(_SESSIONS_KEY, {})[session_id.value] = {
                 _DOMAIN_VERSIONS_KEY: {
-                    domain.value: version
-                    for domain, version in result.session.metadata.domain_versions.items()
+                    domain_id.value: version.value
+                    for domain_id, version in replacement.metadata.domain_versions.items()
                 },
                 _EXECUTIONS_KEY: {
                     execution_id_to_path(execution.id): execution_to_dict(execution)
-                    for execution in result.session.executions
+                    for execution in replacement.executions
                 },
             }
-            return DocumentUpdate(result.report)
+            return DocumentUpdate(MigrationReport.between(source, replacement))
 
         return await self._client.update_document(migrate)
 
@@ -62,9 +62,12 @@ class FileSessionMigration(SessionMigration):
         executions = session.get(_EXECUTIONS_KEY, {})
         return StoredSession(
             metadata=SessionMetadata(
-                domain_versions={
-                    DomainId(domain): version for domain, version in versions.items()
-                }
+                domain_versions=DomainVersionMap(
+                    {
+                        DomainId(domain_id): version
+                        for domain_id, version in versions.items()
+                    }
+                )
             ),
             # Lexicographic path order is ancestor-first.
             executions=tuple(

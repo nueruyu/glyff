@@ -1,4 +1,4 @@
-from ._identity import DomainId
+from ._types import DomainId, DomainVersion
 
 
 class GlyffException(Exception):
@@ -109,8 +109,8 @@ class DomainVersionMismatchError(GlyffError):
         message: str,
         *,
         domain_id: DomainId,
-        recorded_version: str,
-        current_version: str,
+        recorded_version: DomainVersion,
+        current_version: DomainVersion,
     ) -> None:
         super().__init__(message)
         self.domain_id = domain_id
@@ -129,6 +129,18 @@ class MigrationError(GlyffError):
 class MigrationCollisionError(MigrationError):
     """
     Raised when a migration produces duplicate execution identities.
+    """
+
+    pass
+
+
+class MigrationOrdinalAmbiguityError(MigrationError):
+    """
+    Raised when a migration would gather separately recorded calls into one
+    class of identical repeated calls.
+
+    Such calls are matched by ordinal, and nothing records which of them ran
+    first, so the migration is refused rather than given an order glyff invented.
     """
 
     pass

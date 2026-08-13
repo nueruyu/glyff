@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import functools
-from dataclasses import dataclass
 from typing import Any, Callable, ParamSpec, TypeVar, cast
 
 from ._context import Context, get_context
-from ._execution import CanonicalArguments
+from ._canonical_arguments import CanonicalArguments
 from ._executor import execute
 from ._function import FunctionDefinition
-from ._identity import DomainId, ExecutionId
+from ._types import DomainId, DomainVersion, ExecutionId
 from .exceptions import ArgumentCanonicalizationError
-from .serialization._utils import encode_canonical
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -18,7 +16,7 @@ R = TypeVar("R")
 
 async def _resolve_call_identity(
     ctx: Context,
-    domain: DomainId,
+    domain_id: DomainId,
     definition: FunctionDefinition,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
@@ -27,7 +25,7 @@ async def _resolve_call_identity(
     parent_id = ctx.current_execution_id
     arguments = definition.bind(args, kwargs)
     try:
-        canonical = ctx.argument_canonicalizer.canonicalize(arguments)
+        canonical_arguments = ctx.argument_canonicalizer.canonicalize(arguments)
     except ArgumentCanonicalizationError as e:
         # The canonicalizer sees values, not the call they came from, so the
         # function is named here or nowhere.
@@ -35,19 +33,19 @@ async def _resolve_call_identity(
             f"Arguments to '{definition.name}' could not be canonicalized. "
             f"Ensure all arguments have a value representation. Original error: {e}"
         ) from e
-    encoded = CanonicalArguments(encode_canonical(canonical))
-    seq = await ctx.sequencer.next(parent_id, domain, definition.name, encoded.digest)
+    seq = await ctx.sequencer.next(
+        parent_id, domain_id, definition.name, canonical_arguments.digest
+    )
     execution_id = ExecutionId(
         parent_id=parent_id,
-        domain=domain,
+        domain_id=domain_id,
         name=definition.name,
         sequence=seq,
-        arguments_digest=encoded.digest,
+        arguments_digest=canonical_arguments.digest,
     )
-    return execution_id, encoded
+    return execution_id, canonical_arguments
 
 
-@dataclass(frozen=True)
 class Domain:
     """A versioned ownership boundary for engraved functions.
 
@@ -57,14 +55,31 @@ class Domain:
     version says which generation of the owner's code the records belong to.
     """
 
-    id: DomainId
-    version: str
+    __slots__ = ("_id", "_version")
 
-    def __init__(self, id: DomainId | str, *, version: str) -> None:
-        object.__setattr__(self, "id", DomainId(id) if isinstance(id, str) else id)
-        object.__setattr__(self, "version", version)
-        if not version:
-            raise ValueError(f"Domain {self.id} cannot have an empty version.")
+    def __init__(self, id: DomainId | str, *, version: DomainVersion | str) -> None:
+        self._id = id if isinstance(id, DomainId) else DomainId(id)
+        self._version = (
+            version if isinstance(version, DomainVersion) else DomainVersion(version)
+        )
+
+    @property
+    def id(self) -> DomainId:
+        return self._id
+
+    @property
+    def version(self) -> DomainVersion:
+        return self._version
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, Domain)
+            and self.id == other.id
+            and self.version == other.version
+        )
+
+    def __repr__(self) -> str:
+        return f"Domain(id={self.id!r}, version={self.version!r})"
 
     def engrave(self, func: Callable[P, R]) -> Callable[P, R]:
         """Makes an async function engraveable and resumable within this domain.
@@ -73,16 +88,17 @@ class Domain:
         a property of the definition, not of whatever was in scope when it ran.
         """
         definition = FunctionDefinition.from_callable(func)
-        domain = self
+        domain_id = self.id
+        domain_version = self.version
 
         @functools.wraps(func)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             ctx = get_context()
             # Before identity is resolved, so a recorded result is never replayed
             # against a generation of code that has not been agreed with.
-            await ctx.domain_claims.ensure(domain.id, domain.version)
+            await ctx.domain_claims.ensure(domain_id, domain_version)
             execution_id, canonical_arguments = await _resolve_call_identity(
-                ctx, domain.id, definition, args, kwargs
+                ctx, domain_id, definition, args, kwargs
             )
             result = await execute(
                 ctx=ctx,

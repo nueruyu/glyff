@@ -212,18 +212,18 @@ class FileClient:
     # -- Domain versions -------------------------------------------------------
 
     async def claim_domain(
-        self, session_id: str, domain: DomainId, version: str
+        self, session_id: str, domain_id: DomainId, version: str
     ) -> str:
         def claim(document: dict[str, Any]) -> DocumentUpdate[str]:
             session = document.setdefault(_SESSIONS_KEY, {}).setdefault(session_id, {})
             versions = session.setdefault(_DOMAIN_VERSIONS_KEY, {})
-            recorded = versions.get(domain.value)
+            recorded = versions.get(domain_id.value)
             if recorded is not None:
                 # Rewriting a whole store to report an unchanged version would
                 # re-serialize and fsync every session in it.
                 return DocumentUpdate.unchanged(recorded)
 
-            versions[domain.value] = version
+            versions[domain_id.value] = version
             return DocumentUpdate(version)
 
         return await self.update_document(claim)

@@ -1,36 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
 
 from .._execution import Execution
-from .._identity import DomainId, ExecutionId
+from .._types import DomainId, DomainVersionMap, ExecutionId
 from ..exceptions import MigrationCollisionError, MigrationError
-
-
-def _read_only(versions: Mapping[DomainId, str]) -> Mapping[DomainId, str]:
-    # A version no `Domain` could ever declare is one nothing would match again,
-    # and migration is the only way into this mapping that does not go through
-    # one.
-    empty = sorted(domain.value for domain, version in versions.items() if not version)
-    if empty:
-        raise MigrationError(
-            f"Domains {', '.join(empty)} carry an empty version. A domain "
-            "version cannot be empty."
-        )
-    return MappingProxyType(dict(versions))
 
 
 @dataclass(frozen=True)
 class SessionMetadata:
     """What a store records about a session itself, not about its executions."""
 
-    domain_versions: Mapping[DomainId, str]
-
-    def __post_init__(self) -> None:
-        # Copied: ``frozen`` protects the attribute, not the mapping behind it.
-        object.__setattr__(self, "domain_versions", _read_only(self.domain_versions))
+    domain_versions: DomainVersionMap
 
 
 @dataclass(frozen=True)
@@ -59,11 +40,11 @@ class StoredSession:
         # its version would leave records nothing has agreed a generation for.
         recorded = set(self.metadata.domain_versions)
         missing = sorted(
-            domain.value
-            for domain in {
-                domain
+            domain_id.value
+            for domain_id in {
+                domain_id
                 for execution in self.executions
-                for domain in _domains_in(execution.id)
+                for domain_id in _domains_in(execution.id)
             }
             - recorded
         )
@@ -80,7 +61,7 @@ def _domains_in(execution_id: ExecutionId) -> set[DomainId]:
     domains = set()
     current: ExecutionId | None = execution_id
     while current is not None:
-        domains.add(current.domain)
+        domains.add(current.domain_id)
         current = current.parent_id
     return domains
 
@@ -89,21 +70,15 @@ def _domains_in(execution_id: ExecutionId) -> set[DomainId]:
 class MigrationReport:
     """The versions recorded before and after a migration."""
 
-    from_domain_versions: Mapping[DomainId, str]
-    to_domain_versions: Mapping[DomainId, str]
+    source_domain_versions: DomainVersionMap
+    target_domain_versions: DomainVersionMap
 
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "from_domain_versions", _read_only(self.from_domain_versions)
+    @classmethod
+    def between(
+        cls, source: StoredSession, replacement: StoredSession
+    ) -> MigrationReport:
+        """What a store read and what it stored, which is all a report is."""
+        return cls(
+            source_domain_versions=source.metadata.domain_versions,
+            target_domain_versions=replacement.metadata.domain_versions,
         )
-        object.__setattr__(
-            self, "to_domain_versions", _read_only(self.to_domain_versions)
-        )
-
-
-@dataclass(frozen=True)
-class SessionMigrationResult:
-    """The session to store in place of the migrated one, and its report."""
-
-    session: StoredSession
-    report: MigrationReport

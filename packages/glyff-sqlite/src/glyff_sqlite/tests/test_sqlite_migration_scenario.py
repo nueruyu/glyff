@@ -1,0 +1,164 @@
+"""A paused session carried across a change of code, end to end.
+
+The migrator computes keys; a resuming session computes them again from the
+live call. Only a store this durable can hold the session in between, so the
+two halves are proved against each other here rather than in glyff's own tests.
+"""
+
+from pathlib import Path
+
+import pytest
+from glyff import (
+    ArgumentCanonicalizer,
+    Domain,
+    DomainId,
+    DomainVersion,
+    DomainVersionMap,
+    Serializer,
+    SessionId,
+)
+from glyff.exceptions import DomainVersionMismatchError
+from glyff.migration import DomainMigration, ExecutionShape
+from glyff.testing import make_session
+from glyff_sqlite import SQLiteBackend
+
+PAY = DomainId("com.example.payments")
+V1 = Domain(PAY, version=DomainVersion("1"))
+V2 = Domain(PAY, version=DomainVersion("2"))
+
+CALLS: list[str] = []
+PAUSE = {"at_finish": True}
+
+
+class Paused(Exception):
+    pass
+
+
+# -- The generation that recorded the session --------------------------------
+
+
+@V1.engrave
+async def authorize(order: str) -> str:
+    CALLS.append("authorize")
+    return f"auth:{order}"
+
+
+@V1.engrave
+async def capture(order: str) -> str:
+    CALLS.append("capture")
+    return f"cap:{order}"
+
+
+@V1.engrave
+async def finish(order: str) -> str:
+    CALLS.append("finish")
+    if PAUSE["at_finish"]:
+        raise Paused()
+    return f"done:{order}"
+
+
+@V1.engrave
+async def checkout_v1(order: str) -> str:
+    return f"{await authorize(order)}/{await capture(order)}/{await finish(order)}"
+
+
+# -- The generation that resumes it ------------------------------------------
+
+
+@V2.engrave
+async def charge(order: str) -> str:
+    CALLS.append("charge")
+    return f"auth:{order}"
+
+
+@V2.engrave
+async def capture_cents(order: str, cents: int) -> str:
+    CALLS.append("capture_cents")
+    return f"cap:{order}"
+
+
+@V2.engrave
+async def complete(order: str) -> str:
+    CALLS.append("complete")
+    return f"done:{order}"
+
+
+@V2.engrave
+async def checkout_v2(order: str) -> str:
+    return (
+        f"{await charge(order)}/"
+        f"{await capture_cents(order, 1200)}/"
+        f"{await complete(order)}"
+    )
+
+
+def _migration(canonicalizer: ArgumentCanonicalizer) -> DomainMigration:
+    migration = DomainMigration(V2, canonicalizer=canonicalizer)
+    transition = migration.transition("1", "2")
+    transition.remap(
+        ExecutionShape("checkout_v1", "order"),
+        ExecutionShape("checkout_v2", "order"),
+    )
+    transition.remap(
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
+    )
+    transition.remap(
+        ExecutionShape("capture", "order"),
+        ExecutionShape("capture_cents", "order", "cents"),
+        convert_arguments=lambda order: {"order": order, "cents": 1200},
+    )
+    transition.remap(
+        ExecutionShape("finish", "order"),
+        ExecutionShape("complete", "order"),
+    )
+    return migration
+
+
+@pytest.fixture(autouse=True)
+def _recorded():
+    CALLS.clear()
+    PAUSE["at_finish"] = True
+    yield
+    CALLS.clear()
+    PAUSE["at_finish"] = True
+
+
+async def test_a_migrated_session_resumes_on_the_next_generation(
+    tmp_path: Path,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    serializer: Serializer,
+):
+    database = tmp_path / "payments.sqlite3"
+    session = SessionId("order-42")
+
+    async with make_session(
+        session, SQLiteBackend(database), argument_canonicalizer, serializer
+    ) as _:
+        with pytest.raises(Paused):
+            await checkout_v1("ord_1")
+    assert CALLS == ["authorize", "capture", "finish"]
+
+    CALLS.clear()
+    with pytest.raises(DomainVersionMismatchError):
+        async with make_session(
+            session, SQLiteBackend(database), argument_canonicalizer, serializer
+        ):
+            await checkout_v2("ord_1")
+    assert CALLS == []
+
+    backend = SQLiteBackend(database)
+    report = await backend.session_migration.run(
+        session, _migration(argument_canonicalizer)
+    )
+    assert report.source_domain_versions == DomainVersionMap({PAY: "1"})
+    assert report.target_domain_versions == DomainVersionMap({PAY: "2"})
+
+    CALLS.clear()
+    PAUSE["at_finish"] = False
+    async with make_session(
+        session, SQLiteBackend(database), argument_canonicalizer, serializer
+    ):
+        assert await checkout_v2("ord_1") == "auth:ord_1/cap:ord_1/done:ord_1"
+
+    assert CALLS == ["complete"]

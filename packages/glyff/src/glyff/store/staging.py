@@ -19,14 +19,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 
+from .._canonical_arguments import CanonicalArguments
 from .._execution import (
-    CanonicalArguments,
     Execution,
     ExecutionStatus,
     Metadata,
     SerializedValue,
 )
-from .._identity import ExecutionId, SessionId
+from .._types import ExecutionId, SessionId
 
 __all__ = [
     "DeleteExecution",
@@ -78,7 +78,7 @@ class ExecutionSnapshot:
         return Execution(
             id=self.id,
             status=self.status,
-            arguments=CanonicalArguments(self.arguments),
+            arguments=CanonicalArguments.from_recorded_bytes(self.arguments),
             result=SerializedValue(self.result) if self.result is not None else None,
             metadata={
                 name: Metadata(key=name, value=SerializedValue(value))

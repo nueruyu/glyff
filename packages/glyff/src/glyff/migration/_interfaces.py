@@ -3,16 +3,16 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from .._interfaces import Backend
-from .._identity import SessionId
-from ._models import MigrationReport, SessionMigrationResult, StoredSession
+from .._types import SessionId
+from ._models import MigrationReport, StoredSession
 
 
 class SessionMigrator(ABC):
     """Computes the replacement state for one stored session."""
 
     @abstractmethod
-    def migrate(self, source: StoredSession) -> SessionMigrationResult:
-        """Returns a replacement without performing I/O.
+    def migrate(self, source: StoredSession) -> StoredSession:
+        """Returns the session to store in place of ``source``, without I/O.
 
         ``source.executions`` comes in ancestor-first order, so a parent can be
         remapped before whatever names it. A backend holds the session for the
@@ -31,8 +31,11 @@ class SessionMigration(ABC):
     ) -> MigrationReport:
         """Runs the migrator under exclusive storage access and stores its result.
 
+        The report is derived from the two sessions, so it cannot disagree with
+        what was stored.
+
         The caller must ensure the session is offline: exclusion lasts only for
-        this call, and nothing stops a worker on the previous application
+        this call, and nothing stops a worker on the previous domain
         version from writing to the session once it returns.
 
         Anything the migrator raises propagates with the session unchanged.
@@ -41,7 +44,7 @@ class SessionMigration(ABC):
 
 
 class MigratableBackend(Backend):
-    """A backend that can migrate a session between application versions."""
+    """A backend that can migrate a session between domain versions."""
 
     @property
     @abstractmethod

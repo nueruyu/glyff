@@ -13,7 +13,9 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
-from ..serialization._utils import encode_canonical
+from .._canonical_arguments import CanonicalArguments
+from .._types import CanonicalFallback
+from ..exceptions import ArgumentCanonicalizationError
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]
 
@@ -38,15 +40,11 @@ class ArgumentCanonicalizerContract:
     def test_a_canonical_form_encodes_into_a_key(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        form = canonicalizer.canonicalize({"a": 1, "b": "two", "c": None})
-
-        assert encode_canonical(form)
+        assert canonicalizer.canonicalize({"a": 1, "b": "two", "c": None}).data
 
     def test_the_bound_name_is_part_of_the_form(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        # One value, two names: a canonicalizer carrying only the values would
-        # key `f(a=1)` and `f(b=1)` the same way.
         assert canonicalizer.canonicalize({"a": 1}) != canonicalizer.canonicalize(
             {"b": 1}
         )
@@ -75,16 +73,34 @@ class ArgumentCanonicalizerContract:
     def test_no_arguments_still_encodes_into_a_key(
         self, canonicalizer: ArgumentCanonicalizer
     ):
-        form = canonicalizer.canonicalize({})
+        assert canonicalizer.canonicalize({}).data
 
-        assert encode_canonical(form)
+    def test_a_canonical_form_canonicalizes_to_itself(
+        self, canonicalizer: ArgumentCanonicalizer
+    ):
+        canonical = canonicalizer.canonicalize(
+            {"a": 1, "b": ["x", None], "c": {"d": True}, "e": "text"}
+        )
+        assert canonicalizer.canonicalize(canonical.decode()) == canonical
+
+    def test_a_fallback_value_canonicalizes_to_the_marker(
+        self, canonicalizer: ArgumentCanonicalizer
+    ):
+        assert canonicalizer.canonicalize(
+            {"a": CanonicalFallback("com.example.Service")}
+        ) == CanonicalArguments({"a": CanonicalFallback("com.example.Service")})
+
+    def test_a_value_claiming_the_marker_is_refused(
+        self, canonicalizer: ArgumentCanonicalizer
+    ):
+        with pytest.raises(ArgumentCanonicalizationError):
+            canonicalizer.canonicalize(
+                {"a": {"__glyff_fallback__": "com.example.Service"}}
+            )
 
     def test_a_later_instance_agrees_on_the_form(
         self, canonicalizer_factory: CanonicalizerFactory
     ):
-        # The form is the execution's key, and a session that resumes a paused
-        # run is handed a canonicalizer it built itself. A form that depended on
-        # the instance would miss every record the run before it wrote.
         arguments = {"a": 1, "b": "two"}
 
         assert canonicalizer_factory().canonicalize(arguments) == (

@@ -1,36 +1,13 @@
-"""The aggregate a recorded execution is, and the values it holds."""
+"""The aggregate representing a recorded execution."""
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TypeAlias
 
-from ._identity import ArgumentsDigest, ExecutionId
+from ._canonical_arguments import CanonicalArguments
+from ._types import ExecutionId
 from .exceptions import InvalidExecutionError
-
-# A value in the JSON data model. Canonicalizing a call's arguments produces one of
-# these, and a migration's argument conversion both receives and returns one.
-CanonicalValue: TypeAlias = (
-    "str | int | float | bool | None | list[CanonicalValue] | dict[str, CanonicalValue]"
-)
-
-
-@dataclass(frozen=True)
-class CanonicalArguments:
-    """Canonical argument bytes, the preimage of an execution's key.
-
-    Not a :class:`SerializedValue`: that carries application values through a
-    ``Serializer``, and only these derive an ``arguments_digest``. Stores must round-trip
-    them untouched — re-encoding would change the key.
-    """
-
-    data: bytes
-
-    @property
-    def digest(self) -> ArgumentsDigest:
-        return ArgumentsDigest(hashlib.sha256(self.data).hexdigest())
 
 
 class ExecutionStatus(Enum):

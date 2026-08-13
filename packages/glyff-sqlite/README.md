@@ -63,7 +63,7 @@ The underlying `SQLiteClient` is internal and not part of the public API.
 - Writes are staged in-memory per transaction and flushed on commit.
 - Nested transactions (child scopes) commit independently of their parent.
 - `BEGIN IMMEDIATE` prevents writer contention; WAL mode keeps reads fast. A
-  session's application version is claimed inside one, so workers racing to
+  session's version for a domain is claimed inside one, so workers racing to
   resume the same session agree on a single winner.
 - A per-database asyncio write lock serialises concurrent write transactions.
 

@@ -7,7 +7,7 @@ from ._interfaces import (
     Serializer,
     TransactionProvider,
 )
-from ._identity import SessionId
+from ._types import SessionId
 from ._sequencer import Sequencer
 
 

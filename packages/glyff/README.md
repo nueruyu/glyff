@@ -38,15 +38,24 @@ pip install glyff
 | `Execution`           | Aggregate Root for a recorded function execution.               |
 | `ExecutionStatus`     | Enum: `STARTED`, `COMPLETED`.                                   |
 | `SerializedValue`     | Serializer-neutral persisted value (results, metadata).         |
-| `CanonicalArguments`    | A call's canonical arguments, the preimage of its key.          |
+| `CanonicalArguments`     | A call's encoded canonical arguments, the preimage of its key. |
+| `CanonicalArgumentValue` | A logical canonical value, including a fallback.              |
+| `CanonicalFallback`      | A fallback representation in a canonical argument.            |
 | `Metadata`            | Metadata entry owned by an `Execution`.                         |
 | `ExecutionRepository` | Repository for execution aggregates.                            |
 | `Transaction`         | Active transaction boundary.                                    |
 | `TransactionProvider` | Provider used by `TransactionScope`.                            |
 | `Serializer`          | Protocol for value serialization.                               |
 | `ArgumentCanonicalizer`   | Contract for normalizing bound call arguments into a canonical form. |
-| `CanonicalValue`      | The JSON data model value a canonicalizer returns.              |
+| `CanonicalValue`      | A value in the JSON data model.                                 |
 | `SessionId`           | The name a session's records are stored under.                  |
+
+`glyff.migration` carries the offline half: `MigratableBackend` and
+`SessionMigration` for a store that can replace a session atomically,
+`SessionMigrator` for what a session should become, and `DomainMigration` —
+declared as the `ExecutionShape` pairs that changed shape — as the one glyff
+ships.
+See [migration](https://github.com/nueruyu/glyff/blob/main/docs/migration.md).
 
 Every engraved function belongs to a domain, which owns and versions its
 records:

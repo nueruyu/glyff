@@ -1,6 +1,10 @@
 import pytest
 
-from glyff import Execution, ExecutionStatus, SerializedValue
+from glyff import (
+    Execution,
+    ExecutionStatus,
+    SerializedValue,
+)
 from glyff.exceptions import InvalidExecutionError
 from glyff.testing import canonical_arguments, make_execution_id
 

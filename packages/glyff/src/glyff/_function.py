@@ -11,7 +11,7 @@ import inspect
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from ._identity import ExecutionName
+from ._types import ExecutionName
 from .exceptions import MissingTypeHintError, TypeHintResolutionError
 
 

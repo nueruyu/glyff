@@ -10,7 +10,7 @@ from .._interfaces import (
     TransactionProvider,
 )
 from .._execution import Execution, ExecutionStatus
-from .._identity import DomainId, ExecutionId, SessionId
+from .._types import DomainId, DomainVersion, ExecutionId, SessionId
 from ._memory_client import MemoryClient
 from .staging import (
     ExecutionKey,
@@ -143,7 +143,7 @@ class MemoryBackend(Backend):
         staging = ExecutionStaging()
         self._repository = MemoryExecutionRepository(client, staging)
         self._transaction_provider = MemoryTransactionProvider(client, staging)
-        self._domain_versions: dict[tuple[str, str], str] = {}
+        self._domain_versions: dict[tuple[str, str], DomainVersion] = {}
         self._claim_lock = asyncio.Lock()
 
     @property
@@ -155,11 +155,14 @@ class MemoryBackend(Backend):
         return self._transaction_provider
 
     async def claim_domain(
-        self, session_id: SessionId, domain: DomainId, version: str
-    ) -> str:
+        self,
+        session_id: SessionId,
+        domain_id: DomainId,
+        version: DomainVersion,
+    ) -> DomainVersion:
         # Nothing here outlives the process, so the claim only has to hold for
         # as long as the records do.
         async with self._claim_lock:
             return self._domain_versions.setdefault(
-                (session_id.value, domain.value), version
+                (session_id.value, domain_id.value), version
             )

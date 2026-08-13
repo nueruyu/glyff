@@ -7,16 +7,16 @@ boundaries.
 
 ## What the key is made of
 
-An `ExecutionId` (`_identity.py`) has five components, each a value object rather
+An `ExecutionId` (`_types/execution.py`) has five components, each a value object rather
 than a bare string:
 
 | Component | Where it comes from |
 | --- | --- |
 | `parent_id` | The nearest engraved ancestor on the call stack, forming a chain up to the session root. |
-| `domain` | The `DomainId` of the [domain](#domains) whose `engrave` decorated the function. |
+| `domain_id` | The `DomainId` of the [domain](#domains) whose `engrave` decorated the function. |
 | `name` | An `ExecutionName`, derived from the engraved function's `__qualname__` ([explicit names are planned](#explicit-names-and-versions)). |
 | `arguments_digest` | An `ArgumentsDigest` over the canonical form of the bound arguments, produced by the session's `ArgumentCanonicalizer`. |
-| `sequence` | An ordinal from an independent counter per `(parent_id, domain, name, arguments_digest)` (`_sequencer.py`). |
+| `sequence` | An ordinal from an independent counter per `(parent_id, domain_id, name, arguments_digest)` (`_sequencer.py`). |
 
 Keys are **content-addressed, not positional**: the sequence counter is scoped to
 the exact `(parent, domain, name, args)` identity, not to a session-wide step
@@ -27,7 +27,7 @@ held to a reverse-DNS shape: lowercase ASCII segments of letters, digits,
 underscores and hyphens, joined by dots. `ExecutionName` is deliberately
 permissive — an inferred name is a `__qualname__` and looks like
 `Outer.<locals>.task`, and a migration has to hold whatever an older version
-wrote. `ArgumentsDigest` is opaque: nothing in glyff reads it. `sequence` is a
+wrote. `ArgumentsDigest` is uninterpreted: nothing in glyff reads it. `sequence` is a
 non-negative `int`, which is what keeps the [path codec](#how-a-key-is-stored)
 closed: every identity that can be constructed has a path that reads back as the
 same identity.
@@ -103,7 +103,7 @@ mismatches silently.
 
 Today a name is derived from the function's `__qualname__` (`_function.py`), so
 renaming an engraved function invalidates the history of paused sessions. And
-`ExecutionId.__str__` is a debug representation (`_identity.py`) — not a key, and
+`ExecutionId.__str__` is a debug representation (`_types/execution.py`) — not a key, and
 not to be persisted.
 
 > **Planned** — [#40](https://github.com/nueruyu/glyff/issues/40), covering
@@ -129,10 +129,10 @@ not to be persisted.
 Identity runs through a **canonical form**, not directly through a hash. A call
 is bound to a name-to-value mapping first (`_function.py`, the one place that
 reads Python's reflection API), and the session's `ArgumentCanonicalizer`
-normalizes that mapping into the JSON data model — it never sees the callable or
-its signature. glyff encodes the result once, and those bytes are both digested into
-`arguments_digest` and recorded on the execution. So for every recorded
-execution:
+normalizes that mapping into `CanonicalArguments` — it never sees the callable
+or its signature. Constructing `CanonicalArguments` encodes the logical values
+once, and those bytes are both digested into `arguments_digest` and recorded on
+the execution. So for every recorded execution:
 
 ```
 id.arguments_digest == execution.arguments.digest
@@ -145,6 +145,15 @@ key's preimage.
 verbatim — anything that re-encoded them would break the key. It is what lets a
 [migration](./migration.md#in-flight-sessions-across-code-changes) rewrite an
 argument and recompute the key from the record alone.
+Backends restore that preimage through
+`CanonicalArguments.from_recorded_bytes()`, which validates the recorded form
+and its exact canonical spelling without replacing the recorded bytes.
+
+A recorded canonical form reads back as logical `CanonicalArgumentValue`s,
+including `CanonicalFallback` values for fallback markers. Canonicalizing those
+values again produces the same `CanonicalArguments`; a plain mapping claiming
+the marker's key is refused. That lets a migration hand an argument back
+untouched and preserve its key.
 
 Canonicalizing is **not** serializing. It is one-way and deliberately lossy,
 keeping only what identity depends on:
@@ -161,24 +170,35 @@ keeping only what identity depends on:
 
 A value with no value representation raises rather than being approximated.
 
-For values that are deliberately opaque — a service object passed as `self`, a
-client handle — glyff owns the canonicalization contract, not the taxonomy of
-what counts as opaque in your application.
-`JsonArgumentCanonicalizer(opaque_policy=...)` takes an `OpaquePolicy`, and
-`glyff.serialization` ships two:
+When the standard rules cannot derive a canonical representation — for example,
+for a service object passed as `self` or a client handle —
+`JsonArgumentCanonicalizer(fallback_representer=...)` takes a
+`CanonicalFallbackRepresenter`. `glyff.serialization` ships one:
 
 | Policy | Behavior |
 | --- | --- |
-| `RejectOpaque` (default) | Rejects the value with `ArgumentCanonicalizationError`, so distinct instances never silently collide. |
-| `OpaqueByTypeQualname` (opt-in) | Identifies the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when the value carries no identity that should distinguish calls — a stateless client handle, not a per-user session. |
+| `FallbackByTypeQualname` | Represents the value by its class' qualified name, collapsing every instance of a class to one representation. Correct only when instance state should not distinguish calls — a stateless client handle, not a per-user session. |
 
-Policy return values are namespaced, so a policy that returns `"pkg.Cls"` cannot
-collide with a plain string argument of the same text. The same classification governs what is *stored*, not just what
-is hashed — an opaque value the policy rejects never reaches the store.
+Fallback representations are tagged, so a representer returning `"pkg.Cls"` cannot
+collide with a plain string argument of the same text. The key that namespaces
+them is glyff's: a value canonicalizing to it — a mapping using it, a dataclass
+field named it — is refused rather than allowed to share a fallback's key.
+`CanonicalFallback` is that marker as a value: canonicalizing one writes the
+marker, so a recorded argument can go back through a canonicalizer unchanged.
+Passing one to a live call declares the representation outright, and no
+representer is consulted. Without a fallback representer, unsupported values
+raise `ArgumentCanonicalizationError` and never reach the store.
+
+> **Compatibility.** The key was not reserved before this landed, so a store
+> written by an earlier build may hold a mapping shaped like the marker, which is
+> now read back as a `CanonicalFallback`. Nothing distinguishes the two, so check
+> paused sessions for an argument mapping whose only key is `__glyff_fallback__`
+> before upgrading.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard
 > composable policies (marker attribute, type list, predicate). Today anything
-> beyond `OpaqueByTypeQualname` means implementing `OpaquePolicy` yourself.
+> beyond `FallbackByTypeQualname` means implementing
+> `CanonicalFallbackRepresenter` yourself.
 
 ## Choosing engrave boundaries
 

@@ -15,7 +15,7 @@ import pytest
 from .._domain import Domain
 from .._event_system import EventEmitter, EventHandler
 from .._execution import Execution
-from .._identity import SessionId
+from .._types import SessionId
 from .._interfaces import ArgumentCanonicalizer, Backend, Serializer
 from .._session import Session
 from ..events import ExecutionCompleted

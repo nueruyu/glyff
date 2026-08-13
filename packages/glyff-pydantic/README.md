@@ -25,7 +25,7 @@ This package depends on `glyff>=0.14.0` and `pydantic>=2.0`.
 canonicalizer's reach is narrower by design: it dumps `BaseModel` instances and
 represents the scalars pydantic knows (`datetime`, `UUID`, `Decimal`), while
 every container is walked by glyff's shared canonicalization so mappings, sets
-and opaque values follow one set of rules.
+and fallback representations follow one set of rules.
 
 Both satisfy the contracts in `glyff.testing`; what they inherit from the stdlib
 JSON implementations is proved in `glyff`, and this package's own tests cover

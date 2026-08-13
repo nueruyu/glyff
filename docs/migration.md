@@ -38,7 +38,8 @@ later; sequential migrations between glyff versions are glyff's responsibility
 and are possible because the stamp exists.
 
 > **Planned** — a migration runner. The stamp refuses unknown versions, but
-> nothing yet converts a store from one format version to the next.
+> nothing yet converts a store from one format version to the next
+> ([#41](https://github.com/nueruyu/glyff/issues/41)).
 
 ### User payload
 
@@ -60,7 +61,7 @@ on top.
   | the same version | the call proceeds |
   | a different version | `DomainVersionMismatchError`, with nothing changed |
 
-  The version is opaque to glyff: what counts as a new generation is the
+  Glyff leaves the version uninterpreted: what counts as a new generation is the
   domain owner's to decide. The error carries `domain_id`, `recorded_version`
   and `current_version`, so a caller can route the session to migration without
   reading the message.
@@ -101,14 +102,102 @@ What makes such a script possible is that every execution records the
 [canonical form of its arguments](./execution-identity.md#canonical-arguments),
 byte-for-byte the preimage of its `arguments_digest`. Remapping an argument is
 therefore a transformation of recorded JSON, with no dead Python types to keep
-alive and no dependence on the canonicalizer that wrote the record.
+alive. What canonicalized the record is not needed to read it back; a migration
+is handed the canonicalizer the *resuming* session will use, so the keys it
+writes are the keys that session goes looking for.
 
-> **Planned** — the `SessionMigrator` implementation, including migration
-> chains, identity remapping, sequence compaction, and how a library publishes a
-> migration for its own domain
-> ([#39](https://github.com/nueruyu/glyff/issues/39)). Until then, reproducing
-> glyff's canonical encoding yourself is not a supported surface, so pin paused
-> sessions to the code that started them.
+### Writing one
+
+`DomainMigration` collects the version transitions for one domain. Each
+transition declares the boundaries that changed shape — what each one was, what
+it became, and the conversion between their arguments:
+
+```python
+from glyff import Domain, SessionId
+from glyff.migration import DomainMigration, ExecutionShape
+
+migration = DomainMigration(
+    Domain("com.example.payments", version="3"),
+    canonicalizer=canonicalizer,
+)
+migration.transition("1", "2").remap(
+    ExecutionShape("authorize", "order", "units"),
+    ExecutionShape("charge", "order_id", "cents"),
+    convert_arguments=lambda order, units: {
+        "order_id": order["id"],
+        "cents": units * 100,
+    },
+)
+migration.transition("2", "3")  # No execution identity changed in this transition.
+
+report = await backend.session_migration.run(SessionId("order-42"), migration)
+```
+
+An `ExecutionShape` is the name records carry and the names of the arguments a
+call is bound to — no Python signature, domain, or version. The enclosing
+`DomainMigration` supplies the domain. A shape is spelled out rather than read
+off the function it names, because taking it from a live signature would let a
+later, unrelated change there silently reshape records the migration claims to
+know.
+
+Every side is then checked against what is actually there:
+
+- `transition(source, target)` registers one direct version transition. Starting
+  at the version the session records, glyff follows registered transitions until
+  it reaches the `Domain`'s current version. A missing transition, a cycle, or
+  two transitions leaving the same version is refused. Other domains and their
+  versions are untouched.
+- Records whose argument names are not the ones declared are refused, and so is
+  a conversion that returns the wrong names. Dropping is held to the same check,
+  since it is the destructive one.
+
+An `ExecutionShape`'s `argument_names` are every name a call carries, defaults
+included, so a boundary that gained a default has the migration write it out.
+
+`convert_arguments` receives the recorded arguments by their old names and
+returns the ones the new shape is keyed by. Leave it out when the names did not
+change and the recorded form is kept as it is. It runs once per class of
+[identical repeated calls](./execution-identity.md#identical-repeated-calls),
+which are recorded with the same arguments by definition. `drop` removes a
+boundary's records, and everything recorded beneath them, since a descendant
+outlives its parent only as weight no resume can reach.
+
+A remap rebuilds every descendant's chain onto its remapped ancestor.
+**Ordinals it leaves alone**: one orders a call among the identical calls the
+resumed code will make, and a migration knows nothing about how many of those
+there are.
+
+**Values handled by a fallback representer** arrive wrapped in
+`CanonicalFallback`, carrying whatever the
+[`CanonicalFallbackRepresenter`](./execution-identity.md#canonical-arguments)
+put in the key — wherever they sit. Return one
+unchanged and the argument keys the call exactly as it did; there is nothing to
+rebuild, because there was nothing to record.
+
+A conversion computes with the recorded canonical form, never the values that
+produced it — see [canonical arguments](./execution-identity.md#canonical-arguments)
+for what that form keeps and what it drops.
+
+#### What changing the order does
+
+| What changed | What a migration owes it |
+| --- | --- |
+| The order of a boundary's arguments | Nothing. A key is a mapping of names, and its encoding sorts them. |
+| The order of distinct calls | Nothing. Keys are content-addressed, not positional. |
+| The count or relative order of [identical repeated calls](./execution-identity.md#identical-repeated-calls) | This is the one glyff cannot carry. |
+
+Repeated calls that share parent, name and arguments are matched by ordinal, and
+nothing records which of them ran first. So a migration that gathers calls
+recorded separately into one such class — two boundaries renamed onto one, or a
+conversion that maps distinct arguments onto one value — is refused with
+`MigrationOrdinalAmbiguityError` rather than given an order glyff invented. Give
+those calls arguments that tell them apart, or drop one.
+
+All required transitions run in memory before the backend replaces the session,
+so an intermediate domain version is never stored on its own.
+Every step uses the canonicalizer supplied to `DomainMigration`, which is the
+one the resumed session will use. Canonicalization semantics must therefore stay
+stable across all domain versions in one registered transition chain.
 
 ## Running without migration
 

@@ -2,7 +2,7 @@
 
 `glyff.testing` publishes these contracts, so anything they require becomes a
 requirement on every third-party implementation. The two below implement their
-ABC and nothing else — no opaque-value policy, no sorted output — so a contract
+ABC and nothing else — no fallback representer, no sorted output — so a contract
 that grew past its interface fails here rather than in someone else's suite.
 """
 
@@ -10,13 +10,30 @@ import json
 from typing import Any
 
 import pytest
-from glyff import ArgumentCanonicalizer, CanonicalValue, Serializer
+from glyff import (
+    ArgumentCanonicalizer,
+    CanonicalArguments,
+    CanonicalFallback,
+    Serializer,
+)
 from glyff.testing import ArgumentCanonicalizerContract, SerializerContract
 
 
 class BareCanonicalizer(ArgumentCanonicalizer):
-    def canonicalize(self, arguments) -> CanonicalValue:
-        return dict(arguments)
+    def canonicalize(self, arguments) -> CanonicalArguments:
+        return CanonicalArguments(
+            {name: _plain(value) for name, value in arguments.items()}
+        )
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, CanonicalFallback):
+        return value
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    return value
 
 
 class BareSerializer(Serializer):

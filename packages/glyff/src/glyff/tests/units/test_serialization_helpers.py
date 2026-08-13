@@ -1,22 +1,36 @@
 import dataclasses
 import functools
-import hashlib
 
 import pytest
 
-from glyff import ArgumentsDigest, CanonicalArguments, CanonicalValue
+from glyff import (
+    CanonicalArguments,
+    CanonicalArgumentValue,
+    CanonicalFallback,
+)
 from glyff.exceptions import ArgumentCanonicalizationError
-from glyff.serialization import OpaqueByTypeQualname
-from glyff.serialization._utils import (
+from glyff.serialization import (
+    CanonicalFallbackRepresenter,
+    FallbackByTypeQualname,
+)
+from glyff.serialization._canonicalization import (
     _canonicalize_set,
-    encode_canonical,
-    stable_json_dumps,
     to_canonical,
 )
+from glyff.serialization._fallback import fallback_representer_or_reject
+from glyff.serialization._utils import stable_json_dumps
 
 
-def canonical(obj: object, **kwargs) -> CanonicalValue:
-    return to_canonical(obj, **kwargs)
+@dataclasses.dataclass
+class _TagField:
+    __glyff_fallback__: str
+
+
+def canonical(
+    obj: object,
+    fallback_representer: CanonicalFallbackRepresenter | None = None,
+) -> CanonicalArgumentValue:
+    return to_canonical(obj, fallback_representer_or_reject(fallback_representer))
 
 
 def test_sorted_canonical_is_stable_for_partial_order_elements():
@@ -24,8 +38,10 @@ def test_sorted_canonical_is_stable_for_partial_order_elements():
     # incomparable elements in process-randomized input order. _canonicalize_set must
     # instead order them by their encoded form.
     values = {frozenset({"a", "b"}), frozenset({"c", "d"}), frozenset({"e"})}
-    ordered = _canonicalize_set(values, to_canonical)
-    assert ordered == sorted(ordered, key=encode_canonical)
+    ordered = _canonicalize_set(values, canonical)
+    assert ordered == sorted(
+        ordered, key=lambda value: CanonicalArguments({"value": value}).data
+    )
 
 
 def test_stable_json_dumps_defaults_to_compact_readable_json():
@@ -102,8 +118,10 @@ def test_canonical_decomposes_partials():
 
 def test_canonical_coerces_non_string_mapping_keys():
     # Coerced here, not by the encoder, so a JSON round trip reproduces the bytes.
-    assert canonical({2: "a", 10: "b"}) == {"2": "a", "10": "b"}
-    assert encode_canonical(canonical({2: "a", 10: "b"})) == b'{"10":"b","2":"a"}'
+    arguments = canonical({2: "a", 10: "b"})
+    assert arguments == {"2": "a", "10": "b"}
+    assert isinstance(arguments, dict)
+    assert CanonicalArguments(arguments).data == b'{"10":"b","2":"a"}'
 
 
 def test_canonical_rejects_keys_that_collide_once_stringified():
@@ -138,45 +156,60 @@ def test_canonical_rejects_unrepresentable_mapping_keys():
         canonical({(1, 2): "a"})
 
 
-def test_canonical_rejects_opaque_values_by_default():
+def test_canonical_rejects_values_without_a_representation_by_default():
     class Service:
         pass
 
-    with pytest.raises(ArgumentCanonicalizationError, match="no value representation"):
+    with pytest.raises(
+        ArgumentCanonicalizationError, match="no canonical representation"
+    ):
         canonical(Service())
 
 
-def test_canonical_tags_policy_output_so_it_cannot_collide():
+def test_canonical_tags_fallback_output_so_it_cannot_collide():
     class Service:
         pass
 
-    tagged = canonical(Service(), policy=OpaqueByTypeQualname())
-    assert tagged != canonical(f"{__name__}.test_canonical_tags_policy_output.Service")
-    assert list(tagged) == ["__glyff_opaque__"]  # type: ignore[arg-type]
+    tagged = canonical(Service(), fallback_representer=FallbackByTypeQualname())
+    assert tagged != canonical(f"{Service.__module__}.{Service.__qualname__}")
+    assert tagged == CanonicalFallback(f"{Service.__module__}.{Service.__qualname__}")
 
 
-def test_canonical_applies_the_policy_at_any_depth():
+@pytest.mark.parametrize("value", [{"__glyff_fallback__": "x"}, _TagField("x")])
+def test_canonical_refuses_a_value_that_claims_the_fallback_tag(value):
+    # The marker is how a value with no representation is written down. Anything
+    # else canonicalizing to it would share that value's key, whichever branch
+    # of the walk built the mapping — a native one or a dataclass's fields.
+    with pytest.raises(ArgumentCanonicalizationError, match="reserved"):
+        CanonicalArguments({"value": canonical(value)})
+
+
+def test_canonical_keeps_a_recorded_fallback_as_its_marker():
     class Service:
         pass
 
-    assert canonical({"a": [Service()]}, policy=OpaqueByTypeQualname()) == {
-        "a": [{"__glyff_opaque__": f"{__name__}.{Service.__qualname__}"}]
-    }
+    recorded = canonical(Service(), fallback_representer=FallbackByTypeQualname())
+
+    assert (
+        canonical(CanonicalFallback(f"{__name__}.{Service.__qualname__}")) == recorded
+    )
 
 
-def test_encode_canonical_sorts_keys_and_stays_compact():
-    assert encode_canonical({"b": 1, "a": [1, 2]}) == b'{"a":[1,2],"b":1}'
+def test_canonical_applies_the_fallback_at_any_depth():
+    class Service:
+        pass
+
+    assert canonical(
+        {"a": [Service()]}, fallback_representer=FallbackByTypeQualname()
+    ) == {"a": [CanonicalFallback(f"{__name__}.{Service.__qualname__}")]}
 
 
-def test_encode_canonical_rejects_values_outside_the_json_data_model():
+def test_a_fallback_representer_must_return_a_canonical_value():
+    class InvalidFallback(CanonicalFallbackRepresenter):
+        def represent(self, value) -> CanonicalArgumentValue:
+            return object()  # type: ignore[return-value]
+
     with pytest.raises(
         ArgumentCanonicalizationError, match="not in the JSON data model"
     ):
-        encode_canonical({"a": {1, 2}})  # type: ignore[dict-item]
-
-
-def test_encoded_arguments_digest_is_sha256_of_their_bytes():
-    data = encode_canonical({"a": 1})
-    assert CanonicalArguments(data).digest == ArgumentsDigest(
-        hashlib.sha256(data).hexdigest()
-    )
+        canonical(object(), fallback_representer=InvalidFallback())

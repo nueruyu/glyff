@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
-from glyff import DomainId, Execution, ExecutionId
+from glyff import DomainId, DomainVersion, DomainVersionMap, Execution, ExecutionId
 from glyff.exceptions import StoreFormatVersionError
 from glyff.serialization.constants import JSON_SEPARATORS
 from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
@@ -411,7 +411,7 @@ class SQLiteClient:
     # -- Domain versions -------------------------------------------------------
 
     async def claim_domain(
-        self, session_id: str, domain: DomainId, version: str
+        self, session_id: str, domain_id: DomainId, version: str
     ) -> str:
         """Records ``version`` for a pair that carries none; returns the winner."""
 
@@ -423,12 +423,12 @@ class SQLiteClient:
                 f'INSERT INTO "{self._session_domains_table_name}" '
                 "(session_id, domain_id, version) VALUES (?, ?, ?) "
                 "ON CONFLICT(session_id, domain_id) DO NOTHING",
-                (session_id, domain.value, version),
+                (session_id, domain_id.value, version),
             )
             row = connection.execute(
                 f'SELECT version FROM "{self._session_domains_table_name}" '
                 "WHERE session_id = ? AND domain_id = ?",
-                (session_id, domain.value),
+                (session_id, domain_id.value),
             ).fetchone()
             assert row is not None
             return row[0]
@@ -437,22 +437,24 @@ class SQLiteClient:
 
     def read_domain_versions(
         self, connection: sqlite3.Connection, session_id: str
-    ) -> dict[DomainId, str]:
+    ) -> DomainVersionMap:
         """Every domain version this session records, as one mapping."""
-        return {
-            DomainId(domain_id): version
-            for domain_id, version in connection.execute(
-                f'SELECT domain_id, version FROM "{self._session_domains_table_name}" '
-                "WHERE session_id = ?",
-                (session_id,),
-            )
-        }
+        return DomainVersionMap(
+            {
+                DomainId(domain_id): DomainVersion(version)
+                for domain_id, version in connection.execute(
+                    f'SELECT domain_id, version FROM "{self._session_domains_table_name}" '
+                    "WHERE session_id = ?",
+                    (session_id,),
+                )
+            }
+        )
 
     def replace_domain_versions(
         self,
         connection: sqlite3.Connection,
         session_id: str,
-        versions: Mapping[DomainId, str],
+        versions: DomainVersionMap,
     ) -> None:
         """Makes ``versions`` the whole of what this session records.
 
@@ -467,8 +469,8 @@ class SQLiteClient:
             f'INSERT INTO "{self._session_domains_table_name}" '
             "(session_id, domain_id, version) VALUES (?, ?, ?)",
             [
-                (session_id, domain.value, version)
-                for domain, version in versions.items()
+                (session_id, domain_id.value, version.value)
+                for domain_id, version in versions.items()
             ],
         )
 

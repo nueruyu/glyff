@@ -5,6 +5,7 @@ from pathlib import Path
 
 from glyff import (
     DomainId,
+    DomainVersion,
     Execution,
     ExecutionId,
     ExecutionRepository,
@@ -23,7 +24,7 @@ from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 from ._sqlite_client import SQLiteClient
 from ._sqlite_migration import SQLiteSessionMigration
-from ._transaction import _ClientTransaction
+from ._transaction import ClientTransaction
 
 
 class SQLiteExecutionRepository(ExecutionRepository):
@@ -129,7 +130,7 @@ class SQLiteTransactionProvider(TransactionProvider):
         self._staging = staging
 
     async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client, self._staging).begin()
+        return await ClientTransaction(self._client, self._staging).begin()
 
 
 class SQLiteBackend(MigratableBackend):
@@ -190,6 +191,11 @@ class SQLiteBackend(MigratableBackend):
         return self._session_migration
 
     async def claim_domain(
-        self, session_id: SessionId, domain: DomainId, version: str
-    ) -> str:
-        return await self._client.claim_domain(session_id.value, domain, version)
+        self,
+        session_id: SessionId,
+        domain_id: DomainId,
+        version: DomainVersion,
+    ) -> DomainVersion:
+        return DomainVersion(
+            await self._client.claim_domain(session_id.value, domain_id, version.value)
+        )

@@ -10,11 +10,16 @@ import threading
 from pathlib import Path
 
 import pytest
-from glyff import DomainId, Execution, SessionId, TransactionScope
+from glyff import (
+    DomainId,
+    DomainVersion,
+    DomainVersionMap,
+    Execution,
+    SessionId,
+    TransactionScope,
+)
 from glyff.migration import (
-    MigrationReport,
     SessionMetadata,
-    SessionMigrationResult,
     SessionMigrator,
     StoredSession,
 )
@@ -32,23 +37,16 @@ class ReplacingMigrator(SessionMigrator):
         self._executions = executions
         self._version = version
 
-    def migrate(self, source: StoredSession) -> SessionMigrationResult:
-        versions = {DOMAIN: self._version}
-        return SessionMigrationResult(
-            session=StoredSession(
-                metadata=SessionMetadata(domain_versions=versions),
-                executions=self._executions,
-            ),
-            report=MigrationReport(
-                from_domain_versions=source.metadata.domain_versions,
-                to_domain_versions=versions,
-            ),
+    def migrate(self, source: StoredSession) -> StoredSession:
+        return StoredSession(
+            metadata=SessionMetadata(DomainVersionMap({DOMAIN: self._version})),
+            executions=self._executions,
         )
 
 
 def started(name: str) -> Execution:
     return Execution.start(
-        make_execution_id(name, domain=DOMAIN), canonical_arguments()
+        make_execution_id(name, domain_id=DOMAIN), canonical_arguments()
     )
 
 
@@ -58,7 +56,7 @@ async def _save(backend: JsonFileBackend, execution: Execution) -> None:
 
 
 async def seed(backend: JsonFileBackend, *names: str) -> list[Execution]:
-    await backend.claim_domain(SESSION, DOMAIN, "v1")
+    await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
     seeded = []
     for name in names:
         execution = started(name)
@@ -92,7 +90,9 @@ async def test_a_failed_replacement_changes_neither_half(
     assert [e.id async for e in backend.repository.executions(SESSION)] == [
         e.id for e in seeded
     ]
-    assert await backend.claim_domain(SESSION, DOMAIN, "v-later") == "v1"
+    assert (
+        await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v-later"))
+    ).value == "v1"
 
 
 async def test_a_failed_replacement_strands_no_temporary(
@@ -130,7 +130,7 @@ async def test_a_cancelled_migration_does_not_hand_the_store_on_early(
     release = threading.Event()
 
     class SlowMigrator(ReplacingMigrator):
-        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+        def migrate(self, source: StoredSession) -> StoredSession:
             inside.set()
             release.wait(5)
             return super().migrate(source)
@@ -176,7 +176,7 @@ async def test_repeated_cancellation_still_does_not_hand_the_store_on_early(
     release = threading.Event()
 
     class SlowMigrator(ReplacingMigrator):
-        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+        def migrate(self, source: StoredSession) -> StoredSession:
             inside.set()
             release.wait(5)
             return super().migrate(source)
@@ -222,7 +222,7 @@ async def test_a_cancelled_migration_still_reports_a_worker_failure_as_cancelled
     monkeypatch.setattr(backend._client, "_replace_sync", refuse)
 
     class SlowMigrator(ReplacingMigrator):
-        def migrate(self, source: StoredSession) -> SessionMigrationResult:
+        def migrate(self, source: StoredSession) -> StoredSession:
             inside.set()
             release.wait(5)
             return super().migrate(source)

@@ -66,7 +66,7 @@ def test_an_explicit_name_outside_the_grammar_is_refused(value: str):
         ExecutionName.explicit(value)
 
 
-def test_a_digest_is_opaque():
+def test_a_digest_is_left_uninterpreted():
     # Nothing here reads the digest, so nothing here constrains its characters.
     assert ArgumentsDigest("not-a-hex-digest").value == "not-a-hex-digest"
 
@@ -83,7 +83,7 @@ def test_a_sequence_no_path_could_carry_is_refused(sequence):
     with pytest.raises(ValueError):
         ExecutionId(
             parent_id=None,
-            domain=DomainId("com.example.payments"),
+            domain_id=DomainId("com.example.payments"),
             name=ExecutionName("task"),
             sequence=sequence,  # type: ignore[arg-type]
             arguments_digest=ArgumentsDigest("d"),
@@ -94,7 +94,7 @@ def test_the_first_sequence_is_accepted():
     assert (
         ExecutionId(
             parent_id=None,
-            domain=DomainId("com.example.payments"),
+            domain_id=DomainId("com.example.payments"),
             name=ExecutionName("task"),
             sequence=0,
             arguments_digest=ArgumentsDigest("d"),

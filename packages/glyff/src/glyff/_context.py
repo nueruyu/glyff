@@ -7,7 +7,7 @@ from typing import Any, overload
 from ._event_system import EventEmitter
 from ._domain_claims import DomainClaims
 from ._execution import SerializedValue
-from ._identity import ExecutionId, SessionId
+from ._types import ExecutionId, SessionId
 from ._interfaces import (
     ArgumentCanonicalizer,
     Backend,

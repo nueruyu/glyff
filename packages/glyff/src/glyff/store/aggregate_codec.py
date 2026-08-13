@@ -11,17 +11,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .._canonical_arguments import CanonicalArguments
 from .._execution import (
-    CanonicalArguments,
     Execution,
     ExecutionStatus,
     Metadata,
     SerializedValue,
 )
-from .._identity import ExecutionId
+from .._types import ExecutionId
 from ..exceptions import SerializationError
-from ..serialization._utils import stable_json_dumps
-from ..serialization.constants import DEFAULT_ENCODING
+from ..serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
 _STATUS_NAMES = {
     ExecutionStatus.STARTED: "started",
@@ -81,11 +80,16 @@ def _unpack_metadata(raw: object) -> dict[str, Metadata]:
 
 
 def _json_bytes(value: object) -> bytes:
-    return stable_json_dumps(value).encode(DEFAULT_ENCODING)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=JSON_SEPARATORS,
+    ).encode(DEFAULT_ENCODING)
 
 
 def _pack_arguments(arguments: CanonicalArguments) -> str:
-    # An opaque string, not an embedded JSON value: preserve the exact digest
+    # A string, not an embedded JSON value: preserve the exact digest
     # preimage (see Execution.arguments).
     try:
         return arguments.data.decode(DEFAULT_ENCODING)
@@ -111,7 +115,9 @@ def execution_from_dict(execution_id: ExecutionId, stored: dict[str, Any]) -> Ex
     return Execution(
         id=execution_id,
         status=status,
-        arguments=CanonicalArguments(stored["arguments"].encode(DEFAULT_ENCODING)),
+        arguments=CanonicalArguments.from_recorded_bytes(
+            stored["arguments"].encode(DEFAULT_ENCODING)
+        ),
         result=_unpack_value(stored.get("result"))
         if status is ExecutionStatus.COMPLETED
         else None,
