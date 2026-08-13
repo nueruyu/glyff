@@ -71,7 +71,8 @@ migrating. See
 
 Persistent boundaries should declare an identity such as
 `@engrave(name="chat.reply")`, so Python function renames do not change recorded
-keys. Without `name`, glyff derives it from the function's `__qualname__`.
+keys. Without `name`, glyff derives it from the function's module and
+`__qualname__`.
 
 ## Extending
 

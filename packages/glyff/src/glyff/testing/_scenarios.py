@@ -637,11 +637,11 @@ class PruningContract(_SessionScenario):
             for execution in await self._executions(backend, "scenario-prune-mid")
         }
         assert {
-            "one_branch_finishes_then_another_pauses",
-            "finishing_branch",
-            "pausing",
+            "glyff.testing._scenarios.one_branch_finishes_then_another_pauses",
+            "glyff.testing._scenarios.finishing_branch",
+            "glyff.testing._scenarios.pausing",
         } <= names
-        assert "grandchild" not in names
+        assert "glyff.testing._scenarios.grandchild" not in names
 
         _state.calls.clear()
         _state.interrupt = False

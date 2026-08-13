@@ -23,7 +23,7 @@ async def greet(name: str, greeting: str = "Hello") -> str:
 def test_a_definition_carries_the_name_and_return_type():
     definition = FunctionDefinition.from_callable(greet)
 
-    assert definition.name.value == "greet"
+    assert definition.name.value == f"{__name__}.greet"
     assert definition.return_type is str
     assert definition.func is greet
 
@@ -31,7 +31,23 @@ def test_a_definition_carries_the_name_and_return_type():
 def test_a_nested_function_keeps_its_qualified_name():
     async def task() -> None: ...
 
-    assert FunctionDefinition.from_callable(task).name.value.endswith("<locals>.task")
+    assert FunctionDefinition.from_callable(task).name.value == (
+        f"{__name__}.{task.__qualname__}"
+    )
+
+
+def test_an_inferred_name_distinguishes_modules():
+    async def first() -> None: ...
+
+    async def second() -> None: ...
+
+    first.__module__ = "package.first"
+    second.__module__ = "package.second"
+    first.__qualname__ = second.__qualname__ = "Service.run"
+
+    assert FunctionDefinition.from_callable(first).name != (
+        FunctionDefinition.from_callable(second).name
+    )
 
 
 # -- Binding -----------------------------------------------------------------

@@ -87,7 +87,8 @@ hazards, and how to choose engrave boundaries.
 
 For boundaries that persist across deployments, declare a stable name with
 `@engrave(name="application.step")`. Omitting it derives the identity from the
-function's `__qualname__`, so renaming or moving that function changes its key.
+function's module and `__qualname__`, so renaming or moving that function changes
+its key.
 
 ## Per-execution metadata
 

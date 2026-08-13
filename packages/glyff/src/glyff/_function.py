@@ -37,9 +37,10 @@ class FunctionDefinition:
         rather than a call.
         """
         signature = inspect.signature(func)
-        resolved_name = name or ExecutionName(
-            getattr(func, "__qualname__", func.__name__)
+        inferred_name = (
+            f"{func.__module__}.{getattr(func, '__qualname__', func.__name__)}"
         )
+        resolved_name = name or ExecutionName(inferred_name)
 
         # Unevaluated first: a hint that is merely absent is a different failure
         # from one that cannot be resolved, and only this pass distinguishes them.

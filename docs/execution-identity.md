@@ -14,7 +14,7 @@ than a bare string:
 | --- | --- |
 | `parent_id` | The nearest engraved ancestor on the call stack, forming a chain up to the session root. |
 | `domain_id` | The `DomainId` of the [domain](#domains) whose `engrave` decorated the function. |
-| `name` | An `ExecutionName`, declared with `engrave(name=...)` or derived from the function's `__qualname__` ([explicit names](#explicit-names)). |
+| `name` | An `ExecutionName`, declared with `engrave(name=...)` or derived from the function's module and `__qualname__` ([explicit names](#explicit-names)). |
 | `arguments_digest` | An `ArgumentsDigest` over the canonical form of the bound arguments, produced by the session's `ArgumentCanonicalizer`. |
 | `sequence` | An ordinal from an independent counter per `(parent_id, domain_id, name, arguments_digest)` (`_sequencer.py`). |
 
@@ -25,12 +25,12 @@ number.
 `DomainId` is a machine identifier that outlives the code declaring it, so it is
 held to a reverse-DNS shape: lowercase ASCII segments of letters, digits,
 underscores and hyphens, joined by dots. `ExecutionName` is deliberately
-permissive — an inferred name is a `__qualname__` and looks like
-`Outer.<locals>.task`, and a migration has to hold whatever an older version
-wrote. `ArgumentsDigest` is uninterpreted: nothing in glyff reads it. `sequence` is a
-non-negative `int`, which is what keeps the [path codec](#how-a-key-is-stored)
-closed: every identity that can be constructed has a path that reads back as the
-same identity.
+permissive — an inferred name includes the module and a `__qualname__`, and may
+look like `package.module.Outer.<locals>.task`; a migration also has to hold
+whatever an older version wrote. `ArgumentsDigest` is uninterpreted: nothing in
+glyff reads it. `sequence` is a non-negative `int`, which is what keeps the
+[path codec](#how-a-key-is-stored) closed: every identity that can be constructed
+has a path that reads back as the same identity.
 
 ## Domains
 
@@ -110,15 +110,15 @@ async def reply(...) -> ...: ...
 
 Explicit names allow letters, digits, dots, underscores and hyphens and must
 start with a letter or digit. They are scoped by the domain, so different
-domains may use the same name. Omitting `name` keeps the convenient
+domains may use the same name. Omitting `name` keeps the convenient module plus
 `__qualname__` inference, but renaming or moving that function then changes its
 identity.
 
 Changing a recorded boundary to a different explicit name is also an identity
 change. Carry existing sessions with a `DomainMigration` remap, or first choose
-an explicit name equal to the previously inferred `__qualname__`. Boundary
-generations do not have a separate version: the [domain version](#domains) owns
-that contract.
+an explicit name equal to the previously inferred module-qualified name.
+Boundary generations do not have a separate version: the
+[domain version](#domains) owns that contract.
 
 `ExecutionId.__str__` remains a debug representation (`_types/execution.py`),
 not a persistence key.
