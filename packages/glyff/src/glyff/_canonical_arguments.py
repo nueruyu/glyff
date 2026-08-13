@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -78,7 +77,9 @@ class CanonicalArguments:
         return hash(self.data)
 
     def __repr__(self) -> str:
-        return f"CanonicalArguments(data={self.data!r})"
+        return (
+            f"CanonicalArguments(digest={self.digest.value!r}, size={len(self.data)})"
+        )
 
 
 def _encode_argument_mapping(
@@ -155,16 +156,3 @@ def _reject_uncanonical(value: Any) -> Any:
 
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"{value} is not in the JSON data model.")
-
-
-def _is_canonical_value(value: object) -> bool:
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return not isinstance(value, float) or math.isfinite(value)
-    if isinstance(value, list):
-        return all(_is_canonical_value(item) for item in value)
-    if isinstance(value, dict):
-        return all(
-            isinstance(key, str) and _is_canonical_value(item)
-            for key, item in value.items()
-        )
-    return False

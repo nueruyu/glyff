@@ -64,3 +64,13 @@ def test_canonical_arguments_digest_is_sha256_of_their_bytes():
     assert arguments.digest == ArgumentsDigest(
         hashlib.sha256(arguments.data).hexdigest()
     )
+
+
+def test_canonical_arguments_repr_does_not_expose_argument_values():
+    arguments = CanonicalArguments({"secret": "application-data"})
+
+    representation = repr(arguments)
+
+    assert "application-data" not in representation
+    assert arguments.digest.value in representation
+    assert f"size={len(arguments.data)}" in representation

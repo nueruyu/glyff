@@ -525,7 +525,7 @@ def test_registered_transitions_run_to_the_domains_current_version():
         ExecutionShape("capture", "order"),
     )
 
-    replacement = migration.execute(
+    replacement = migration.migrate(
         session(started("authorize", arguments={"order": "ord_1"}))
     )
 
@@ -539,7 +539,7 @@ def test_a_session_already_at_the_current_version_is_unchanged():
         Domain(PAY, version="v2"), canonicalizer=JsonArgumentCanonicalizer()
     )
 
-    assert migration.execute(source) is source
+    assert migration.migrate(source) is source
 
 
 def test_a_missing_transition_to_the_current_version_is_refused():
@@ -549,7 +549,7 @@ def test_a_missing_transition_to_the_current_version_is_refused():
     migration.transition("v1", "v2")
 
     with pytest.raises(MigrationError, match="No migration path"):
-        migration.execute(session())
+        migration.migrate(session())
 
 
 def test_two_transitions_cannot_leave_the_same_version():

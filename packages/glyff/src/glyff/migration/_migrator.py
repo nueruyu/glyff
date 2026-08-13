@@ -74,10 +74,6 @@ class ExecutionShape:
         suffix = f", {arguments}" if arguments else ""
         return f"ExecutionShape({self.name.value!r}{suffix})"
 
-    @property
-    def key(self) -> ExecutionName:
-        return self.name
-
 
 @dataclass(frozen=True)
 class _Remap:
@@ -137,14 +133,14 @@ class DomainVersionTransition:
                 "migration a conversion between them."
             )
         self._register(
-            source.key,
+            source.name,
             _Remap(source=source, target=target, convert_arguments=convert_arguments),
         )
         return self
 
     def drop(self, source: ExecutionShape) -> DomainVersionTransition:
         """Registers the removal of ``source``'s records, and their descendants."""
-        self._register(source.key, _Drop(source=source))
+        self._register(source.name, _Drop(source=source))
         return self
 
     def _register(self, key: ExecutionName, rule: _Rule) -> None:
@@ -208,7 +204,7 @@ class DomainMigration(SessionMigrator):
         self._transitions[source_version] = transition
         return transition
 
-    def execute(self, source: StoredSession) -> StoredSession:
+    def migrate(self, source: StoredSession) -> StoredSession:
         versions = source.metadata.domain_versions
         if self._domain_id not in versions:
             raise MigrationError(
@@ -240,9 +236,6 @@ class DomainMigration(SessionMigrator):
             )
             version = plan.target_version
         return migrated
-
-    def migrate(self, source: StoredSession) -> StoredSession:
-        return self.execute(source)
 
     def _require_acyclic(self, source: DomainVersion, target: DomainVersion) -> None:
         version = target

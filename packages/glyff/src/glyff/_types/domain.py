@@ -5,8 +5,12 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from typing import TypeVar
 
 _DOMAIN_ID = re.compile(r"[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*")
+
+_DomainIdInput = TypeVar("_DomainIdInput", bound="DomainId | str")
+_DomainVersionInput = TypeVar("_DomainVersionInput", bound="DomainVersion | str")
 
 
 @dataclass(frozen=True)
@@ -48,11 +52,7 @@ class DomainVersionMap(Mapping[DomainId, DomainVersion]):
 
     def __init__(
         self,
-        versions: (
-            Mapping[DomainId, DomainVersion | str]
-            | Mapping[str, DomainVersion | str]
-            | Mapping[DomainId | str, DomainVersion | str]
-        ),
+        versions: Mapping[_DomainIdInput, _DomainVersionInput],
     ) -> None:
         normalized: dict[DomainId, DomainVersion] = {}
         for domain_id, version in versions.items():
