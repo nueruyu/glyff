@@ -85,6 +85,11 @@ reordering distinct calls leave existing keys intact. See
 **[Execution identity](./docs/execution-identity.md)** for the guarantees, the
 hazards, and how to choose engrave boundaries.
 
+For boundaries that persist across deployments, declare a stable name with
+`@engrave(name="application.step")`. Omitting it derives the identity from the
+function's module and `__qualname__`, so renaming or moving that function changes
+its key.
+
 ## Per-execution metadata
 
 Attach application data to the running call. Metadata is owned by the

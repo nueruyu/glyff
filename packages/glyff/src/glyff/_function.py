@@ -25,14 +25,22 @@ class FunctionDefinition:
     _signature: inspect.Signature = field(repr=False)
 
     @classmethod
-    def from_callable(cls, func: Callable[..., Any]) -> FunctionDefinition:
+    def from_callable(
+        cls,
+        func: Callable[..., Any],
+        *,
+        name: ExecutionName | None = None,
+    ) -> FunctionDefinition:
         """Reads a function, refusing one glyff could not record faithfully.
 
         Both hint checks run at decoration, where the failure names a definition
         rather than a call.
         """
         signature = inspect.signature(func)
-        name = ExecutionName(getattr(func, "__qualname__", func.__name__))
+        inferred_name = (
+            f"{func.__module__}.{getattr(func, '__qualname__', func.__name__)}"
+        )
+        resolved_name = name or ExecutionName(inferred_name)
 
         # Unevaluated first: a hint that is merely absent is a different failure
         # from one that cannot be resolved, and only this pass distinguishes them.
@@ -42,20 +50,21 @@ class FunctionDefinition:
         if missing:
             named = ", ".join(missing)
             raise MissingTypeHintError(
-                f"Engraved function '{name}' is missing required type hints: {named}."
+                f"Engraved function '{resolved_name}' is missing required type hints: "
+                f"{named}."
             )
 
         try:
             type_hints = inspect.get_annotations(func, eval_str=True)
         except Exception as e:
             raise TypeHintResolutionError(
-                f"Could not resolve type hints for {name}. "
+                f"Could not resolve type hints for {resolved_name}. "
                 f"Please ensure all types are correctly defined and imported. Error: {e}"
             ) from e
 
         return cls(
             func=func,
-            name=name,
+            name=resolved_name,
             return_type=type_hints["return"],
             _signature=signature,
         )

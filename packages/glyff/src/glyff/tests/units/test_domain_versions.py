@@ -163,7 +163,7 @@ async def test_a_mismatch_leaves_the_session_alone(serializer, argument_canonica
     async with _session(backend, serializer, argument_canonicalizer):
         assert [
             e.id.name.value async for e in backend.repository.executions(SESSION)
-        ] == ["_task.<locals>.task"]
+        ] == ["glyff.tests.units.test_domain_versions._task.<locals>.task"]
 
 
 async def test_a_mismatch_is_raised_on_entering_the_domain_not_the_session(

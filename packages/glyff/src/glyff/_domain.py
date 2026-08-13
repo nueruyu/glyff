@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, ParamSpec, TypeVar, cast
+from typing import Any, Callable, ParamSpec, TypeVar, cast, overload
 
 from ._context import Context, get_context
 from ._canonical_arguments import CanonicalArguments
 from ._executor import execute
 from ._function import FunctionDefinition
-from ._types import DomainId, DomainVersion, ExecutionId
+from ._types import DomainId, DomainVersion, ExecutionId, ExecutionName
 from .exceptions import ArgumentCanonicalizationError
 
 P = ParamSpec("P")
@@ -81,13 +81,47 @@ class Domain:
     def __repr__(self) -> str:
         return f"Domain(id={self.id!r}, version={self.version!r})"
 
-    def engrave(self, func: Callable[P, R]) -> Callable[P, R]:
+    @overload
+    def engrave(
+        self,
+        func: Callable[P, R],
+        /,
+        *,
+        name: str | None = None,
+    ) -> Callable[P, R]: ...
+
+    @overload
+    def engrave(
+        self,
+        func: None = None,
+        /,
+        *,
+        name: str | None = None,
+    ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
+
+    def engrave(
+        self,
+        func: Callable[P, R] | None = None,
+        /,
+        *,
+        name: str | None = None,
+    ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
         """Makes an async function engraveable and resumable within this domain.
 
         The domain is fixed here, at decoration: a recorded execution's owner is
         a property of the definition, not of whatever was in scope when it ran.
         """
-        definition = FunctionDefinition.from_callable(func)
+        explicit_name = ExecutionName.explicit(name) if name is not None else None
+        if func is None:
+            return lambda target: self._engrave(target, explicit_name)
+        return self._engrave(func, explicit_name)
+
+    def _engrave(
+        self,
+        func: Callable[P, R],
+        name: ExecutionName | None,
+    ) -> Callable[P, R]:
+        definition = FunctionDefinition.from_callable(func, name=name)
         domain_id = self.id
         domain_version = self.version
 
