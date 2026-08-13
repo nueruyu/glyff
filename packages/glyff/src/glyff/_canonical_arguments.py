@@ -16,7 +16,7 @@ from ._types import (
 )
 from .exceptions import ArgumentCanonicalizationError, InvalidExecutionError
 
-_FALLBACK_MARKER_KEY = "__glyff_opaque__"
+_FALLBACK_MARKER_KEY = "__glyff_fallback__"
 
 
 class CanonicalArguments:

@@ -66,7 +66,7 @@ def test_an_explicit_name_outside_the_grammar_is_refused(value: str):
         ExecutionName.explicit(value)
 
 
-def test_a_digest_is_opaque():
+def test_a_digest_is_left_uninterpreted():
     # Nothing here reads the digest, so nothing here constrains its characters.
     assert ArgumentsDigest("not-a-hex-digest").value == "not-a-hex-digest"
 

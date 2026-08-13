@@ -83,7 +83,7 @@ class ArgumentCanonicalizerContract:
         )
         assert canonicalizer.canonicalize(canonical.decode()) == canonical
 
-    def test_an_opaque_value_canonicalizes_to_the_marker(
+    def test_a_fallback_value_canonicalizes_to_the_marker(
         self, canonicalizer: ArgumentCanonicalizer
     ):
         assert canonicalizer.canonicalize(
@@ -95,7 +95,7 @@ class ArgumentCanonicalizerContract:
     ):
         with pytest.raises(ArgumentCanonicalizationError):
             canonicalizer.canonicalize(
-                {"a": {"__glyff_opaque__": "com.example.Service"}}
+                {"a": {"__glyff_fallback__": "com.example.Service"}}
             )
 
     def test_a_later_instance_agrees_on_the_form(

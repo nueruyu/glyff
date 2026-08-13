@@ -452,7 +452,7 @@ def test_a_fallback_nested_in_a_container_survives_a_conversion():
     [migrated] = migrate(migration, session(execution))
 
     assert recorded(migrated) == {
-        "clients": [{"__glyff_opaque__": "com.example.PaymentClient"}],
+        "clients": [{"__glyff_fallback__": "com.example.PaymentClient"}],
         "cents": 1200,
     }
 

@@ -103,7 +103,7 @@ def test_a_models_state_is_its_identity(argument_canonicalizer: ArgumentCanonica
     ) != argument_canonicalizer.canonicalize({"self": MyModel(x=2, y="a")})
 
 
-def _agent_model_with_opaque_member():
+def _agent_model_with_unsupported_member():
     class Tool:
         def __init__(self, n):
             self.n = n
@@ -116,10 +116,10 @@ def _agent_model_with_opaque_member():
     return Agent, Tool
 
 
-def test_a_model_holding_an_opaque_member_is_refused_by_default(
+def test_a_model_holding_an_unsupported_member_is_refused_by_default(
     argument_canonicalizer: ArgumentCanonicalizer,
 ):
-    Agent, Tool = _agent_model_with_opaque_member()
+    Agent, Tool = _agent_model_with_unsupported_member()
 
     with pytest.raises(ArgumentCanonicalizationError):
         argument_canonicalizer.canonicalize(
@@ -130,7 +130,7 @@ def test_a_model_holding_an_opaque_member_is_refused_by_default(
 def test_a_fallback_representer_reaches_an_unsupported_model_member():
     # The shape an agent object usually has: identity is the model's state,
     # carried alongside a dependency that has none.
-    Agent, Tool = _agent_model_with_opaque_member()
+    Agent, Tool = _agent_model_with_unsupported_member()
     canonicalizer = PydanticArgumentCanonicalizer(
         fallback_representer=FallbackByTypeQualname()
     )

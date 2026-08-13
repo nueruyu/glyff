@@ -61,7 +61,7 @@ on top.
   | the same version | the call proceeds |
   | a different version | `DomainVersionMismatchError`, with nothing changed |
 
-  The version is opaque to glyff: what counts as a new generation is the
+  Glyff leaves the version uninterpreted: what counts as a new generation is the
   domain owner's to decide. The error carries `domain_id`, `recorded_version`
   and `current_version`, so a caller can route the session to migration without
   reading the message.

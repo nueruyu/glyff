@@ -23,7 +23,7 @@ from glyff.serialization._utils import stable_json_dumps
 
 @dataclasses.dataclass
 class _TagField:
-    __glyff_opaque__: str
+    __glyff_fallback__: str
 
 
 def canonical(
@@ -175,7 +175,7 @@ def test_canonical_tags_fallback_output_so_it_cannot_collide():
     assert tagged == CanonicalFallback(f"{Service.__module__}.{Service.__qualname__}")
 
 
-@pytest.mark.parametrize("value", [{"__glyff_opaque__": "x"}, _TagField("x")])
+@pytest.mark.parametrize("value", [{"__glyff_fallback__": "x"}, _TagField("x")])
 def test_canonical_refuses_a_value_that_claims_the_fallback_tag(value):
     # The marker is how a value with no representation is written down. Anything
     # else canonicalizing to it would share that value's key, whichever branch

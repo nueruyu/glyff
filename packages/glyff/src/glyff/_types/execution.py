@@ -41,7 +41,7 @@ class ExecutionName:
 
 @dataclass(frozen=True)
 class ArgumentsDigest:
-    """A digest over canonical arguments, treated as an opaque string."""
+    """A digest over canonical arguments, left uninterpreted by glyff."""
 
     value: str
 

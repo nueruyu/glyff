@@ -27,7 +27,7 @@ held to a reverse-DNS shape: lowercase ASCII segments of letters, digits,
 underscores and hyphens, joined by dots. `ExecutionName` is deliberately
 permissive — an inferred name is a `__qualname__` and looks like
 `Outer.<locals>.task`, and a migration has to hold whatever an older version
-wrote. `ArgumentsDigest` is opaque: nothing in glyff reads it. `sequence` is a
+wrote. `ArgumentsDigest` is uninterpreted: nothing in glyff reads it. `sequence` is a
 non-negative `int`, which is what keeps the [path codec](#how-a-key-is-stored)
 closed: every identity that can be constructed has a path that reads back as the
 same identity.
@@ -192,7 +192,7 @@ raise `ArgumentCanonicalizationError` and never reach the store.
 > **Compatibility.** The key was not reserved before this landed, so a store
 > written by an earlier build may hold a mapping shaped like the marker, which is
 > now read back as a `CanonicalFallback`. Nothing distinguishes the two, so check
-> paused sessions for an argument mapping whose only key is `__glyff_opaque__`
+> paused sessions for an argument mapping whose only key is `__glyff_fallback__`
 > before upgrading.
 
 > **Planned** — [#37](https://github.com/nueruyu/glyff/issues/37): standard
