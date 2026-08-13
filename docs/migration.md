@@ -39,7 +39,7 @@ and are possible because the stamp exists.
 
 > **Planned** — a migration runner. The stamp refuses unknown versions, but
 > nothing yet converts a store from one format version to the next
-> ([#41](https://github.com/nueruyu/glyff/issues/41)).
+> ([#61](https://github.com/nueruyu/glyff/issues/61)).
 
 ### User payload
 
