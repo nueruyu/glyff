@@ -13,7 +13,8 @@ from collections.abc import Callable
 import pytest
 
 from .._interfaces import ArgumentCanonicalizer
-from .._canonical_arguments import CanonicalArguments, CanonicalFallback
+from .._canonical_arguments import CanonicalArguments
+from .._types import CanonicalFallback
 from ..exceptions import ArgumentCanonicalizationError
 
 CanonicalizerFactory = Callable[[], ArgumentCanonicalizer]

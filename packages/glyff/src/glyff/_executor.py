@@ -3,7 +3,7 @@ from typing import Any, Callable
 from ._context import Context
 from ._canonical_arguments import CanonicalArguments
 from ._execution import Execution, ExecutionStatus, SerializedValue
-from ._identity import ExecutionId
+from ._types import ExecutionId
 from .events import ExecutionCompleted, ExecutionFailed
 
 

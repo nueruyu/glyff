@@ -26,7 +26,7 @@ from .._execution import (
     Metadata,
     SerializedValue,
 )
-from .._identity import ExecutionId, SessionId
+from .._types import ExecutionId, SessionId
 
 __all__ = [
     "DeleteExecution",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from ._identity import DomainId, DomainVersion, SessionId
+from ._types import DomainId, DomainVersion, SessionId
 from ._interfaces import Backend
 from .exceptions import DomainVersionMismatchError
 

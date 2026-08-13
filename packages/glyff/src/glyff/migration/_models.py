@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .._execution import Execution
-from .._identity import DomainId, DomainVersionMap, ExecutionId
+from .._types import DomainId, DomainVersionMap, ExecutionId
 from ..exceptions import MigrationCollisionError, MigrationError
 
 

@@ -4,7 +4,7 @@ from typing import Any
 
 from ._canonical_arguments import CanonicalArguments
 from ._execution import Execution, ExecutionStatus
-from ._identity import DomainId, DomainVersion, ExecutionId, SessionId
+from ._types import DomainId, DomainVersion, ExecutionId, SessionId
 
 
 class Transaction(ABC):

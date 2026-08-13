@@ -3,13 +3,8 @@ import functools
 import math
 from typing import Any, Callable, TypeAlias
 
-from .._canonical_arguments import (
-    CanonicalFallback,
-    CanonicalArgumentValue,
-    CanonicalValue,
-    _encode_argument_value,
-    encode_canonical,
-)
+from .._canonical_arguments import _encode_argument_value, encode_canonical
+from .._types import CanonicalArgumentValue, CanonicalFallback, CanonicalValue
 from ..exceptions import ArgumentCanonicalizationError
 from ._fallback import CanonicalFallbackRepresenter
 

@@ -6,51 +6,17 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import Any
 
-from ._identity import ArgumentsDigest
+from ._types import (
+    ArgumentsDigest,
+    CanonicalArgumentValue,
+    CanonicalFallback,
+    CanonicalValue,
+)
 from .exceptions import ArgumentCanonicalizationError, InvalidExecutionError
 
-CanonicalValue: TypeAlias = (
-    str
-    | int
-    | float
-    | bool
-    | None
-    | list["CanonicalValue"]
-    | dict[str, "CanonicalValue"]
-)
-
 _FALLBACK_MARKER_KEY = "__glyff_opaque__"
-
-
-@dataclass(frozen=True)
-class CanonicalFallback:
-    """A fallback representation read from canonical argument records.
-
-    :attr:`representation` is what a `CanonicalFallbackRepresenter` returned,
-    not the value it replaced — there is nothing to get back to. Canonicalizing
-    one writes the marker again, so recorded arguments can pass through a
-    canonicalizer unchanged.
-
-    Passing one to a live call declares the representation outright, so no
-    fallback representer is consulted for it.
-    """
-
-    representation: CanonicalValue
-
-
-CanonicalArgumentValue: TypeAlias = (
-    str
-    | int
-    | float
-    | bool
-    | None
-    | CanonicalFallback
-    | list["CanonicalArgumentValue"]
-    | dict[str, "CanonicalArgumentValue"]
-)
 
 
 class CanonicalArguments:

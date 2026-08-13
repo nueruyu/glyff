@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from ._canonical_arguments import CanonicalArguments
-from ._identity import ExecutionId
+from ._types import ExecutionId
 from .exceptions import InvalidExecutionError
 
 

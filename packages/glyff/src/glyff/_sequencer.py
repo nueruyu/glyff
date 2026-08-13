@@ -1,7 +1,7 @@
 import asyncio
 from collections import defaultdict
 
-from ._identity import (
+from ._types import (
     ArgumentsDigest,
     DomainId,
     ExecutionId,

@@ -7,7 +7,7 @@ from ._context import Context, get_context
 from ._canonical_arguments import CanonicalArguments
 from ._executor import execute
 from ._function import FunctionDefinition
-from ._identity import DomainId, DomainVersion, ExecutionId
+from ._types import DomainId, DomainVersion, ExecutionId
 from .exceptions import ArgumentCanonicalizationError
 
 P = ParamSpec("P")

@@ -2,7 +2,8 @@ import json
 from collections.abc import Mapping
 from typing import Any
 
-from .._canonical_arguments import CanonicalArgumentValue, CanonicalArguments
+from .._canonical_arguments import CanonicalArguments
+from .._types import CanonicalArgumentValue
 from .._interfaces import ArgumentCanonicalizer, Serializer
 from ..exceptions import SerializationError
 from .constants import DEFAULT_ENCODING

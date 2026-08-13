@@ -18,7 +18,7 @@ from .._execution import (
     Metadata,
     SerializedValue,
 )
-from .._identity import ExecutionId
+from .._types import ExecutionId
 from ..exceptions import SerializationError
 from ..serialization._utils import stable_json_dumps
 from ..serialization.constants import DEFAULT_ENCODING

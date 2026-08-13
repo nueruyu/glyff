@@ -7,7 +7,7 @@ boundaries.
 
 ## What the key is made of
 
-An `ExecutionId` (`_identity.py`) has five components, each a value object rather
+An `ExecutionId` (`_types/execution.py`) has five components, each a value object rather
 than a bare string:
 
 | Component | Where it comes from |
@@ -103,7 +103,7 @@ mismatches silently.
 
 Today a name is derived from the function's `__qualname__` (`_function.py`), so
 renaming an engraved function invalidates the history of paused sessions. And
-`ExecutionId.__str__` is a debug representation (`_identity.py`) — not a key, and
+`ExecutionId.__str__` is a debug representation (`_types/execution.py`) — not a key, and
 not to be persisted.
 
 > **Planned** — [#40](https://github.com/nueruyu/glyff/issues/40), covering

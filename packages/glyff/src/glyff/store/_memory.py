@@ -10,7 +10,7 @@ from .._interfaces import (
     TransactionProvider,
 )
 from .._execution import Execution, ExecutionStatus
-from .._identity import DomainId, DomainVersion, ExecutionId, SessionId
+from .._types import DomainId, DomainVersion, ExecutionId, SessionId
 from ._memory_client import MemoryClient
 from .staging import (
     ExecutionKey,

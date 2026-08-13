@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from ._context import Context
 from ._event_system import Event
-from ._identity import ExecutionId
+from ._types import ExecutionId
 
 
 @dataclass(frozen=True)

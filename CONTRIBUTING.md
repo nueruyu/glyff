@@ -54,9 +54,10 @@ assertion. Observe what was persisted instead.
 | Area | Where |
 | --- | --- |
 | Domains, the `engrave` decorator, version claims | `packages/glyff/src/glyff/_domain.py`, `_domain_claims.py` |
-| Call identity and sequencing | `packages/glyff/src/glyff/_identity.py`, `_sequencer.py`, `store/utils.py` |
+| Shared identifiers and value objects | `packages/glyff/src/glyff/_types/` |
+| Call identity and sequencing | `packages/glyff/src/glyff/_types/execution.py`, `_sequencer.py`, `store/utils.py` |
 | The execution aggregate | `packages/glyff/src/glyff/_execution.py` |
-| Canonical argument values and encoding | `packages/glyff/src/glyff/_canonical_arguments.py` |
+| Canonical argument values and encoding | `packages/glyff/src/glyff/_types/canonical.py`, `_canonical_arguments.py` |
 | Reading an engraved Python function (signatures, hints, binding) | `packages/glyff/src/glyff/_function.py` |
 | Execution orchestration (cache check, transactions, event emission) | `packages/glyff/src/glyff/_executor.py` |
 | Session lifecycle and context | `packages/glyff/src/glyff/_session.py`, `_context.py` |

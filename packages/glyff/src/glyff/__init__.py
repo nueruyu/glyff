@@ -1,20 +1,12 @@
 from ._context import MetadataAccessor, TransactionScope, get_context
 from ._domain import Domain
 from ._event_system import Event, EventEmitter, EventHandler
-from ._canonical_arguments import (
+from ._canonical_arguments import CanonicalArguments
+from ._types import (
+    ArgumentsDigest,
     CanonicalArgumentValue,
-    CanonicalArguments,
     CanonicalValue,
     CanonicalFallback,
-)
-from ._execution import (
-    Execution,
-    ExecutionStatus,
-    Metadata,
-    SerializedValue,
-)
-from ._identity import (
-    ArgumentsDigest,
     DomainId,
     DomainVersion,
     DomainVersionMap,
@@ -22,6 +14,7 @@ from ._identity import (
     ExecutionName,
     SessionId,
 )
+from ._execution import Execution, ExecutionStatus, Metadata, SerializedValue
 from ._interfaces import (
     ArgumentCanonicalizer,
     Backend,

@@ -7,12 +7,10 @@ from dataclasses import dataclass, replace
 from typing import Any, TypeAlias
 
 from .._domain import Domain
-from .._canonical_arguments import (
-    CanonicalArgumentValue,
-    CanonicalArguments,
-)
+from .._canonical_arguments import CanonicalArguments
 from .._execution import Execution
-from .._identity import (
+from .._types import (
+    CanonicalArgumentValue,
     DomainId,
     DomainVersion,
     DomainVersionMap,

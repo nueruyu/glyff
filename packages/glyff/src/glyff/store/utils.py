@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from urllib.parse import quote, unquote
 
-from .._identity import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
+from .._types import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
 
 
 def _encode(value: str) -> str:

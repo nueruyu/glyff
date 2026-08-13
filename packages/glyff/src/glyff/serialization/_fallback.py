@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .._canonical_arguments import CanonicalValue
+from .._types import CanonicalValue
 from ..exceptions import ArgumentCanonicalizationError
 
 

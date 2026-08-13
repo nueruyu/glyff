@@ -1,4 +1,4 @@
-from ._identity import DomainId, DomainVersion
+from ._types import DomainId, DomainVersion
 
 
 class GlyffException(Exception):
