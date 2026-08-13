@@ -78,9 +78,6 @@ class Domain:
             and self.version == other.version
         )
 
-    def __hash__(self) -> int:
-        return hash((self.id, self.version))
-
     def __repr__(self) -> str:
         return f"Domain(id={self.id!r}, version={self.version!r})"
 
@@ -91,16 +88,17 @@ class Domain:
         a property of the definition, not of whatever was in scope when it ran.
         """
         definition = FunctionDefinition.from_callable(func)
-        owning_domain = self
+        domain_id = self.id
+        domain_version = self.version
 
         @functools.wraps(func)
         async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             ctx = get_context()
             # Before identity is resolved, so a recorded result is never replayed
             # against a generation of code that has not been agreed with.
-            await ctx.domain_claims.ensure(owning_domain.id, owning_domain.version)
+            await ctx.domain_claims.ensure(domain_id, domain_version)
             execution_id, canonical_arguments = await _resolve_call_identity(
-                ctx, owning_domain.id, definition, args, kwargs
+                ctx, domain_id, definition, args, kwargs
             )
             result = await execute(
                 ctx=ctx,

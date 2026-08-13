@@ -30,7 +30,6 @@ from ._models import SessionMetadata, StoredSession
 _ArgumentConverter = Callable[..., Mapping[str, Any]]
 
 
-@dataclass(frozen=True)
 class ExecutionShape:
     """What one generation of an engraved function is recorded as.
 
@@ -38,32 +37,42 @@ class ExecutionShape:
     function cannot quietly reshape records a migration claims to know.
     """
 
-    name: ExecutionName
-    argument_names: frozenset[str]
+    __slots__ = ("_name", "_argument_names")
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, ExecutionName):
-            raise TypeError("ExecutionShape.name must be an ExecutionName.")
-        if not isinstance(self.argument_names, frozenset) or not all(
-            isinstance(name, str) for name in self.argument_names
-        ):
-            raise TypeError(
-                "ExecutionShape.argument_names must be a frozenset of strings."
-            )
-
-    @classmethod
-    def from_names(
-        cls,
+    def __init__(
+        self,
         name: str | ExecutionName,
         *argument_names: str,
-    ) -> ExecutionShape:
-        """A shape spelled out at a call site, from plain strings."""
+    ) -> None:
+        if not all(isinstance(argument_name, str) for argument_name in argument_names):
+            raise TypeError("ExecutionShape argument names must be strings.")
         if len(set(argument_names)) != len(argument_names):
             raise ValueError(f"{name} names an argument more than once.")
-        return cls(
-            name=ExecutionName(name) if isinstance(name, str) else name,
-            argument_names=frozenset(argument_names),
+        execution_name = ExecutionName(name) if isinstance(name, str) else name
+        if not isinstance(execution_name, ExecutionName):
+            raise TypeError("ExecutionShape name must be an ExecutionName or string.")
+        self._name = execution_name
+        self._argument_names = frozenset(argument_names)
+
+    @property
+    def name(self) -> ExecutionName:
+        return self._name
+
+    @property
+    def argument_names(self) -> frozenset[str]:
+        return self._argument_names
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, ExecutionShape)
+            and self.name == other.name
+            and self.argument_names == other.argument_names
         )
+
+    def __repr__(self) -> str:
+        arguments = ", ".join(repr(name) for name in sorted(self.argument_names))
+        suffix = f", {arguments}" if arguments else ""
+        return f"ExecutionShape({self.name.value!r}{suffix})"
 
     @property
     def key(self) -> ExecutionName:
@@ -156,7 +165,12 @@ class DomainVersionTransition:
 
 
 class DomainMigration(SessionMigrator):
-    """Migration definitions and execution for one domain."""
+    """Migration definitions and execution for one domain.
+
+    Every transition in a chain uses the resuming session's canonicalizer.
+    Canonicalization semantics must therefore remain stable across the domain
+    versions covered by one migration.
+    """
 
     def __init__(
         self,
@@ -164,7 +178,8 @@ class DomainMigration(SessionMigrator):
         *,
         canonicalizer: ArgumentCanonicalizer,
     ) -> None:
-        self._domain = domain
+        self._domain_id = domain.id
+        self._target_version = domain.version
         self._canonicalizer = canonicalizer
         self._transitions: dict[DomainVersion, DomainVersionTransition] = {}
 
@@ -183,21 +198,21 @@ class DomainMigration(SessionMigrator):
             raise MigrationError("A domain-version transition must change the version.")
         if source_version in self._transitions:
             raise MigrationError(
-                f"{self._domain.id} already has a migration from "
+                f"{self._domain_id} already has a migration from "
                 f"{source_version.value!r}."
             )
         self._require_acyclic(source_version, target_version)
         transition = DomainVersionTransition(
-            self._domain.id, source_version, target_version
+            self._domain_id, source_version, target_version
         )
         self._transitions[source_version] = transition
         return transition
 
     def execute(self, source: StoredSession) -> StoredSession:
         versions = source.metadata.domain_versions
-        if self._domain.id not in versions:
+        if self._domain_id not in versions:
             raise MigrationError(
-                f"Cannot migrate {self._domain.id}: the session records no version "
+                f"Cannot migrate {self._domain_id}: the session records no version "
                 "for that domain."
             )
 
@@ -206,19 +221,19 @@ class DomainMigration(SessionMigrator):
             for source_version, transition in self._transitions.items()
         }
         migrated = source
-        version = versions[self._domain.id]
+        version = versions[self._domain_id]
         visited: set[DomainVersion] = set()
-        while version != self._domain.version:
+        while version != self._target_version:
             if version in visited:
                 raise MigrationError(
-                    f"The migration path for {self._domain.id} contains a cycle."
+                    f"The migration path for {self._domain_id} contains a cycle."
                 )
             visited.add(version)
             plan = plans.get(version)
             if plan is None:
                 raise MigrationError(
-                    f"No migration path takes {self._domain.id} from "
-                    f"{version.value!r} to {self._domain.version.value!r}."
+                    f"No migration path takes {self._domain_id} from "
+                    f"{version.value!r} to {self._target_version.value!r}."
                 )
             migrated = _ExecutionMigrationRunner(plan, self._canonicalizer).migrate(
                 migrated
@@ -235,7 +250,7 @@ class DomainMigration(SessionMigrator):
             if version == source:
                 raise MigrationError(
                     f"Adding {source.value!r} to {target.value!r} would create "
-                    f"a migration cycle for {self._domain.id}."
+                    f"a migration cycle for {self._domain_id}."
                 )
             if version not in self._transitions:
                 return

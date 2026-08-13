@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any
 
 _DOMAIN_ID = re.compile(r"[a-z0-9][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*")
 
@@ -47,23 +46,33 @@ class DomainVersionMap(Mapping[DomainId, DomainVersion]):
 
     __slots__ = ("_versions",)
 
-    def __init__(self, versions: Mapping[Any, Any]) -> None:
-        if not all(
-            isinstance(domain_id, (DomainId, str))
-            and isinstance(version, (DomainVersion, str))
-            for domain_id, version in versions.items()
-        ):
-            raise TypeError(
-                "DomainVersionMap requires domain identifiers and domain versions."
+    def __init__(
+        self,
+        versions: (
+            Mapping[DomainId, DomainVersion | str]
+            | Mapping[str, DomainVersion | str]
+            | Mapping[DomainId | str, DomainVersion | str]
+        ),
+    ) -> None:
+        normalized: dict[DomainId, DomainVersion] = {}
+        for domain_id, version in versions.items():
+            if not isinstance(domain_id, (DomainId, str)) or not isinstance(
+                version, (DomainVersion, str)
+            ):
+                raise TypeError(
+                    "DomainVersionMap requires domain identifiers and domain versions."
+                )
+            normalized_id = (
+                domain_id if isinstance(domain_id, DomainId) else DomainId(domain_id)
             )
-        self._versions = {
-            domain_id if isinstance(domain_id, DomainId) else DomainId(domain_id): (
+            if normalized_id in normalized:
+                raise ValueError(f"{normalized_id} is specified more than once.")
+            normalized[normalized_id] = (
                 version
                 if isinstance(version, DomainVersion)
                 else DomainVersion(version)
             )
-            for domain_id, version in versions.items()
-        }
+        self._versions = normalized
 
     def __getitem__(self, domain_id: DomainId) -> DomainVersion:
         return self._versions[domain_id]

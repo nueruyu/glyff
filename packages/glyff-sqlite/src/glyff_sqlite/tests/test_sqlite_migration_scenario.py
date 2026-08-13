@@ -96,21 +96,21 @@ def _migration(canonicalizer: ArgumentCanonicalizer) -> DomainMigration:
     migration = DomainMigration(V2, canonicalizer=canonicalizer)
     transition = migration.transition("1", "2")
     transition.remap(
-        ExecutionShape.from_names("checkout_v1", "order"),
-        ExecutionShape.from_names("checkout_v2", "order"),
+        ExecutionShape("checkout_v1", "order"),
+        ExecutionShape("checkout_v2", "order"),
     )
     transition.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
     )
     transition.remap(
-        ExecutionShape.from_names("capture", "order"),
-        ExecutionShape.from_names("capture_cents", "order", "cents"),
+        ExecutionShape("capture", "order"),
+        ExecutionShape("capture_cents", "order", "cents"),
         convert_arguments=lambda order: {"order": order, "cents": 1200},
     )
     transition.remap(
-        ExecutionShape.from_names("finish", "order"),
-        ExecutionShape.from_names("complete", "order"),
+        ExecutionShape("finish", "order"),
+        ExecutionShape("complete", "order"),
     )
     return migration
 

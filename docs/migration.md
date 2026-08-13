@@ -121,8 +121,8 @@ migration = DomainMigration(
     canonicalizer=canonicalizer,
 )
 migration.transition("1", "2").remap(
-    ExecutionShape.from_names("authorize", "order", "units"),
-    ExecutionShape.from_names("charge", "order_id", "cents"),
+    ExecutionShape("authorize", "order", "units"),
+    ExecutionShape("charge", "order_id", "cents"),
     convert_arguments=lambda order, units: {
         "order_id": order["id"],
         "cents": units * 100,
@@ -195,6 +195,9 @@ those calls arguments that tell them apart, or drop one.
 
 All required transitions run in memory before the backend replaces the session,
 so an intermediate domain version is never stored on its own.
+Every step uses the canonicalizer supplied to `DomainMigration`, which is the
+one the resumed session will use. Canonicalization semantics must therefore stay
+stable across all domain versions in one registered transition chain.
 
 ## Running without migration
 

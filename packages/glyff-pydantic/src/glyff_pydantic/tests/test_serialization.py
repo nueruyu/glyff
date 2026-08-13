@@ -182,11 +182,11 @@ def test_an_enum_preserves_the_representation_of_its_non_json_value(
     class StartedAt(enum.Enum):
         MIDNIGHT = datetime.datetime(2024, 1, 1)
 
-    assert argument_canonicalizer.canonicalize(
-        {"a": StartedAt.MIDNIGHT}
-    ) == CanonicalArguments(
+    canonical = argument_canonicalizer.canonicalize({"a": StartedAt.MIDNIGHT})
+    assert canonical == CanonicalArguments(
         {"a": CanonicalFallback(CanonicalFallback("2024-01-01T00:00:00"))}
     )
+    assert argument_canonicalizer.canonicalize(canonical.decode()) == canonical
 
 
 # -- Keeping Pydantic's encoder out of the walk ------------------------------

@@ -112,8 +112,8 @@ def test_a_migrated_execution_keeps_its_result_and_metadata():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -130,8 +130,8 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -145,8 +145,8 @@ def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order", "units"),
-        ExecutionShape.from_names("charge", "order_id", "cents"),
+        ExecutionShape("authorize", "order", "units"),
+        ExecutionShape("charge", "order_id", "cents"),
         convert_arguments=lambda order, units: {
             "order_id": order["id"],
             "cents": units * 100,
@@ -165,8 +165,8 @@ def test_a_default_the_new_boundary_gained_is_written_out_by_the_migration():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("authorize", "order", "currency"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("authorize", "order", "currency"),
         convert_arguments=lambda order: {"order": order, "currency": "JPY"},
     )
     [migrated] = migrate(migration, session(execution))
@@ -186,8 +186,8 @@ def test_a_fallback_argument_reaches_the_conversion_as_itself():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "client"),
-        ExecutionShape.from_names("charge", "client"),
+        ExecutionShape("authorize", "client"),
+        ExecutionShape("charge", "client"),
         convert_arguments=lambda client: seen.append(client) or {"client": client},
     )
     migrate(migration, session(execution))
@@ -206,8 +206,8 @@ def test_a_fallback_argument_passed_through_keys_the_call_as_it_did_before():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "client", "order"),
-        ExecutionShape.from_names("charge", "client", "order"),
+        ExecutionShape("authorize", "client", "order"),
+        ExecutionShape("charge", "client", "order"),
         convert_arguments=lambda client, order: {"client": client, "order": order},
     )
     [migrated] = migrate(migration, session(execution))
@@ -224,8 +224,8 @@ def test_a_child_follows_its_remapped_parent():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
     )
     migrated = migrate(migration, session(parent, child))
     by_name = {execution.id.name.value: execution for execution in migrated}
@@ -240,8 +240,8 @@ def test_a_grandchild_follows_too():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
     )
     migrated = migrate(migration, session(root, child, grandchild))
     by_name = {execution.id.name.value: execution for execution in migrated}
@@ -267,7 +267,7 @@ def test_dropping_a_boundary_takes_what_was_recorded_beneath_it():
     kept = started("notify", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.drop(ExecutionShape.from_names("authorize", "order"))
+    migration.drop(ExecutionShape("authorize", "order"))
     migrated = migrate(migration, session(root, child, kept))
 
     assert [execution.id.name.value for execution in migrated] == ["notify"]
@@ -280,8 +280,8 @@ def test_repeated_calls_keep_the_ordinals_that_tell_them_apart():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("retry"),
-        ExecutionShape.from_names("retried"),
+        ExecutionShape("retry"),
+        ExecutionShape("retried"),
     )
     migrated = migrate(migration, session(first, second))
 
@@ -312,8 +312,8 @@ def test_identical_repeated_calls_are_converted_once_between_them():
     conversions = itertools.count()
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("retry", "order"),
-        ExecutionShape.from_names("retried", "order"),
+        ExecutionShape("retry", "order"),
+        ExecutionShape("retried", "order"),
         convert_arguments=lambda order: {"order": f"{order}-{next(conversions)}"},
     )
 
@@ -341,8 +341,8 @@ def test_gathering_separate_calls_into_one_class_is_refused():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "at_all"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "at_all"),
         convert_arguments=lambda order: {"at_all": True},
     )
 
@@ -356,12 +356,12 @@ def test_two_boundaries_may_share_a_name_while_their_calls_stay_apart():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
     )
     migration.remap(
-        ExecutionShape.from_names("capture", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("capture", "order"),
+        ExecutionShape("charge", "order"),
     )
     migrated = migrate(migration, session(authorize, capture))
 
@@ -377,8 +377,8 @@ def test_records_of_another_generation_are_refused():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order", "currency"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order", "currency"),
+        ExecutionShape("charge", "order"),
         convert_arguments=lambda order, currency: {"order": order},
     )
 
@@ -391,8 +391,8 @@ def test_a_conversion_that_misses_an_argument_is_refused():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order_id", "cents"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order_id", "cents"),
         convert_arguments=lambda order: {"order_id": order},
     )
 
@@ -405,30 +405,44 @@ def test_a_rename_that_changes_the_parameters_needs_a_conversion():
 
     with pytest.raises(MigrationError, match="conversion between them"):
         migration.remap(
-            ExecutionShape.from_names("authorize", "order"),
-            ExecutionShape.from_names("charge", "order_id"),
+            ExecutionShape("authorize", "order"),
+            ExecutionShape("charge", "order_id"),
         )
 
 
 def test_a_boundary_registered_twice_is_refused():
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
     )
 
     with pytest.raises(MigrationError, match="already registered"):
-        migration.drop(ExecutionShape.from_names("authorize", "order"))
+        migration.drop(ExecutionShape("authorize", "order"))
 
 
 def test_a_boundary_naming_one_parameter_twice_is_refused():
     with pytest.raises(ValueError, match="more than once"):
-        ExecutionShape.from_names("authorize", "order", "order")
+        ExecutionShape("authorize", "order", "order")
 
 
-def test_an_execution_shape_constructor_requires_value_objects():
+def test_an_execution_shape_requires_string_argument_names():
     with pytest.raises(TypeError):
         ExecutionShape("authorize", frozenset({"order"}))  # type: ignore[arg-type]
+
+
+def test_an_execution_shape_exposes_read_only_properties():
+    shape = ExecutionShape("authorize", "order")
+
+    with pytest.raises(AttributeError):
+        shape.name = "charge"  # type: ignore[misc]
+
+
+def test_an_execution_shape_is_not_hashable():
+    shape = ExecutionShape("authorize", "order")
+
+    with pytest.raises(TypeError):
+        hash(shape)
 
 
 def test_a_fallback_nested_in_a_container_survives_a_conversion():
@@ -442,8 +456,8 @@ def test_a_fallback_nested_in_a_container_survives_a_conversion():
 
     migration = migrator()
     migration.remap(
-        ExecutionShape.from_names("authorize", "clients", "units"),
-        ExecutionShape.from_names("charge", "clients", "cents"),
+        ExecutionShape("authorize", "clients", "units"),
+        ExecutionShape("charge", "clients", "cents"),
         convert_arguments=lambda clients, units: {
             "clients": clients,
             "cents": units * 100,
@@ -478,7 +492,7 @@ def test_a_drop_is_held_to_the_shape_it_declares():
     execution = started("authorize", arguments={"order": "ord_1"})
 
     migration = migrator()
-    migration.drop(ExecutionShape.from_names("authorize", "order", "currency"))
+    migration.drop(ExecutionShape("authorize", "order", "currency"))
 
     with pytest.raises(MigrationError, match="another generation"):
         migrate(migration, session(execution))
@@ -503,22 +517,19 @@ def test_registered_transitions_run_to_the_domains_current_version():
         Domain(PAY, version="v3"), canonicalizer=JsonArgumentCanonicalizer()
     )
     migration.transition("v1", "v2").remap(
-        ExecutionShape.from_names("authorize", "order"),
-        ExecutionShape.from_names("charge", "order"),
+        ExecutionShape("authorize", "order"),
+        ExecutionShape("charge", "order"),
     )
     migration.transition("v2", "v3").remap(
-        ExecutionShape.from_names("charge", "order"),
-        ExecutionShape.from_names("capture", "order"),
+        ExecutionShape("charge", "order"),
+        ExecutionShape("capture", "order"),
     )
 
     replacement = migration.execute(
         session(started("authorize", arguments={"order": "ord_1"}))
     )
 
-    assert (
-        replacement.executions[0].id.name
-        == ExecutionShape.from_names("capture", "order").name
-    )
+    assert replacement.executions[0].id.name == ExecutionShape("capture", "order").name
     assert replacement.metadata.domain_versions[PAY].value == "v3"
 
 

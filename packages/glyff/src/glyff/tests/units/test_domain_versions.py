@@ -24,6 +24,29 @@ def domain(id: DomainId, version: str) -> Domain:
     return Domain(id, version=DomainVersion(version))
 
 
+def test_a_domain_is_not_hashable():
+    payment_domain = domain(PAYMENTS, "v1")
+
+    with pytest.raises(TypeError):
+        hash(payment_domain)
+
+
+async def test_an_engraved_function_captures_the_domain_values_at_decoration(
+    serializer, argument_canonicalizer
+):
+    payment_domain = domain(PAYMENTS, "v1")
+    task = _task(payment_domain)
+    payment_domain._version = DomainVersion("v2")
+
+    backend = MemoryBackend()
+    async with _session(backend, serializer, argument_canonicalizer):
+        await task()
+
+    assert await backend.claim_domain(
+        SESSION, PAYMENTS, DomainVersion("other")
+    ) == DomainVersion("v1")
+
+
 def _session(
     backend: MemoryBackend,
     serializer: Serializer,

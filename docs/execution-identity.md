@@ -147,7 +147,7 @@ verbatim — anything that re-encoded them would break the key. It is what lets 
 argument and recompute the key from the record alone.
 Backends restore that preimage through
 `CanonicalArguments.from_recorded_bytes()`, which validates the recorded form
-without re-encoding it.
+and its exact canonical spelling without replacing the recorded bytes.
 
 A recorded canonical form reads back as logical `CanonicalArgumentValue`s,
 including `CanonicalFallback` values for fallback markers. Canonicalizing those

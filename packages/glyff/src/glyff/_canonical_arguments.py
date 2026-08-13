@@ -37,10 +37,14 @@ class CanonicalArguments:
 
     @classmethod
     def from_recorded_bytes(cls, data: bytes) -> CanonicalArguments:
-        """Restore and validate canonical arguments without re-encoding them."""
+        """Restore canonical arguments whose bytes already use the exact encoding."""
         instance = cls.__new__(cls)
         instance._data = bytes(data)
-        instance.decode()
+        decoded = instance.decode()
+        if cls(decoded).data != instance.data:
+            raise InvalidExecutionError(
+                "Recorded canonical arguments do not use the canonical encoding."
+            )
         return instance
 
     @property
@@ -129,7 +133,13 @@ def _require_unreserved_mapping(value: Mapping[str, object]) -> None:
 def _restore_recorded_value(value: Any) -> CanonicalArgumentValue:
     if isinstance(value, dict):
         if len(value) == 1 and _FALLBACK_MARKER_KEY in value:
-            return CanonicalFallback(value[_FALLBACK_MARKER_KEY])
+            return CanonicalFallback(
+                _restore_recorded_value(value[_FALLBACK_MARKER_KEY])
+            )
+        if _FALLBACK_MARKER_KEY in value:
+            raise InvalidExecutionError(
+                "Recorded canonical arguments contain the reserved fallback key."
+            )
         return {key: _restore_recorded_value(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_restore_recorded_value(item) for item in value]

@@ -10,6 +10,11 @@ PAYMENTS = DomainId("com.example.payments")
 SHIPPING = DomainId("com.example.shipping")
 
 
+def test_domain_versions_reject_duplicate_normalized_domain_ids():
+    with pytest.raises(ValueError, match="specified more than once"):
+        DomainVersionMap({PAYMENTS: "v1", PAYMENTS.value: "v2"})
+
+
 def started(name: str, *, domain_id: DomainId = PAYMENTS, parent=None) -> Execution:
     return Execution.start(
         make_execution_id(name, domain_id=domain_id, parent=parent),

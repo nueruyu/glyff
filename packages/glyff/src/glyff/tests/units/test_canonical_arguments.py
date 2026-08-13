@@ -37,13 +37,26 @@ def test_decode_restores_nested_fallbacks():
     assert arguments.decode() == {"clients": [CanonicalFallback("com.example.Client")]}
 
 
-def test_recorded_bytes_are_validated_without_being_reencoded():
-    data = b'{"b": 2, "a": 1}'
+def test_recorded_bytes_must_use_the_canonical_encoding():
+    with pytest.raises(InvalidExecutionError, match="canonical encoding"):
+        CanonicalArguments.from_recorded_bytes(b'{"b": 2, "a": 1}')
 
-    arguments = CanonicalArguments.from_recorded_bytes(data)
 
-    assert arguments.data == data
-    assert arguments.decode() == {"a": 1, "b": 2}
+def test_decode_recursively_restores_nested_fallbacks():
+    arguments = CanonicalArguments(
+        {"started_at": CanonicalFallback(CanonicalFallback("2024-01-01"))}
+    )
+
+    assert arguments.decode() == {
+        "started_at": CanonicalFallback(CanonicalFallback("2024-01-01"))
+    }
+
+
+def test_recorded_mapping_cannot_claim_the_reserved_fallback_key():
+    with pytest.raises(InvalidExecutionError, match="reserved fallback key"):
+        CanonicalArguments.from_recorded_bytes(
+            b'{"value":{"__glyff_fallback__":"x","other":1}}'
+        )
 
 
 def test_canonical_arguments_digest_is_sha256_of_their_bytes():
