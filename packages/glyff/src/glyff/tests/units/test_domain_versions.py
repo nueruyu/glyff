@@ -85,6 +85,44 @@ async def test_a_first_call_records_the_domains_version(
     ) == DomainVersion("v1")
 
 
+async def test_a_nested_domain_execution_records_its_parent_domain_identity(
+    serializer, argument_canonicalizer
+):
+    payments = domain(PAYMENTS, "v1")
+    shipping = domain(SHIPPING, "v2")
+
+    @shipping.engrave
+    async def ship() -> str:
+        return "shipped"
+
+    @payments.engrave
+    async def checkout() -> str:
+        return await ship()
+
+    backend = MemoryBackend()
+    async with _session(backend, serializer, argument_canonicalizer):
+        assert await checkout() == "shipped"
+
+    executions = [
+        execution async for execution in backend.repository.executions(SESSION)
+    ]
+    by_domain = {execution.id.domain_id: execution for execution in executions}
+    parent = by_domain[PAYMENTS]
+    child = by_domain[SHIPPING]
+
+    assert parent.id.parent_id is None
+    parent_id = child.id.parent_id
+    assert parent_id is not None
+    assert parent_id == parent.id
+    assert parent_id.domain_id == PAYMENTS
+    assert await backend.claim_domain(
+        SESSION, PAYMENTS, DomainVersion("other")
+    ) == DomainVersion("v1")
+    assert await backend.claim_domain(
+        SESSION, SHIPPING, DomainVersion("other")
+    ) == DomainVersion("v2")
+
+
 async def test_entering_under_the_recorded_version_is_accepted(
     serializer, argument_canonicalizer
 ):
