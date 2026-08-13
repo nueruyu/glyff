@@ -26,7 +26,7 @@ def test_canonical_arguments_reject_non_finite_numbers(value):
 @pytest.mark.parametrize("data", [b"not-json", b"[]", b'{"a":NaN}'])
 def test_decode_rejects_malformed_canonical_data(data):
     with pytest.raises(InvalidExecutionError):
-        CanonicalArguments._from_recorded_bytes(data).decode()
+        CanonicalArguments.from_recorded_bytes(data)
 
 
 def test_decode_restores_nested_fallbacks():
@@ -35,6 +35,15 @@ def test_decode_restores_nested_fallbacks():
     )
 
     assert arguments.decode() == {"clients": [CanonicalFallback("com.example.Client")]}
+
+
+def test_recorded_bytes_are_validated_without_being_reencoded():
+    data = b'{"b": 2, "a": 1}'
+
+    arguments = CanonicalArguments.from_recorded_bytes(data)
+
+    assert arguments.data == data
+    assert arguments.decode() == {"a": 1, "b": 2}
 
 
 def test_canonical_arguments_digest_is_sha256_of_their_bytes():

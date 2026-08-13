@@ -149,7 +149,7 @@ def test_a_save_copies_the_payloads_it_snapshots():
     # The casts are the point: this is the call a type checker cannot stop.
     execution = Execution.start(
         make_execution_id("task"),
-        CanonicalArguments._from_recorded_bytes(cast(bytes, arguments)),
+        CanonicalArguments.from_recorded_bytes(cast(bytes, arguments)),
     )
     execution.complete(SerializedValue(cast(bytes, result)))
     execution.set_metadata("note", SerializedValue(cast(bytes, metadata)))

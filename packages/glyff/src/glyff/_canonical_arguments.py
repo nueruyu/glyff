@@ -29,13 +29,18 @@ class CanonicalArguments:
 
     __slots__ = ("_data",)
 
-    def __init__(self, arguments: Mapping[str, CanonicalArgumentValue]) -> None:
+    def __init__(
+        self,
+        arguments: Mapping[str, CanonicalArgumentValue],
+    ) -> None:
         self._data = encode_canonical(_encode_argument_mapping(arguments))
 
     @classmethod
-    def _from_recorded_bytes(cls, data: bytes) -> CanonicalArguments:
+    def from_recorded_bytes(cls, data: bytes) -> CanonicalArguments:
+        """Restore and validate canonical arguments without re-encoding them."""
         instance = cls.__new__(cls)
-        instance._data = data
+        instance._data = bytes(data)
+        instance.decode()
         return instance
 
     @property
@@ -83,12 +88,7 @@ def _encode_argument_mapping(
 
 def _encode_argument_value(value: CanonicalArgumentValue) -> CanonicalValue:
     if isinstance(value, CanonicalFallback):
-        if not _is_canonical_value(value.representation):
-            raise ArgumentCanonicalizationError(
-                "A canonical fallback representer returned a value outside the "
-                "JSON data model."
-            )
-        return {_FALLBACK_MARKER_KEY: value.representation}
+        return {_FALLBACK_MARKER_KEY: _encode_argument_value(value.representation)}
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     if isinstance(value, list):
@@ -126,7 +126,7 @@ def _require_unreserved_mapping(value: Mapping[str, object]) -> None:
         )
 
 
-def _restore_recorded_value(value: CanonicalValue) -> CanonicalArgumentValue:
+def _restore_recorded_value(value: Any) -> CanonicalArgumentValue:
     if isinstance(value, dict):
         if len(value) == 1 and _FALLBACK_MARKER_KEY in value:
             return CanonicalFallback(value[_FALLBACK_MARKER_KEY])

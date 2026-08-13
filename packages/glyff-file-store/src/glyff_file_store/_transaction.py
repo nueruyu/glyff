@@ -8,7 +8,7 @@ from glyff.store.staging import ExecutionStage, ExecutionStaging
 from glyff_file_store._file_client import FileClient
 
 
-class _ClientTransaction(Transaction):
+class ClientTransaction(Transaction):
     def __init__(self, client: FileClient, staging: ExecutionStaging) -> None:
         self._client = client
         self._staging = staging
@@ -16,7 +16,7 @@ class _ClientTransaction(Transaction):
         self._closed = False
         self._lock = asyncio.Lock()
 
-    async def begin(self) -> _ClientTransaction:
+    async def begin(self) -> ClientTransaction:
         self._stage = self._staging.begin()
         return self
 

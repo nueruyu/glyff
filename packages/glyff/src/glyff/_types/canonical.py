@@ -27,7 +27,7 @@ class CanonicalFallback:
     fallback representer.
     """
 
-    representation: CanonicalValue
+    representation: "CanonicalArgumentValue"
 
 
 CanonicalArgumentValue: TypeAlias = (

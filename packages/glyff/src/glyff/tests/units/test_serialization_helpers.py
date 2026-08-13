@@ -7,9 +7,7 @@ from glyff import (
     CanonicalArguments,
     CanonicalArgumentValue,
     CanonicalFallback,
-    CanonicalValue,
 )
-from glyff._canonical_arguments import _encode_argument_value, encode_canonical
 from glyff.exceptions import ArgumentCanonicalizationError
 from glyff.serialization import (
     CanonicalFallbackRepresenter,
@@ -42,7 +40,7 @@ def test_sorted_canonical_is_stable_for_partial_order_elements():
     values = {frozenset({"a", "b"}), frozenset({"c", "d"}), frozenset({"e"})}
     ordered = _canonicalize_set(values, canonical)
     assert ordered == sorted(
-        ordered, key=lambda value: encode_canonical(_encode_argument_value(value))
+        ordered, key=lambda value: CanonicalArguments({"value": value}).data
     )
 
 
@@ -120,11 +118,10 @@ def test_canonical_decomposes_partials():
 
 def test_canonical_coerces_non_string_mapping_keys():
     # Coerced here, not by the encoder, so a JSON round trip reproduces the bytes.
-    assert canonical({2: "a", 10: "b"}) == {"2": "a", "10": "b"}
-    assert (
-        encode_canonical(_encode_argument_value(canonical({2: "a", 10: "b"})))
-        == b'{"10":"b","2":"a"}'
-    )
+    arguments = canonical({2: "a", 10: "b"})
+    assert arguments == {"2": "a", "10": "b"}
+    assert isinstance(arguments, dict)
+    assert CanonicalArguments(arguments).data == b'{"10":"b","2":"a"}'
 
 
 def test_canonical_rejects_keys_that_collide_once_stringified():
@@ -209,7 +206,7 @@ def test_canonical_applies_the_fallback_at_any_depth():
 
 def test_a_fallback_representer_must_return_a_canonical_value():
     class InvalidFallback(CanonicalFallbackRepresenter):
-        def represent(self, value) -> CanonicalValue:
+        def represent(self, value) -> CanonicalArgumentValue:
             return object()  # type: ignore[return-value]
 
     with pytest.raises(

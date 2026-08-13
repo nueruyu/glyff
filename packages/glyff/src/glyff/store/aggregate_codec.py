@@ -20,8 +20,7 @@ from .._execution import (
 )
 from .._types import ExecutionId
 from ..exceptions import SerializationError
-from ..serialization._utils import stable_json_dumps
-from ..serialization.constants import DEFAULT_ENCODING
+from ..serialization.constants import DEFAULT_ENCODING, JSON_SEPARATORS
 
 _STATUS_NAMES = {
     ExecutionStatus.STARTED: "started",
@@ -81,7 +80,12 @@ def _unpack_metadata(raw: object) -> dict[str, Metadata]:
 
 
 def _json_bytes(value: object) -> bytes:
-    return stable_json_dumps(value).encode(DEFAULT_ENCODING)
+    return json.dumps(
+        value,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=JSON_SEPARATORS,
+    ).encode(DEFAULT_ENCODING)
 
 
 def _pack_arguments(arguments: CanonicalArguments) -> str:
@@ -111,7 +115,7 @@ def execution_from_dict(execution_id: ExecutionId, stored: dict[str, Any]) -> Ex
     return Execution(
         id=execution_id,
         status=status,
-        arguments=CanonicalArguments._from_recorded_bytes(
+        arguments=CanonicalArguments.from_recorded_bytes(
             stored["arguments"].encode(DEFAULT_ENCODING)
         ),
         result=_unpack_value(stored.get("result"))

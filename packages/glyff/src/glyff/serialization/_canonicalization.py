@@ -3,8 +3,8 @@ import functools
 import math
 from typing import Any, Callable, TypeAlias
 
-from .._canonical_arguments import _encode_argument_value, encode_canonical
-from .._types import CanonicalArgumentValue, CanonicalFallback, CanonicalValue
+from .._canonical_arguments import CanonicalArguments
+from .._types import CanonicalArgumentValue, CanonicalFallback
 from ..exceptions import ArgumentCanonicalizationError
 from ._fallback import CanonicalFallbackRepresenter
 
@@ -67,13 +67,19 @@ def _canonicalize_set(values: Any, recurse: _Recurse) -> list[CanonicalArgumentV
         return sorted(members)  # type: ignore[type-var]
     except TypeError:
         return sorted(
-            members, key=lambda member: encode_canonical(_encode_argument_value(member))
+            members, key=lambda member: CanonicalArguments({"value": member}).data
         )
 
 
-def require_canonical_value(value: CanonicalValue) -> None:
+def require_canonical_value(value: CanonicalArgumentValue) -> None:
     """Validate a value supplied through a canonicalization extension point."""
-    encode_canonical(value)
+    try:
+        CanonicalArguments({"value": value})
+    except ArgumentCanonicalizationError as error:
+        raise ArgumentCanonicalizationError(
+            "A canonical fallback representer returned a value that is not in "
+            "the JSON data model."
+        ) from error
 
 
 def to_canonical(
@@ -88,7 +94,7 @@ def to_canonical(
         )
 
     if isinstance(obj, CanonicalFallback):
-        require_canonical_value(obj.representation)
+        CanonicalArguments({"value": obj})
         return obj
 
     derived = _derive_canonical(obj, recurse)

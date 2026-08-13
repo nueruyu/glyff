@@ -24,7 +24,7 @@ from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 from ._sqlite_client import SQLiteClient
 from ._sqlite_migration import SQLiteSessionMigration
-from ._transaction import _ClientTransaction
+from ._transaction import ClientTransaction
 
 
 class SQLiteExecutionRepository(ExecutionRepository):
@@ -130,7 +130,7 @@ class SQLiteTransactionProvider(TransactionProvider):
         self._staging = staging
 
     async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client, self._staging).begin()
+        return await ClientTransaction(self._client, self._staging).begin()
 
 
 class SQLiteBackend(MigratableBackend):

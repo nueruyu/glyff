@@ -22,7 +22,7 @@ from glyff.store.staging import ExecutionStaging, SaveExecution
 
 from ._file_client import FileClient
 from ._file_migration import FileSessionMigration
-from ._transaction import _ClientTransaction
+from ._transaction import ClientTransaction
 
 # Bump when the stored layout changes.
 FORMAT_VERSION = 1
@@ -95,7 +95,7 @@ class FileTransactionProvider(TransactionProvider):
         self._staging = staging
 
     async def begin_transaction(self) -> Transaction:
-        return await _ClientTransaction(self._client, self._staging).begin()
+        return await ClientTransaction(self._client, self._staging).begin()
 
 
 class JsonFileBackend(MigratableBackend):

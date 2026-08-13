@@ -78,7 +78,7 @@ class ExecutionSnapshot:
         return Execution(
             id=self.id,
             status=self.status,
-            arguments=CanonicalArguments._from_recorded_bytes(self.arguments),
+            arguments=CanonicalArguments.from_recorded_bytes(self.arguments),
             result=SerializedValue(self.result) if self.result is not None else None,
             metadata={
                 name: Metadata(key=name, value=SerializedValue(value))

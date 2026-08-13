@@ -176,6 +176,19 @@ def test_a_scalar_valued_enum_is_represented_by_value(
     )
 
 
+def test_an_enum_preserves_the_representation_of_its_non_json_value(
+    argument_canonicalizer: ArgumentCanonicalizer,
+):
+    class StartedAt(enum.Enum):
+        MIDNIGHT = datetime.datetime(2024, 1, 1)
+
+    assert argument_canonicalizer.canonicalize(
+        {"a": StartedAt.MIDNIGHT}
+    ) == CanonicalArguments(
+        {"a": CanonicalFallback(CanonicalFallback("2024-01-01T00:00:00"))}
+    )
+
+
 # -- Keeping Pydantic's encoder out of the walk ------------------------------
 
 

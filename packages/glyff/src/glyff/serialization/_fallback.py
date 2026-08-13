@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .._types import CanonicalValue
+from .._types import CanonicalArgumentValue
 from ..exceptions import ArgumentCanonicalizationError
 
 
@@ -9,7 +9,7 @@ class CanonicalFallbackRepresenter(ABC):
     """Represents values unsupported by the standard canonicalization rules."""
 
     @abstractmethod
-    def represent(self, value: Any) -> CanonicalValue:
+    def represent(self, value: Any) -> CanonicalArgumentValue:
         """Return the value's canonical fallback representation."""
         ...
 
@@ -20,13 +20,13 @@ class FallbackByTypeQualname(CanonicalFallbackRepresenter):
     Correct only when instances carry no state that should distinguish calls.
     """
 
-    def represent(self, value: Any) -> CanonicalValue:
+    def represent(self, value: Any) -> CanonicalArgumentValue:
         value_type = type(value)
         return f"{value_type.__module__}.{value_type.__qualname__}"
 
 
 class _RejectFallback(CanonicalFallbackRepresenter):
-    def represent(self, value: Any) -> CanonicalValue:
+    def represent(self, value: Any) -> CanonicalArgumentValue:
         raise ArgumentCanonicalizationError(
             f"Cannot canonicalize value of type '{type(value).__name__}': it has "
             "no canonical representation. Give it a supported value representation "
