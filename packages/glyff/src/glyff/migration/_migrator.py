@@ -8,8 +8,8 @@ from typing import Any, TypeAlias
 
 from .._domain import Domain
 from .._canonical_arguments import (
+    CanonicalArgumentValue,
     CanonicalArguments,
-    RecordedArgumentValue,
 )
 from .._execution import Execution
 from .._identity import (
@@ -385,9 +385,9 @@ class _ExecutionMigrationRunner:
     @staticmethod
     def _recorded(
         execution: Execution, source: ExecutionShape
-    ) -> dict[str, RecordedArgumentValue]:
+    ) -> dict[str, CanonicalArgumentValue]:
         try:
-            stored = execution.arguments.recorded()
+            stored = execution.arguments.decode()
         except InvalidExecutionError as error:
             raise MigrationError(
                 f"Cannot migrate {execution.id.name} in {execution.id.domain_id}: {error}"

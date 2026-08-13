@@ -2,7 +2,7 @@ import hashlib
 
 import pytest
 
-from glyff import ArgumentsDigest, CanonicalArguments
+from glyff import ArgumentsDigest, CanonicalArguments, CanonicalFallback
 from glyff.exceptions import ArgumentCanonicalizationError, InvalidExecutionError
 
 
@@ -24,9 +24,17 @@ def test_canonical_arguments_reject_non_finite_numbers(value):
 
 
 @pytest.mark.parametrize("data", [b"not-json", b"[]", b'{"a":NaN}'])
-def test_recorded_arguments_reject_malformed_canonical_data(data):
+def test_decode_rejects_malformed_canonical_data(data):
     with pytest.raises(InvalidExecutionError):
-        CanonicalArguments._from_recorded_bytes(data).recorded()
+        CanonicalArguments._from_recorded_bytes(data).decode()
+
+
+def test_decode_restores_nested_fallbacks():
+    arguments = CanonicalArguments(
+        {"clients": [CanonicalFallback("com.example.Client")]}
+    )
+
+    assert arguments.decode() == {"clients": [CanonicalFallback("com.example.Client")]}
 
 
 def test_canonical_arguments_digest_is_sha256_of_their_bytes():

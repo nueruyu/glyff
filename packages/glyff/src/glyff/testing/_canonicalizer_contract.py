@@ -80,7 +80,7 @@ class ArgumentCanonicalizerContract:
         canonical = canonicalizer.canonicalize(
             {"a": 1, "b": ["x", None], "c": {"d": True}, "e": "text"}
         )
-        assert canonicalizer.canonicalize(canonical.recorded()) == canonical
+        assert canonicalizer.canonicalize(canonical.decode()) == canonical
 
     def test_an_opaque_value_canonicalizes_to_the_marker(
         self, canonicalizer: ArgumentCanonicalizer

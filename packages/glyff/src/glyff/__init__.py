@@ -6,8 +6,6 @@ from ._canonical_arguments import (
     CanonicalArguments,
     CanonicalValue,
     CanonicalFallback,
-    RecordedArgumentValue,
-    RecordedArguments,
 )
 from ._execution import (
     Execution,
@@ -55,8 +53,6 @@ __all__ = [
     "CanonicalArgumentValue",
     "CanonicalArguments",
     "CanonicalFallback",
-    "RecordedArgumentValue",
-    "RecordedArguments",
     "Execution",
     "ExecutionId",
     "ExecutionName",

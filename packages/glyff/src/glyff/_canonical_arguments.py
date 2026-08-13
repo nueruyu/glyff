@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, TypeAlias
 
@@ -51,7 +51,6 @@ CanonicalArgumentValue: TypeAlias = (
     | list["CanonicalArgumentValue"]
     | dict[str, "CanonicalArgumentValue"]
 )
-RecordedArgumentValue: TypeAlias = CanonicalArgumentValue
 
 
 class CanonicalArguments:
@@ -77,8 +76,21 @@ class CanonicalArguments:
     def data(self) -> bytes:
         return self._data
 
-    def recorded(self) -> RecordedArguments:
-        return RecordedArguments.from_bytes(self.data)
+    def decode(self) -> dict[str, CanonicalArgumentValue]:
+        """Decode and validate the logical values stored in these arguments."""
+        try:
+            decoded = json.loads(self.data, parse_constant=_reject_json_constant)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            raise InvalidExecutionError(
+                "Recorded canonical arguments are not valid UTF-8 JSON."
+            ) from error
+        if not isinstance(decoded, dict) or not all(
+            isinstance(name, str) for name in decoded
+        ):
+            raise InvalidExecutionError(
+                "Recorded canonical arguments must be a mapping of argument names."
+            )
+        return {name: _restore_recorded_value(value) for name, value in decoded.items()}
 
     @property
     def digest(self) -> ArgumentsDigest:
@@ -92,49 +104,6 @@ class CanonicalArguments:
 
     def __repr__(self) -> str:
         return f"CanonicalArguments(data={self.data!r})"
-
-
-class RecordedArguments(Mapping[str, RecordedArgumentValue]):
-    """A validated argument mapping decoded from an execution record."""
-
-    __slots__ = ("_arguments",)
-
-    def __init__(self, arguments: Mapping[str, RecordedArgumentValue]) -> None:
-        if not all(
-            isinstance(name, str) and _is_recorded_argument_value(value)
-            for name, value in arguments.items()
-        ):
-            raise TypeError(
-                "RecordedArguments requires argument names and recorded canonical values."
-            )
-        self._arguments = dict(arguments)
-
-    @classmethod
-    def from_bytes(cls, data: bytes) -> RecordedArguments:
-        try:
-            decoded = json.loads(data, parse_constant=_reject_json_constant)
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-            raise InvalidExecutionError(
-                "Recorded canonical arguments are not valid UTF-8 JSON."
-            ) from error
-        if not isinstance(decoded, dict) or not all(
-            isinstance(name, str) for name in decoded
-        ):
-            raise InvalidExecutionError(
-                "Recorded canonical arguments must be a mapping of argument names."
-            )
-        return cls(
-            {name: _restore_recorded_value(value) for name, value in decoded.items()}
-        )
-
-    def __getitem__(self, name: str) -> RecordedArgumentValue:
-        return self._arguments[name]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._arguments)
-
-    def __len__(self) -> int:
-        return len(self._arguments)
 
 
 def _encode_argument_mapping(
@@ -191,7 +160,7 @@ def _require_unreserved_mapping(value: Mapping[str, object]) -> None:
         )
 
 
-def _restore_recorded_value(value: CanonicalValue) -> RecordedArgumentValue:
+def _restore_recorded_value(value: CanonicalValue) -> CanonicalArgumentValue:
     if isinstance(value, dict):
         if len(value) == 1 and _FALLBACK_MARKER_KEY in value:
             return CanonicalFallback(value[_FALLBACK_MARKER_KEY])
@@ -210,21 +179,6 @@ def _reject_uncanonical(value: Any) -> Any:
 
 def _reject_json_constant(value: str) -> None:
     raise ValueError(f"{value} is not in the JSON data model.")
-
-
-def _is_recorded_argument_value(value: object) -> bool:
-    if isinstance(value, CanonicalFallback):
-        return _is_canonical_value(value.representation)
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return not isinstance(value, float) or math.isfinite(value)
-    if isinstance(value, list):
-        return all(_is_recorded_argument_value(item) for item in value)
-    if isinstance(value, dict):
-        return all(
-            isinstance(key, str) and _is_recorded_argument_value(item)
-            for key, item in value.items()
-        )
-    return False
 
 
 def _is_canonical_value(value: object) -> bool:
