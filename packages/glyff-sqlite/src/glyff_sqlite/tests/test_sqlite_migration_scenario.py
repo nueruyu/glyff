@@ -37,19 +37,19 @@ class Paused(Exception):
 # -- The generation that recorded the session --------------------------------
 
 
-@V1.engrave
+@V1.engrave(name="authorize")
 async def authorize(order: str) -> str:
     CALLS.append("authorize")
     return f"auth:{order}"
 
 
-@V1.engrave
+@V1.engrave(name="capture")
 async def capture(order: str) -> str:
     CALLS.append("capture")
     return f"cap:{order}"
 
 
-@V1.engrave
+@V1.engrave(name="finish")
 async def finish(order: str) -> str:
     CALLS.append("finish")
     if PAUSE["at_finish"]:
@@ -57,7 +57,7 @@ async def finish(order: str) -> str:
     return f"done:{order}"
 
 
-@V1.engrave
+@V1.engrave(name="checkout_v1")
 async def checkout_v1(order: str) -> str:
     return f"{await authorize(order)}/{await capture(order)}/{await finish(order)}"
 
@@ -65,25 +65,25 @@ async def checkout_v1(order: str) -> str:
 # -- The generation that resumes it ------------------------------------------
 
 
-@V2.engrave
+@V2.engrave(name="charge")
 async def charge(order: str) -> str:
     CALLS.append("charge")
     return f"auth:{order}"
 
 
-@V2.engrave
+@V2.engrave(name="capture_cents")
 async def capture_cents(order: str, cents: int) -> str:
     CALLS.append("capture_cents")
     return f"cap:{order}"
 
 
-@V2.engrave
+@V2.engrave(name="complete")
 async def complete(order: str) -> str:
     CALLS.append("complete")
     return f"done:{order}"
 
 
-@V2.engrave
+@V2.engrave(name="checkout_v2")
 async def checkout_v2(order: str) -> str:
     return (
         f"{await charge(order)}/"
