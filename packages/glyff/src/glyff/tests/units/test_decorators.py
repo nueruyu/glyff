@@ -33,6 +33,35 @@ def test_a_readable_function_comes_back_callable():
     assert callable(func)
 
 
+def test_an_invalid_explicit_name_is_refused_at_decoration():
+    with pytest.raises(ValueError, match="valid explicit execution name"):
+
+        @engrave(name="not a name")
+        async def func() -> None: ...
+
+
+async def test_an_explicit_name_is_recorded(serializer, argument_canonicalizer):
+    backend = MemoryBackend()
+
+    @engrave(name="billing.charge")
+    async def implementation_name() -> str:
+        return "charged"
+
+    async with Session(
+        id=SessionId("explicit-name"),
+        backend=backend,
+        serializer=serializer,
+        argument_canonicalizer=argument_canonicalizer,
+    ):
+        assert await implementation_name() == "charged"
+
+    [execution] = [
+        execution
+        async for execution in backend.repository.executions(SessionId("explicit-name"))
+    ]
+    assert execution.id.name.value == "billing.charge"
+
+
 async def test_an_uncanonicalizable_argument_names_the_function_it_was_passed_to(
     serializer, argument_canonicalizer
 ):

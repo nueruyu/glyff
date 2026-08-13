@@ -69,10 +69,9 @@ call under a different one raises `DomainVersionMismatchError` rather than
 migrating. See
 [migration](https://github.com/nueruyu/glyff/blob/main/docs/migration.md).
 
-*Planned:* an explicit identity — `@engrave(name="chat.reply", version=2)` — so
-recorded histories survive renames
-([#40](https://github.com/nueruyu/glyff/issues/40)); released versions derive
-the name from the function's `__qualname__`.
+Persistent boundaries should declare an identity such as
+`@engrave(name="chat.reply")`, so Python function renames do not change recorded
+keys. Without `name`, glyff derives it from the function's `__qualname__`.
 
 ## Extending
 
