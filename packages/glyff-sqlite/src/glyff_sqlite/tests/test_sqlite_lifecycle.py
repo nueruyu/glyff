@@ -54,7 +54,7 @@ def flaky(
         client._connect(),  # pyright: ignore[reportPrivateUsage]
         failing=failing,
     )
-    monkeypatch.setattr(client, "connect", lambda: connection)
+    monkeypatch.setattr(client, "_connect", lambda: connection)
     return connection
 
 

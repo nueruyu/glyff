@@ -90,7 +90,7 @@ async def stored(backend: SQLiteBackend) -> list[Execution]:
 def refuse(backend: SQLiteBackend, monkeypatch: pytest.MonkeyPatch, word: str) -> None:
     client = backend._client  # pyright: ignore[reportPrivateUsage]
     connect = client._connect  # pyright: ignore[reportPrivateUsage]
-    monkeypatch.setattr(client, "connect", lambda: RefusingConnection(connect(), word))
+    monkeypatch.setattr(client, "_connect", lambda: RefusingConnection(connect(), word))
 
 
 async def test_a_failed_execution_write_leaves_the_version_alone(
