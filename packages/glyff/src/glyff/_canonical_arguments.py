@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from ._types import (
     ArgumentsDigest,
@@ -16,6 +16,14 @@ from ._types import (
 from .exceptions import ArgumentCanonicalizationError, InvalidExecutionError
 
 _FALLBACK_MARKER_KEY = "__glyff_fallback__"
+
+
+def _is_string(value: object) -> bool:
+    return isinstance(value, str)
+
+
+def _is_dict(value: object) -> bool:
+    return isinstance(value, dict)
 
 
 class CanonicalArguments:
@@ -58,13 +66,19 @@ class CanonicalArguments:
             raise InvalidExecutionError(
                 "Recorded canonical arguments are not valid UTF-8 JSON."
             ) from error
-        if not isinstance(decoded, dict) or not all(
-            isinstance(name, str) for name in decoded
-        ):
+        if not isinstance(decoded, dict):
             raise InvalidExecutionError(
                 "Recorded canonical arguments must be a mapping of argument names."
             )
-        return {name: _restore_recorded_value(value) for name, value in decoded.items()}
+        entries = cast(dict[object, object], decoded)
+        if not all(isinstance(name, str) for name in entries):
+            raise InvalidExecutionError(
+                "Recorded canonical arguments must be a mapping of argument names."
+            )
+        recorded = cast(dict[str, Any], decoded)
+        return {
+            name: _restore_recorded_value(value) for name, value in recorded.items()
+        }
 
     @property
     def digest(self) -> ArgumentsDigest:
@@ -85,7 +99,7 @@ class CanonicalArguments:
 def _encode_argument_mapping(
     arguments: Mapping[str, CanonicalArgumentValue],
 ) -> dict[str, CanonicalValue]:
-    if not all(isinstance(name, str) for name in arguments):
+    if not all(_is_string(name) for name in arguments):
         raise ArgumentCanonicalizationError("Canonical argument names must be strings.")
     _require_unreserved_mapping(arguments)
     return {name: _encode_argument_value(value) for name, value in arguments.items()}
@@ -98,7 +112,7 @@ def _encode_argument_value(value: CanonicalArgumentValue) -> CanonicalValue:
         return value
     if isinstance(value, list):
         return [_encode_argument_value(item) for item in value]
-    if isinstance(value, dict):
+    if _is_dict(value):
         return _encode_argument_mapping(value)
     raise ArgumentCanonicalizationError(
         f"Value of type '{type(value).__name__}' is not a canonical argument value."
@@ -133,17 +147,18 @@ def _require_unreserved_mapping(value: Mapping[str, object]) -> None:
 
 def _restore_recorded_value(value: Any) -> CanonicalArgumentValue:
     if isinstance(value, dict):
-        if len(value) == 1 and _FALLBACK_MARKER_KEY in value:
+        recorded = cast(dict[str, Any], value)
+        if len(recorded) == 1 and _FALLBACK_MARKER_KEY in recorded:
             return CanonicalFallback(
-                _restore_recorded_value(value[_FALLBACK_MARKER_KEY])
+                _restore_recorded_value(recorded[_FALLBACK_MARKER_KEY])
             )
-        if _FALLBACK_MARKER_KEY in value:
+        if _FALLBACK_MARKER_KEY in recorded:
             raise InvalidExecutionError(
                 "Recorded canonical arguments contain the reserved fallback key."
             )
-        return {key: _restore_recorded_value(item) for key, item in value.items()}
+        return {key: _restore_recorded_value(item) for key, item in recorded.items()}
     if isinstance(value, list):
-        return [_restore_recorded_value(item) for item in value]
+        return [_restore_recorded_value(item) for item in cast(list[Any], value)]
     return value
 
 

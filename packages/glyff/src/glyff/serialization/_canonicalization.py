@@ -1,7 +1,7 @@
 import dataclasses
 import functools
 import math
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable, TypeAlias, cast
 
 from .._canonical_arguments import CanonicalArguments
 from .._types import CanonicalArgumentValue, CanonicalFallback
@@ -16,7 +16,7 @@ def _qualified_name(obj: Any) -> str:
     return f"{obj.__module__}.{obj.__qualname__}"
 
 
-def _identity_fields(obj: Any) -> list[dataclasses.Field]:
+def _identity_fields(obj: Any) -> list[dataclasses.Field[Any]]:
     return [
         field
         for field in dataclasses.fields(obj)
@@ -46,7 +46,7 @@ def _canonical_key(key: Any) -> str:
 
 
 def _canonical_mapping(
-    obj: dict, recurse: _Recurse
+    obj: dict[Any, Any], recurse: _Recurse
 ) -> dict[str, CanonicalArgumentValue]:
     canonical: dict[str, CanonicalArgumentValue] = {}
     for key, value in obj.items():
@@ -122,9 +122,9 @@ def _derive_canonical(obj: Any, recurse: _Recurse) -> Any:
             for field in _identity_fields(obj)
         }
     if isinstance(obj, dict):
-        return _canonical_mapping(obj, recurse)
+        return _canonical_mapping(cast(dict[Any, Any], obj), recurse)
     if isinstance(obj, (list, tuple)):
-        return [recurse(value) for value in obj]
+        return [recurse(value) for value in cast(list[Any] | tuple[Any, ...], obj)]
     if isinstance(obj, (set, frozenset)):
         return _canonicalize_set(obj, recurse)
     if isinstance(obj, (bytes, bytearray)):

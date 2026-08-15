@@ -14,7 +14,7 @@ async def execute(
     func: Callable[..., Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-    return_type: type,
+    return_type: type[Any],
 ) -> Any:
     """
     Orchestrates the execution of a regular (awaitable) task: cache checks,
@@ -47,6 +47,7 @@ async def execute(
     tracer.start(execution_id)
 
     func_exception: Exception | None = None
+    result: Any = None
 
     try:
         async with ctx.get_transaction_scope():

@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import sqlite3
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Generator, Mapping
 from contextlib import closing, contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -159,13 +159,13 @@ class SQLiteClient:
         return connection
 
     @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
+    def _connection(self) -> Generator[sqlite3.Connection, None, None]:
         """A configured connection, closed however the block ends."""
         with closing(self._connect()) as connection:
             yield connection
 
     @contextmanager
-    def _immediate_transaction(self) -> Iterator[sqlite3.Connection]:
+    def _immediate_transaction(self) -> Generator[sqlite3.Connection, None, None]:
         """One ``BEGIN IMMEDIATE``: committed if the block returns, rolled back
         if anything in it — or the commit itself — raises.
 
@@ -184,7 +184,7 @@ class SQLiteClient:
 
     # -- Schema initialization -------------------------------------------------
 
-    def _initialize_schema_sync(self) -> None:
+    def initialize_schema_sync(self) -> None:
         with self._immediate_transaction() as connection:
             self._stamp_or_check_meta(connection)
             connection.execute(
@@ -476,10 +476,12 @@ class SQLiteClient:
 
     # -- Direct SQL access (for initialization / inspection) -------------------
 
-    async def read_sql(self, sql: str, *params: Any) -> list[tuple]:
+    async def read_sql(self, sql: str, *params: Any) -> list[tuple[Any, ...]]:
         return await asyncio.to_thread(self._read_sql_sync, sql, params)
 
-    def _read_sql_sync(self, sql: str, params: tuple[Any, ...]) -> list[tuple]:
+    def _read_sql_sync(
+        self, sql: str, params: tuple[Any, ...]
+    ) -> list[tuple[Any, ...]]:
         with self._connection() as connection:
             return list(connection.execute(sql, params))
 

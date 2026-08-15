@@ -13,6 +13,14 @@ _DomainIdInput = TypeVar("_DomainIdInput", bound="DomainId | str")
 _DomainVersionInput = TypeVar("_DomainVersionInput", bound="DomainVersion | str")
 
 
+def _is_domain_id(value: object) -> bool:
+    return isinstance(value, (DomainId, str))
+
+
+def _is_domain_version(value: object) -> bool:
+    return isinstance(value, (DomainVersion, str))
+
+
 @dataclass(frozen=True)
 class DomainId:
     """A domain's persistent machine identifier."""
@@ -56,9 +64,7 @@ class DomainVersionMap(Mapping[DomainId, DomainVersion]):
     ) -> None:
         normalized: dict[DomainId, DomainVersion] = {}
         for domain_id, version in versions.items():
-            if not isinstance(domain_id, (DomainId, str)) or not isinstance(
-                version, (DomainVersion, str)
-            ):
+            if not _is_domain_id(domain_id) or not _is_domain_version(version):
                 raise TypeError(
                     "DomainVersionMap requires domain identifiers and domain versions."
                 )

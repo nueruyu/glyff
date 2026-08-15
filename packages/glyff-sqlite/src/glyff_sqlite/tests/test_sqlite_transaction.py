@@ -25,7 +25,7 @@ async def _committed(client: SQLiteClient) -> object:
 
 def _client(database_path: Path) -> SQLiteClient:
     client = SQLiteClient(database_path)
-    client._initialize_schema_sync()
+    client.initialize_schema_sync()
     return client
 
 

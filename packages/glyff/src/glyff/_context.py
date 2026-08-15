@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import contextvars
 from collections.abc import Iterator, Sequence
-from typing import Any, overload
+from types import TracebackType
+from typing import Any, cast, overload
 
 from ._event_system import EventEmitter
 from ._domain_claims import DomainClaims
@@ -26,7 +27,9 @@ class MetadataAccessor:
     def __init__(self, ctx: Context):
         self._ctx = ctx
 
-    async def set(self, key: str, value: Any, value_type: type | None = None) -> None:
+    async def set(
+        self, key: str, value: Any, value_type: type[Any] | None = None
+    ) -> None:
         """Attach metadata to the current execution, staged into the open
         transaction. ``value_type`` defaults to ``type(value)``; raises
         :class:`NoCurrentExecutionError` outside an engraved call.
@@ -43,7 +46,7 @@ class MetadataAccessor:
 
         serialized = await self._ctx.serializer.serialize(
             value,
-            type(value) if value_type is None else value_type,
+            cast(type[Any], type(value)) if value_type is None else value_type,
         )
         execution.set_metadata(key, SerializedValue(serialized))
         await self._ctx.repository.save(self._ctx.session_id, execution)
@@ -51,7 +54,7 @@ class MetadataAccessor:
     async def get(
         self,
         key: str,
-        return_type: type,
+        return_type: type[Any],
         *,
         execution_id: ExecutionId | None = None,
     ) -> Any | None:
@@ -171,7 +174,7 @@ class CallStack(Sequence[ExecutionId]):
     @overload
     def __getitem__(self, index: slice) -> Sequence[ExecutionId]: ...
 
-    def __getitem__(self, index):
+    def __getitem__(self, index: int | slice) -> ExecutionId | Sequence[ExecutionId]:
         return self._data[index]
 
     def __len__(self) -> int:
@@ -232,7 +235,12 @@ class TransactionScope:
         self._transaction = await self._transaction_provider.begin_transaction()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool:
         if self._transaction is None:
             return False
         if exc_type is None:
@@ -270,11 +278,11 @@ def get_context() -> Context:
         )
 
 
-def set_context(ctx: Context) -> contextvars.Token:
+def set_context(ctx: Context) -> contextvars.Token[Context]:
     """Sets the current workflow context. Returns a token that can be used to reset it."""
     return _context_var.set(ctx)
 
 
-def reset_context(token: contextvars.Token) -> None:
+def reset_context(token: contextvars.Token[Context]) -> None:
     """Resets the workflow context to a previous state using the provided token."""
     _context_var.reset(token)

@@ -1,3 +1,6 @@
+import contextvars
+from types import TracebackType
+
 from ._context import Context, reset_context, set_context
 from ._event_system import EventEmitter
 from ._interfaces import (
@@ -38,7 +41,7 @@ class Session:
         self._serializer = serializer
         self._event_emitter = event_emitter or EventEmitter([])
         self._context: Context | None = None
-        self._context_token = None
+        self._context_token: contextvars.Token[Context] | None = None
 
     @property
     def id(self) -> SessionId:
@@ -67,8 +70,13 @@ class Session:
         self._context_token = set_context(self._context)
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         # Execution events are persisted per event by the executor, so there is
         # no session-wide transaction to commit or roll back here.
-        if self._context_token:
+        if self._context_token is not None:
             reset_context(self._context_token)

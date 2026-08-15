@@ -19,7 +19,7 @@ _SELECT = "SELECT version FROM glyff_session_domains WHERE session_id = 's'"
 @pytest.fixture
 def client(tmp_path: Path) -> SQLiteClient:
     client = SQLiteClient(tmp_path / "lifecycle.sqlite3")
-    client._initialize_schema_sync()
+    client.initialize_schema_sync()
     return client
 
 

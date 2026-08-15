@@ -30,6 +30,14 @@ from ._models import SessionMetadata, StoredSession
 _ArgumentConverter = Callable[..., Mapping[str, Any]]
 
 
+def _is_string(value: object) -> bool:
+    return isinstance(value, str)
+
+
+def _is_execution_name(value: object) -> bool:
+    return isinstance(value, ExecutionName)
+
+
 class ExecutionShape:
     """What one generation of an engraved function is recorded as.
 
@@ -44,12 +52,12 @@ class ExecutionShape:
         name: str | ExecutionName,
         *argument_names: str,
     ) -> None:
-        if not all(isinstance(argument_name, str) for argument_name in argument_names):
+        if not all(_is_string(argument_name) for argument_name in argument_names):
             raise TypeError("ExecutionShape argument names must be strings.")
         if len(set(argument_names)) != len(argument_names):
             raise ValueError(f"{name} names an argument more than once.")
         execution_name = ExecutionName(name) if isinstance(name, str) else name
-        if not isinstance(execution_name, ExecutionName):
+        if not _is_execution_name(execution_name):
             raise TypeError("ExecutionShape name must be an ExecutionName or string.")
         self._name = execution_name
         self._argument_names = frozenset(argument_names)
@@ -151,7 +159,7 @@ class DomainVersionTransition:
             )
         self._rules[key] = rule
 
-    def _plan(self) -> _ExecutionMigrationPlan:
+    def build_plan(self) -> _ExecutionMigrationPlan:
         return _ExecutionMigrationPlan(
             domain_id=self._domain_id,
             source_version=self._source_version,
@@ -213,7 +221,7 @@ class DomainMigration(SessionMigrator):
             )
 
         plans = {
-            source_version: transition._plan()
+            source_version: transition.build_plan()
             for source_version, transition in self._transitions.items()
         }
         migrated = source
@@ -380,7 +388,7 @@ class _ExecutionMigrationRunner:
                 f"{execution.id.domain_id} failed: {e}"
             ) from e
 
-        if set(converted) != remap.target.argument_names:
+        if frozenset(converted) != remap.target.argument_names:
             raise MigrationError(
                 f"The conversion onto {remap.target.name} returned "
                 f"{_format_argument_names(set(converted))}, but it is keyed by "
@@ -398,7 +406,7 @@ class _ExecutionMigrationRunner:
             raise MigrationError(
                 f"Cannot migrate {execution.id.name} in {execution.id.domain_id}: {error}"
             ) from error
-        if set(stored) != source.argument_names:
+        if frozenset(stored) != source.argument_names:
             raise MigrationError(
                 f"{execution.id.name} in {execution.id.domain_id} is recorded with "
                 f"{_format_argument_names(set(stored))}, but the migration "

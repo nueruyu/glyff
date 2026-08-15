@@ -38,7 +38,7 @@ class JsonSerializer(Serializer):
         )
         return text.encode(DEFAULT_ENCODING)
 
-    async def serialize(self, value: Any, type_hint: type) -> bytes:
+    async def serialize(self, value: Any, type_hint: type[Any]) -> bytes:
         try:
             return self._encode(value)
         except TypeError as e:
@@ -47,7 +47,7 @@ class JsonSerializer(Serializer):
                 f"to JSON. Original error: {e}"
             ) from e
 
-    async def deserialize(self, data: bytes, type_hint: type) -> Any:
+    async def deserialize(self, data: bytes, type_hint: type[Any]) -> Any:
         return json.loads(data.decode(DEFAULT_ENCODING))
 
 

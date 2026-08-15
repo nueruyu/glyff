@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from glyff import DomainId, DomainVersionMap, SessionId
 from glyff.exceptions import MigrationError
@@ -15,9 +15,9 @@ from glyff.store.aggregate_codec import execution_from_dict, execution_to_dict
 from glyff.store.utils import execution_id_to_path, path_to_execution_id
 
 from ._file_client import (
-    _DOMAIN_VERSIONS_KEY,
-    _EXECUTIONS_KEY,
-    _SESSIONS_KEY,
+    DOMAIN_VERSIONS_KEY,
+    EXECUTIONS_KEY,
+    SESSIONS_KEY,
     DocumentUpdate,
     FileClient,
 )
@@ -36,12 +36,12 @@ class FileSessionMigration(SessionMigration):
             source = self._read(document, session_id.value)
             replacement = migrator.migrate(source)
 
-            document.setdefault(_SESSIONS_KEY, {})[session_id.value] = {
-                _DOMAIN_VERSIONS_KEY: {
+            document.setdefault(SESSIONS_KEY, {})[session_id.value] = {
+                DOMAIN_VERSIONS_KEY: {
                     domain_id.value: version.value
                     for domain_id, version in replacement.metadata.domain_versions.items()
                 },
-                _EXECUTIONS_KEY: {
+                EXECUTIONS_KEY: {
                     execution_id_to_path(execution.id): execution_to_dict(execution)
                     for execution in replacement.executions
                 },
@@ -51,15 +51,15 @@ class FileSessionMigration(SessionMigration):
         return await self._client.update_document(migrate)
 
     def _read(self, document: dict[str, Any], session_id: str) -> StoredSession:
-        session = document.get(_SESSIONS_KEY, {}).get(session_id, {})
-        versions = session.get(_DOMAIN_VERSIONS_KEY) or {}
+        session = document.get(SESSIONS_KEY, {}).get(session_id, {})
+        versions = cast(dict[str, str], session.get(DOMAIN_VERSIONS_KEY) or {})
         if not versions:
             raise MigrationError(
                 f"Session {session_id!r} has claimed no domain, so there is no "
                 "version to migrate it from."
             )
 
-        executions = session.get(_EXECUTIONS_KEY, {})
+        executions = session.get(EXECUTIONS_KEY, {})
         return StoredSession(
             metadata=SessionMetadata(
                 domain_versions=DomainVersionMap(

@@ -55,7 +55,7 @@ async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
 
 async def test_sqlite_client_commits_a_batch_of_mutations(tmp_path: Path):
     client = SQLiteClient(tmp_path / "atomic.sqlite3")
-    client._initialize_schema_sync()
+    client.initialize_schema_sync()
     root = make_execution_id("task")
     child = make_execution_id("child", parent=root)
 
@@ -73,7 +73,7 @@ async def test_sqlite_client_commits_a_batch_of_mutations(tmp_path: Path):
 
 async def test_sqlite_client_commits_a_delete(tmp_path: Path):
     client = SQLiteClient(tmp_path / "delete.sqlite3")
-    client._initialize_schema_sync()
+    client.initialize_schema_sync()
     execution_id = make_execution_id("task")
     path = execution_id_to_path(execution_id)
 
