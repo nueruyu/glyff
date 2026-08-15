@@ -12,7 +12,7 @@
     }
   },
   "python.analysis.diagnosticMode": "workspace",
-  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.typeCheckingMode": "strict",
   "css.lint.unknownAtRules": "ignore",
   "files.exclude": {
     "**/.git": true,
