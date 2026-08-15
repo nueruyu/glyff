@@ -171,16 +171,12 @@ class SQLiteBackend(MigratableBackend):
             synchronous=synchronous,
             table_prefix=table_prefix,
         )
-        client.initialize_schema_sync()
+        client._initialize_schema_sync()  # pyright: ignore[reportPrivateUsage]
         staging = ExecutionStaging()
         self._client = client
         self._repository = SQLiteExecutionRepository(client, staging)
         self._transaction_provider = SQLiteTransactionProvider(client, staging)
         self._session_migration = SQLiteSessionMigration(client)
-
-    @property
-    def client(self) -> SQLiteClient:
-        return self._client
 
     @property
     def repository(self) -> ExecutionRepository:

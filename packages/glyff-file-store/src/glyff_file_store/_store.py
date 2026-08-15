@@ -120,10 +120,6 @@ class JsonFileBackend(MigratableBackend):
         self._session_migration = FileSessionMigration(client)
 
     @property
-    def client(self) -> FileClient:
-        return self._client
-
-    @property
     def repository(self) -> ExecutionRepository:
         return self._repository
 

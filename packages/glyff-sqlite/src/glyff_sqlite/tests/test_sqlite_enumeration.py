@@ -8,14 +8,16 @@ from glyff import Execution, SessionId, TransactionScope
 from glyff.testing import canonical_arguments, make_execution_id
 
 from glyff_sqlite import SQLiteBackend
-from glyff_sqlite._sqlite_client import READ_BATCH_SIZE
+from glyff_sqlite._sqlite_client import (
+    _READ_BATCH_SIZE,  # pyright: ignore[reportPrivateUsage]
+)
 
 SESSION = SessionId("test")
 
 
 async def test_enumeration_returns_rows_across_batch_boundaries(tmp_path: Path):
     backend = SQLiteBackend(tmp_path / "batched.sqlite3")
-    count = READ_BATCH_SIZE * 2 + 1
+    count = _READ_BATCH_SIZE * 2 + 1
 
     async with TransactionScope(backend.transaction_provider):
         for n in range(count):
@@ -38,7 +40,7 @@ async def test_a_partially_consumed_enumeration_closes_its_connection(
 ):
     backend = SQLiteBackend(tmp_path / "partial.sqlite3")
     async with TransactionScope(backend.transaction_provider):
-        for n in range(READ_BATCH_SIZE + 5):
+        for n in range(_READ_BATCH_SIZE + 5):
             await backend.repository.save(
                 SESSION,
                 Execution.start(

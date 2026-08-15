@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 Executions = dict[str, dict[str, Any]]
 
-STORE_FILE = "glyff.json"
+_STORE_FILE = "glyff.json"
 _LOCK_FILE = ".glyff.lock"
-TEMP_PREFIX = ".glyff-write-"
+_TEMP_PREFIX = ".glyff-write-"
 
 _FORMAT_VERSION_KEY = "format_version"
 SESSIONS_KEY = "sessions"
@@ -64,7 +64,7 @@ class FileClient:
     def __init__(self, base_dir: str | Path, *, format_version: int) -> None:
         self._base_path = Path(base_dir)
         self._base_path.mkdir(parents=True, exist_ok=True)
-        self._path = self._base_path / STORE_FILE
+        self._path = self._base_path / _STORE_FILE
         self._lock_path = self._base_path / _LOCK_FILE
         self._format_version = format_version
         self._lock = asyncio.Lock()
@@ -97,7 +97,7 @@ class FileClient:
     def _initialize_sync(self) -> None:
         # A crash can only strand a temporary: the document itself is replaced
         # whole, never written in place.
-        for leftover in self._base_path.glob(TEMP_PREFIX + "*"):
+        for leftover in self._base_path.glob(_TEMP_PREFIX + "*"):
             leftover.unlink(missing_ok=True)
 
         document = self._read_document_sync()
@@ -125,7 +125,7 @@ class FileClient:
             document, indent=2, sort_keys=True, ensure_ascii=False
         ).encode(DEFAULT_ENCODING)
 
-        handle, temp_name = tempfile.mkstemp(dir=self._base_path, prefix=TEMP_PREFIX)
+        handle, temp_name = tempfile.mkstemp(dir=self._base_path, prefix=_TEMP_PREFIX)
         try:
             with os.fdopen(handle, "wb") as file:
                 file.write(data)

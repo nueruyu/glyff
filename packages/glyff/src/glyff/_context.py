@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextvars
 from collections.abc import Iterator, Sequence
 from types import TracebackType
-from typing import Any, cast, overload
+from typing import Any, overload
 
 from ._event_system import EventEmitter
 from ._domain_claims import DomainClaims
@@ -27,9 +27,7 @@ class MetadataAccessor:
     def __init__(self, ctx: Context):
         self._ctx = ctx
 
-    async def set(
-        self, key: str, value: Any, value_type: type[Any] | None = None
-    ) -> None:
+    async def set(self, key: str, value: Any, value_type: Any = None) -> None:
         """Attach metadata to the current execution, staged into the open
         transaction. ``value_type`` defaults to ``type(value)``; raises
         :class:`NoCurrentExecutionError` outside an engraved call.
@@ -46,7 +44,7 @@ class MetadataAccessor:
 
         serialized = await self._ctx.serializer.serialize(
             value,
-            cast(type[Any], type(value)) if value_type is None else value_type,
+            type(value) if value_type is None else value_type,
         )
         execution.set_metadata(key, SerializedValue(serialized))
         await self._ctx.repository.save(self._ctx.session_id, execution)
@@ -54,7 +52,7 @@ class MetadataAccessor:
     async def get(
         self,
         key: str,
-        return_type: type[Any],
+        return_type: Any,
         *,
         execution_id: ExecutionId | None = None,
     ) -> Any | None:

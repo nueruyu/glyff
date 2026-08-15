@@ -15,7 +15,7 @@ from glyff.serialization import (
     FallbackByTypeQualname,
 )
 from glyff.serialization._canonicalization import (
-    canonicalize_set,
+    _canonicalize_set,  # pyright: ignore[reportPrivateUsage]
     to_canonical,
 )
 from glyff.serialization._fallback import fallback_representer_or_reject
@@ -39,7 +39,7 @@ def test_sorted_canonical_is_stable_for_partial_order_elements():
     # incomparable elements in process-randomized input order. _canonicalize_set must
     # instead order them by their encoded form.
     values = {frozenset({"a", "b"}), frozenset({"c", "d"}), frozenset({"e"})}
-    ordered = canonicalize_set(values, canonical)
+    ordered = _canonicalize_set(values, canonical)
     assert ordered == sorted(
         ordered, key=lambda value: CanonicalArguments({"value": value}).data
     )

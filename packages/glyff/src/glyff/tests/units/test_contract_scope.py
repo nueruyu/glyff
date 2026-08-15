@@ -38,10 +38,10 @@ def _plain(value: Any) -> Any:
 
 
 class BareSerializer(Serializer):
-    async def serialize(self, value: Any, type_hint: type[Any]) -> bytes:
+    async def serialize(self, value: Any, type_hint: Any) -> bytes:
         return json.dumps(value).encode()
 
-    async def deserialize(self, data: bytes, type_hint: type[Any]) -> Any:
+    async def deserialize(self, data: bytes, type_hint: Any) -> Any:
         return json.loads(data)
 
 

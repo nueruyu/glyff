@@ -17,7 +17,11 @@ from glyff.store.staging import (
 from glyff.store.utils import execution_id_to_path
 from glyff.testing import canonical_arguments, make_execution_id
 
-from glyff_file_store._file_client import STORE_FILE, TEMP_PREFIX, FileClient
+from glyff_file_store._file_client import (
+    _STORE_FILE,  # pyright: ignore[reportPrivateUsage]
+    _TEMP_PREFIX,  # pyright: ignore[reportPrivateUsage]
+    FileClient,
+)
 
 SESSION = SessionId("test-session")
 DOMAIN = DomainId("test")
@@ -44,7 +48,7 @@ def path_of(name: str) -> str:
 
 
 def document(base_dir: Path) -> dict[str, Any]:
-    return json.loads((base_dir / STORE_FILE).read_text())
+    return json.loads((base_dir / _STORE_FILE).read_text())
 
 
 # -- The document ------------------------------------------------------------
@@ -74,7 +78,7 @@ async def test_the_document_stays_readable(client: FileClient, tmp_path: Path):
     key, mutation = save("task")
     await client.commit_mutations({key: mutation})
 
-    text = (tmp_path / STORE_FILE).read_text()
+    text = (tmp_path / _STORE_FILE).read_text()
     assert "\n" in text and path_of("task") in text
 
 
@@ -129,11 +133,11 @@ async def test_an_empty_batch_writes_nothing(client: FileClient, tmp_path: Path)
 
 async def test_opening_a_store_clears_a_stranded_temporary(tmp_path: Path):
     FileClient(tmp_path, format_version=FORMAT_VERSION)
-    (tmp_path / (TEMP_PREFIX + "crashed")).write_text("half a document")
+    (tmp_path / (_TEMP_PREFIX + "crashed")).write_text("half a document")
 
     FileClient(tmp_path, format_version=FORMAT_VERSION)
 
-    assert not list(tmp_path.glob(TEMP_PREFIX + "*"))
+    assert not list(tmp_path.glob(_TEMP_PREFIX + "*"))
 
 
 async def test_the_document_is_replaced_rather_than_rewritten_in_place(
@@ -144,7 +148,7 @@ async def test_the_document_is_replaced_rather_than_rewritten_in_place(
     key, mutation = save("before")
     await client.commit_mutations({key: mutation})
 
-    with open(tmp_path / STORE_FILE, "rb") as open_before:
+    with open(tmp_path / _STORE_FILE, "rb") as open_before:
         later, later_save = save("after")
         await client.commit_mutations({later: later_save})
 

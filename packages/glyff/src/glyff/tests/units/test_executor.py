@@ -34,7 +34,7 @@ async def _result(
     backend: StubBackend,
     serializer: Serializer,
     eid: ExecutionId,
-    typ: type[Any],
+    typ: Any,
 ) -> Any | None:
     execution = await backend.repository.get(SESSION, eid)
     if execution is None or execution.result is None:

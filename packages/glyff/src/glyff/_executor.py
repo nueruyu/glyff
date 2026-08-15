@@ -14,7 +14,7 @@ async def execute(
     func: Callable[..., Any],
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
-    return_type: type[Any],
+    return_type: Any,
 ) -> Any:
     """
     Orchestrates the execution of a regular (awaitable) task: cache checks,

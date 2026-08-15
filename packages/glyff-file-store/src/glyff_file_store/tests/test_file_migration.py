@@ -26,7 +26,10 @@ from glyff.migration import (
 from glyff.store.utils import path_to_execution_id
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff_file_store import JsonFileBackend
-from glyff_file_store._file_client import STORE_FILE, TEMP_PREFIX
+from glyff_file_store._file_client import (
+    _STORE_FILE,  # pyright: ignore[reportPrivateUsage]
+    _TEMP_PREFIX,  # pyright: ignore[reportPrivateUsage]
+)
 
 SESSION = SessionId("migrate")
 DOMAIN = DomainId("test")
@@ -71,12 +74,12 @@ async def test_a_failed_replacement_changes_neither_half(
 ):
     backend = JsonFileBackend(base_dir=tmp_path)
     seeded = await seed(backend, "before")
-    before = (tmp_path / STORE_FILE).read_text()
+    before = (tmp_path / _STORE_FILE).read_text()
 
     def refuse(source: str, target: Path) -> None:
         raise OSError("refusing to replace")
 
-    monkeypatch.setattr(backend.client, "_replace_sync", refuse)
+    monkeypatch.setattr(backend._client, "_replace_sync", refuse)  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(OSError, match="refusing to replace"):
         await backend.session_migration.run(
@@ -86,7 +89,7 @@ async def test_a_failed_replacement_changes_neither_half(
     monkeypatch.undo()
     # One document carries both halves, so a replacement that never lands leaves
     # the executions and the recorded version exactly as they were.
-    assert (tmp_path / STORE_FILE).read_text() == before
+    assert (tmp_path / _STORE_FILE).read_text() == before
     assert [e.id async for e in backend.repository.executions(SESSION)] == [
         e.id for e in seeded
     ]
@@ -104,14 +107,14 @@ async def test_a_failed_replacement_strands_no_temporary(
     def refuse(source: str, target: Path) -> None:
         raise OSError("refusing to replace")
 
-    monkeypatch.setattr(backend.client, "_replace_sync", refuse)
+    monkeypatch.setattr(backend._client, "_replace_sync", refuse)  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(OSError):
         await backend.session_migration.run(
             SESSION, ReplacingMigrator(started("after"))
         )
 
-    assert not list(tmp_path.glob(TEMP_PREFIX + "*"))
+    assert not list(tmp_path.glob(_TEMP_PREFIX + "*"))
 
 
 async def test_a_cancelled_migration_does_not_hand_the_store_on_early(
@@ -219,7 +222,7 @@ async def test_a_cancelled_migration_still_reports_a_worker_failure_as_cancelled
     def refuse(source: str, target: Path) -> None:
         raise OSError("refusing to replace")
 
-    monkeypatch.setattr(backend.client, "_replace_sync", refuse)
+    monkeypatch.setattr(backend._client, "_replace_sync", refuse)  # pyright: ignore[reportPrivateUsage]
 
     class SlowMigrator(ReplacingMigrator):
         def migrate(self, source: StoredSession) -> StoredSession:
@@ -247,7 +250,7 @@ async def test_a_migration_rewrites_the_session_in_place_in_the_document(
 
     await backend.session_migration.run(SESSION, ReplacingMigrator(after))
 
-    document = json.loads((tmp_path / STORE_FILE).read_text())
+    document = json.loads((tmp_path / _STORE_FILE).read_text())
     session = document["sessions"][SESSION.value]
     assert session["domain_versions"] == {DOMAIN.value: "v2"}
     assert [

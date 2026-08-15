@@ -88,8 +88,8 @@ async def stored(backend: SQLiteBackend) -> list[Execution]:
 
 
 def refuse(backend: SQLiteBackend, monkeypatch: pytest.MonkeyPatch, word: str) -> None:
-    client = backend.client
-    connect = client.connect
+    client = backend._client  # pyright: ignore[reportPrivateUsage]
+    connect = client._connect  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(client, "connect", lambda: RefusingConnection(connect(), word))
 
 

@@ -35,7 +35,7 @@ class PydanticSerializer(JsonSerializer):
             return obj.model_dump(mode="json")
         return super().json_default(obj)
 
-    async def _get_adapter(self, type_hint: type[Any]) -> TypeAdapter[Any]:
+    async def _get_adapter(self, type_hint: Any) -> TypeAdapter[Any]:
         try:
             if adapter := self._adapters.get(type_hint):
                 return adapter
@@ -49,7 +49,7 @@ class PydanticSerializer(JsonSerializer):
             self._adapters[type_hint] = adapter
             return adapter
 
-    async def serialize(self, value: Any, type_hint: type[Any]) -> bytes:
+    async def serialize(self, value: Any, type_hint: Any) -> bytes:
         try:
             adapter = await self._get_adapter(type_hint)
             return self._encode(adapter.dump_python(value, mode="json"))
@@ -61,7 +61,7 @@ class PydanticSerializer(JsonSerializer):
                 f"with Pydantic. Original error: {e}"
             ) from e
 
-    async def deserialize(self, data: bytes, type_hint: type[Any]) -> Any:
+    async def deserialize(self, data: bytes, type_hint: Any) -> Any:
         adapter = await self._get_adapter(type_hint)
         return adapter.validate_json(data)
 

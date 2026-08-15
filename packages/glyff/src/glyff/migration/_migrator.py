@@ -161,7 +161,7 @@ class DomainVersionTransition:
             )
         self._rules[key] = rule
 
-    def build_plan(self) -> _ExecutionMigrationPlan:
+    def _plan(self) -> _ExecutionMigrationPlan:
         return _ExecutionMigrationPlan(
             domain_id=self._domain_id,
             source_version=self._source_version,
@@ -223,7 +223,7 @@ class DomainMigration(SessionMigrator):
             )
 
         plans = {
-            source_version: transition.build_plan()
+            source_version: transition._plan()  # pyright: ignore[reportPrivateUsage]
             for source_version, transition in self._transitions.items()
         }
         migrated = source

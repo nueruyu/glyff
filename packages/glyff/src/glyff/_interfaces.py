@@ -70,12 +70,12 @@ class Serializer(ABC):
     """An interface for serializing/deserializing values."""
 
     @abstractmethod
-    async def serialize(self, value: Any, type_hint: type[Any]) -> bytes:
+    async def serialize(self, value: Any, type_hint: Any) -> bytes:
         """Serializes a value to bytes."""
         ...
 
     @abstractmethod
-    async def deserialize(self, data: bytes, type_hint: type[Any]) -> Any:
+    async def deserialize(self, data: bytes, type_hint: Any) -> Any:
         """Deserializes bytes to a value of the given type."""
         ...
 

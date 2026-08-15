@@ -25,7 +25,7 @@ async def _committed(client: SQLiteClient) -> object:
 
 def _client(database_path: Path) -> SQLiteClient:
     client = SQLiteClient(database_path)
-    client.initialize_schema_sync()
+    client._initialize_schema_sync()  # pyright: ignore[reportPrivateUsage]
     return client
 
 

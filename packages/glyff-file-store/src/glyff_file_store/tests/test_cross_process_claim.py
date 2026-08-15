@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from glyff_file_store._file_client import STORE_FILE
+from glyff_file_store._file_client import _STORE_FILE  # pyright: ignore[reportPrivateUsage]
 from glyff_file_store._store import FORMAT_VERSION
 
 # Interpreter startup alone staggers the children far more than a claim takes,
@@ -107,5 +107,5 @@ def test_processes_opening_one_store_leave_a_readable_document(tmp_path: Path):
     running = _race(_OPENER, base_dir, signals, [str(n) for n in range(_PROCESSES)])
     assert _collect(running) == ["opened"] * _PROCESSES
 
-    document = json.loads((base_dir / STORE_FILE).read_text())
+    document = json.loads((base_dir / _STORE_FILE).read_text())
     assert document["format_version"] == FORMAT_VERSION
