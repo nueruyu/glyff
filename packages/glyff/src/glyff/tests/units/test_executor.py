@@ -1,10 +1,13 @@
 import logging
 import traceback
+from collections.abc import Callable, Generator
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from glyff import (
+    ArgumentCanonicalizer,
     EventEmitter,
     Execution,
     ExecutionId,
@@ -27,7 +30,12 @@ from glyff.tests.stubs.store import StubBackend, StubExecutionRepository
 SESSION = SessionId("test")
 
 
-async def _result(backend: StubBackend, serializer, eid: ExecutionId, typ: type):
+async def _result(
+    backend: StubBackend,
+    serializer: Serializer,
+    eid: ExecutionId,
+    typ: type[Any],
+) -> Any | None:
     execution = await backend.repository.get(SESSION, eid)
     if execution is None or execution.result is None:
         return None
@@ -35,15 +43,17 @@ async def _result(backend: StubBackend, serializer, eid: ExecutionId, typ: type)
 
 
 @pytest.fixture
-def transaction_scope_factory(mock_backend: StubBackend):
-    def factory():
+def transaction_scope_factory(
+    mock_backend: StubBackend,
+) -> Callable[[], TransactionScope]:
+    def factory() -> TransactionScope:
         return TransactionScope(mock_backend.transaction_provider)
 
     return factory
 
 
 @pytest.fixture(autouse=True)
-def set_context_for_tests(test_context: Context):
+def set_context_for_tests(test_context: Context) -> Generator[None, None, None]:
     token = set_context(test_context)
     yield
     reset_context(token)
@@ -86,7 +96,7 @@ async def test_successful_execution(
 async def test_completion_prunes_descendants_when_enabled(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
-    argument_canonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
     serializer: Serializer,
 ):
     emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
@@ -134,7 +144,7 @@ async def test_completion_prunes_descendants_when_enabled(
 async def test_nested_completion_prunes(
     mock_backend: StubBackend,
     nested_execution_id: ExecutionId,
-    argument_canonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
     serializer: Serializer,
 ):
     emitter = EventEmitter([PruningEventHandler(mock_backend.repository)])
@@ -207,7 +217,7 @@ async def test_completed_task_is_skipped(
 
     cached = Execution.start(base_execution_id, canonical_arguments())
     cached.complete(SerializedValue(await serializer.serialize("cached_result", str)))
-    mock_backend._client.data[ExecutionKey(SESSION, base_execution_id)] = (
+    mock_backend.client.data[ExecutionKey(SESSION, base_execution_id)] = (
         ExecutionSnapshot.from_execution(cached)
     )
 
@@ -238,7 +248,7 @@ async def test_started_record_is_retryable(
 
     # A leftover STARTED record (an interrupted prior attempt) does not block
     # re-execution.
-    mock_backend._client.data[ExecutionKey(SESSION, base_execution_id)] = (
+    mock_backend.client.data[ExecutionKey(SESSION, base_execution_id)] = (
         ExecutionSnapshot.from_execution(
             Execution.start(base_execution_id, canonical_arguments())
         )
@@ -418,7 +428,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
     nested_execution_id: ExecutionId,
-    argument_canonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
     serializer: Serializer,
 ):
     seen_exceptions: list[Exception] = []
@@ -481,7 +491,7 @@ async def test_failure_handler_can_clean_up_in_its_own_transaction(
 async def test_execution_failed_emits_after_body_transaction_closes(
     mock_backend: StubBackend,
     base_execution_id: ExecutionId,
-    argument_canonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
     serializer: Serializer,
 ):
     scratch_id = make_execution_id("scratch", parent=base_execution_id)
@@ -490,7 +500,7 @@ async def test_execution_failed_emits_after_body_transaction_closes(
 
     class ObserveFailure(EventHandler[ExecutionFailed]):
         async def handle(self, event: ExecutionFailed) -> None:
-            mock_backend._record("failure_handler")
+            mock_backend.record("failure_handler")
             handler_saw_scratch.append(
                 await event.context.repository.get(SESSION, scratch_id) is not None
             )
@@ -543,8 +553,8 @@ async def test_execution_failed_emits_after_body_transaction_closes(
 async def test_failed_handler_failure_does_not_replace_original_exception(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    argument_canonicalizer,
-    caplog,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    caplog: pytest.LogCaptureFixture,
 ):
     class FailingFailedHandler(EventHandler[ExecutionFailed]):
         async def handle(self, event: ExecutionFailed) -> None:
@@ -589,7 +599,7 @@ async def test_failed_handler_failure_does_not_replace_original_exception(
 async def test_execution_save_failure_rolls_back_complete_transaction(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    argument_canonicalizer,
+    argument_canonicalizer: ArgumentCanonicalizer,
 ):
     class FailingCompleteRepository(StubExecutionRepository):
         async def save(self, session_id: SessionId, execution: Execution) -> None:
@@ -607,7 +617,7 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
     backend = StubBackend(client)
     backend.replace_repository(
         FailingCompleteRepository(
-            backend._record, MemoryExecutionRepository(client, backend.staging)
+            backend.record, MemoryExecutionRepository(client, backend.staging)
         )
     )
     ctx = Context(
@@ -649,8 +659,8 @@ async def test_execution_save_failure_rolls_back_complete_transaction(
 async def test_completed_handler_failure_does_not_affect_result_or_completion(
     base_execution_id: ExecutionId,
     serializer: Serializer,
-    argument_canonicalizer,
-    caplog,
+    argument_canonicalizer: ArgumentCanonicalizer,
+    caplog: pytest.LogCaptureFixture,
 ):
     class FailingCompletedHandler(EventHandler[ExecutionCompleted]):
         async def handle(self, event: ExecutionCompleted) -> None:

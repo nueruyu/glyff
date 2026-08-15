@@ -179,6 +179,10 @@ class SQLiteBackend(MigratableBackend):
         self._session_migration = SQLiteSessionMigration(client)
 
     @property
+    def client(self) -> SQLiteClient:
+        return self._client
+
+    @property
     def repository(self) -> ExecutionRepository:
         return self._repository
 

@@ -77,7 +77,7 @@ def _json_text(value: Any) -> str:
 
 _VALID_SYNCHRONOUS_VALUES = {"OFF", "NORMAL", "FULL", "EXTRA"}
 
-_READ_BATCH_SIZE = 256
+READ_BATCH_SIZE = 256
 
 
 def _prefix_upper_bound(prefix: str) -> str:
@@ -146,7 +146,7 @@ class SQLiteClient:
 
     # -- Connection helpers ----------------------------------------------------
 
-    def _connect(self) -> sqlite3.Connection:
+    def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self._database_path,
             isolation_level=None,
@@ -159,20 +159,20 @@ class SQLiteClient:
         return connection
 
     @contextmanager
-    def _connection(self) -> Generator[sqlite3.Connection, None, None]:
+    def connection(self) -> Generator[sqlite3.Connection, None, None]:
         """A configured connection, closed however the block ends."""
-        with closing(self._connect()) as connection:
+        with closing(self.connect()) as connection:
             yield connection
 
     @contextmanager
-    def _immediate_transaction(self) -> Generator[sqlite3.Connection, None, None]:
+    def immediate_transaction(self) -> Generator[sqlite3.Connection, None, None]:
         """One ``BEGIN IMMEDIATE``: committed if the block returns, rolled back
         if anything in it — or the commit itself — raises.
 
         A failed rollback is swallowed so it cannot replace the failure that
         caused it. A failed ``BEGIN`` leaves nothing to roll back.
         """
-        with self._connection() as connection:
+        with self.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
                 yield connection
@@ -185,7 +185,7 @@ class SQLiteClient:
     # -- Schema initialization -------------------------------------------------
 
     def initialize_schema_sync(self) -> None:
-        with self._immediate_transaction() as connection:
+        with self.immediate_transaction() as connection:
             self._stamp_or_check_meta(connection)
             connection.execute(
                 f"""
@@ -252,7 +252,7 @@ class SQLiteClient:
             return await run_to_completion(lambda: self._run_immediate_sync(operation))
 
     def _run_immediate_sync(self, operation: Callable[[sqlite3.Connection], T]) -> T:
-        with self._immediate_transaction() as connection:
+        with self.immediate_transaction() as connection:
             return operation(connection)
 
     # -- Commit ----------------------------------------------------------------
@@ -320,7 +320,7 @@ class SQLiteClient:
     def _read_committed_sync(
         self, session_id: str, path: str
     ) -> SQLiteExecutionRecord | None:
-        with self._connection() as connection:
+        with self.connection() as connection:
             row = connection.execute(
                 f'SELECT arguments, status, result, metadata FROM "{self._table_name}" '
                 "WHERE session_id = ? AND path = ?",
@@ -370,13 +370,14 @@ class SQLiteClient:
         # Connecting blocks, so it stays on a worker thread rather than going
         # through _connection(); closing() gives the same guarantee around the
         # one connection and cursor this iteration holds.
-        connection = await asyncio.to_thread(self._connect)
+        connection = await asyncio.to_thread(self.connect)
         with closing(connection):
             cursor = await asyncio.to_thread(
                 self._select_range, connection, session_id, prefix
             )
             while True:
-                rows = await asyncio.to_thread(cursor.fetchmany, _READ_BATCH_SIZE)
+                rows = await asyncio.to_thread(cursor.fetchmany, READ_BATCH_SIZE)
+
                 if not rows:
                     break
                 for row in rows:
@@ -389,6 +390,14 @@ class SQLiteClient:
                             metadata=row[4],
                         ),
                     )
+
+    @property
+    def table_names(self) -> tuple[str, str, str]:
+        return (
+            self._table_name,
+            self._session_domains_table_name,
+            self._meta_table_name,
+        )
 
     def _select_range(
         self, connection: sqlite3.Connection, session_id: str, prefix: str
@@ -482,7 +491,7 @@ class SQLiteClient:
     def _read_sql_sync(
         self, sql: str, params: tuple[Any, ...]
     ) -> list[tuple[Any, ...]]:
-        with self._connection() as connection:
+        with self.connection() as connection:
             return list(connection.execute(sql, params))
 
     async def execute(self, sql: str, *params: Any) -> None:

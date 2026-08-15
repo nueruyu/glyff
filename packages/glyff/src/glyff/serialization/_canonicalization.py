@@ -61,7 +61,7 @@ def _canonical_mapping(
     return canonical
 
 
-def _canonicalize_set(values: Any, recurse: _Recurse) -> list[CanonicalArgumentValue]:
+def canonicalize_set(values: Any, recurse: _Recurse) -> list[CanonicalArgumentValue]:
     members = [recurse(value) for value in values]
     try:
         return sorted(members)  # type: ignore[type-var]
@@ -126,7 +126,7 @@ def _derive_canonical(obj: Any, recurse: _Recurse) -> Any:
     if isinstance(obj, (list, tuple)):
         return [recurse(value) for value in cast(list[Any] | tuple[Any, ...], obj)]
     if isinstance(obj, (set, frozenset)):
-        return _canonicalize_set(obj, recurse)
+        return canonicalize_set(obj, recurse)
     if isinstance(obj, (bytes, bytearray)):
         return obj.hex()
     if callable(obj) and hasattr(obj, "__qualname__"):

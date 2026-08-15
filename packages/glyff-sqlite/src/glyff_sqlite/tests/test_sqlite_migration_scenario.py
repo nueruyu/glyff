@@ -5,7 +5,9 @@ live call. Only a store this durable can hold the session in between, so the
 two halves are proved against each other here rather than in glyff's own tests.
 """
 
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from glyff import (
@@ -95,6 +97,10 @@ async def checkout_v2(order: str) -> str:
 def _migration(canonicalizer: ArgumentCanonicalizer) -> DomainMigration:
     migration = DomainMigration(V2, canonicalizer=canonicalizer)
     transition = migration.transition("1", "2")
+
+    def convert(order: Any) -> dict[str, Any]:
+        return {"order": order, "cents": 1200}
+
     transition.remap(
         ExecutionShape("checkout_v1", "order"),
         ExecutionShape("checkout_v2", "order"),
@@ -106,7 +112,7 @@ def _migration(canonicalizer: ArgumentCanonicalizer) -> DomainMigration:
     transition.remap(
         ExecutionShape("capture", "order"),
         ExecutionShape("capture_cents", "order", "cents"),
-        convert_arguments=lambda order: {"order": order, "cents": 1200},
+        convert_arguments=convert,
     )
     transition.remap(
         ExecutionShape("finish", "order"),
@@ -116,7 +122,7 @@ def _migration(canonicalizer: ArgumentCanonicalizer) -> DomainMigration:
 
 
 @pytest.fixture(autouse=True)
-def _recorded():
+def recorded() -> Generator[None, None, None]:
     CALLS.clear()
     PAUSE["at_finish"] = True
     yield

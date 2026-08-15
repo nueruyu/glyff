@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from glyff import Execution, SerializedValue, SessionId, TransactionScope
+from glyff import Execution, ExecutionId, SerializedValue, SessionId, TransactionScope
 from glyff.store.utils import execution_id_to_path
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff_sqlite import SQLiteBackend
@@ -17,7 +17,7 @@ from glyff_sqlite._sqlite_client import SQLiteClient
 SESSION = SessionId("test")
 
 
-def _save(execution_id) -> SaveExecution:
+def _save(execution_id: ExecutionId) -> SaveExecution:
     execution = Execution.start(execution_id, canonical_arguments())
     return SaveExecution(ExecutionSnapshot.from_execution(execution))
 

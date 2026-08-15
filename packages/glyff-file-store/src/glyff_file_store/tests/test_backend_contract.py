@@ -1,6 +1,8 @@
 import pytest
+from pathlib import Path
 
 from glyff.testing import (
+    BackendFactory,
     DomainVersionContract,
     DurableBackendContract,
     EngravedCallContract,
@@ -26,8 +28,8 @@ class TestJsonFileBackendContract(
     PruningContract,
 ):
     @pytest.fixture
-    def backend_factory(self, tmp_path):
-        def factory(store: str):
+    def backend_factory(self, tmp_path: Path) -> BackendFactory:
+        def factory(store: str) -> JsonFileBackend:
             return JsonFileBackend(base_dir=tmp_path / store)
 
         return factory

@@ -5,6 +5,8 @@ Deliberately without ``from __future__ import annotations``: it changes what
 """
 
 import pytest
+from collections.abc import Callable
+from typing import Any, cast
 from glyff._function import FunctionDefinition
 from glyff.exceptions import TypeHintResolutionError
 
@@ -20,7 +22,9 @@ def test_a_quoted_hint_is_still_resolved():
 
 
 def test_a_quoted_hint_naming_nothing_is_refused():
-    async def task() -> "NoSuchType": ...  # type: ignore[name-defined]  # noqa: F821
+    namespace: dict[str, Any] = {}
+    exec('async def task() -> "NoSuchType": pass', namespace)
+    task = cast(Callable[..., Any], namespace["task"])
 
     with pytest.raises(TypeHintResolutionError, match="Could not resolve type hints"):
         FunctionDefinition.from_callable(task)

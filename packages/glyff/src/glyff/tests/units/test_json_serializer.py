@@ -6,10 +6,12 @@ value becomes which canonical form is `to_canonical`'s to promise — see
 """
 
 import dataclasses
+from typing import Any
 
 import pytest
 
 from glyff.exceptions import ArgumentCanonicalizationError, SerializationError
+from glyff import CanonicalArgumentValue
 from glyff.serialization import (
     JsonArgumentCanonicalizer,
     JsonSerializer,
@@ -68,13 +70,13 @@ def test_the_qualname_fallback_reaches_an_unsupported_dataclass_member():
     import threading
 
     class Tool:
-        def __init__(self, lock):
+        def __init__(self, lock: Any) -> None:
             self.lock = lock
 
     @dataclasses.dataclass
     class Agent:
         name: str
-        tools: list
+        tools: list[Tool]
 
     a1 = Agent("researcher", [Tool(threading.Lock())])
     a2 = Agent("researcher", [Tool(threading.Lock())])
@@ -118,10 +120,10 @@ def test_the_representer_is_handed_the_value_itself():
     class Marker:
         pass
 
-    seen: list = []
+    seen: list[Any] = []
 
     class RecordingRepresenter(CanonicalFallbackRepresenter):
-        def represent(self, value):
+        def represent(self, value: Any) -> CanonicalArgumentValue:
             seen.append(value)
             return "recorded"
 
@@ -143,7 +145,7 @@ def test_what_a_representer_returns_is_what_reaches_the_form():
             self.name = name
 
     class ByName(CanonicalFallbackRepresenter):
-        def represent(self, value):
+        def represent(self, value: Any) -> CanonicalArgumentValue:
             return value.name
 
     canonicalizer = JsonArgumentCanonicalizer(fallback_representer=ByName())
@@ -158,7 +160,7 @@ def test_a_falsy_representer_is_not_mistaken_for_no_representer():
         def __bool__(self):
             return False
 
-        def represent(self, value):
+        def represent(self, value: Any) -> CanonicalArgumentValue:
             return "from-falsy"
 
     class Svc:

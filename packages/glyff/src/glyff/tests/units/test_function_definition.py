@@ -7,6 +7,9 @@ the representation where they do not.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any, cast
+
 import pytest
 from glyff._function import FunctionDefinition
 from glyff.exceptions import MissingTypeHintError, TypeHintResolutionError
@@ -14,6 +17,12 @@ from glyff.exceptions import MissingTypeHintError, TypeHintResolutionError
 
 class _ModuleScoped:
     pass
+
+
+def _function(source: str) -> Callable[..., Any]:
+    namespace: dict[str, Any] = {}
+    exec(source, namespace)
+    return cast(Callable[..., Any], namespace["task"])
 
 
 async def greet(name: str, greeting: str = "Hello") -> str:
@@ -91,27 +100,27 @@ def test_an_unbindable_call_is_refused():
 
 
 def test_a_missing_return_hint_is_refused():
-    async def task(a: int): ...
+    task = _function("async def task(a: int): pass")
 
     with pytest.raises(MissingTypeHintError, match="return"):
         FunctionDefinition.from_callable(task)
 
 
 def test_a_missing_parameter_hint_is_refused():
-    async def task(a, b: int) -> None: ...
+    task = _function("async def task(a, b: int) -> None: pass")
 
     with pytest.raises(MissingTypeHintError, match="a"):
         FunctionDefinition.from_callable(task)
 
 
 def test_a_variadic_parameter_needs_no_hint():
-    async def task(a: int, *args, **kwargs) -> None: ...
+    task = _function("async def task(a: int, *args, **kwargs) -> None: pass")
 
     assert FunctionDefinition.from_callable(task).return_type is None
 
 
 def test_a_hint_that_cannot_be_resolved_is_refused():
-    async def task(a: NoSuchType) -> None: ...  # type: ignore[name-defined]  # noqa: F821
+    task = _function("async def task(a: NoSuchType) -> None: pass")
 
     with pytest.raises(TypeHintResolutionError):
         FunctionDefinition.from_callable(task)
@@ -135,7 +144,7 @@ def test_an_unannotated_cls_is_not_a_missing_hint():
 def test_a_missing_hint_is_reported_before_an_unresolvable_one():
     # The absent hint is the one the author can act on, and only the unevaluated
     # pass can see it: resolution fails on the whole annotation set at once.
-    async def task(a) -> NoSuchType: ...  # type: ignore[name-defined]  # noqa: F821
+    task = _function("async def task(a) -> NoSuchType: pass")
 
     with pytest.raises(MissingTypeHintError, match="a"):
         FunctionDefinition.from_callable(task)

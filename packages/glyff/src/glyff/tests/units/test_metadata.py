@@ -9,6 +9,7 @@ from glyff import (
     MetadataAccessor,
     SerializedValue,
     SessionId,
+    Serializer,
     Domain,
     get_context,
 )
@@ -96,7 +97,9 @@ async def test_metadata_is_co_transactional(test_context: Context):
     assert await accessor.get("note", str, execution_id=eid) is None
 
 
-async def test_complete_preserves_metadata(test_context: Context, serializer):
+async def test_complete_preserves_metadata(
+    test_context: Context, serializer: Serializer
+) -> None:
     accessor = MetadataAccessor(test_context)
     eid = _eid("root")
 
@@ -160,8 +163,8 @@ async def test_get_metadata_unknown_execution_returns_none(test_context: Context
 async def test_ctx_metadata_roundtrips_and_persists(
     backend_factory: BackendFactory,
     argument_canonicalizer: ArgumentCanonicalizer,
-    serializer,
-):
+    serializer: Serializer,
+) -> None:
     captured: dict[str, ExecutionId] = {}
 
     @engrave

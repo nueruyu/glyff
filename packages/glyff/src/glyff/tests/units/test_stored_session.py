@@ -1,7 +1,7 @@
 """What a session snapshot refuses to be."""
 
 import pytest
-from glyff import DomainId, DomainVersionMap, Execution
+from glyff import DomainId, DomainVersionMap, Execution, ExecutionId
 from glyff.exceptions import MigrationCollisionError, MigrationError
 from glyff.migration import MigrationReport, SessionMetadata, StoredSession
 from glyff.testing import canonical_arguments, make_execution_id
@@ -15,7 +15,12 @@ def test_domain_versions_reject_duplicate_normalized_domain_ids():
         DomainVersionMap({PAYMENTS: "v1", PAYMENTS.value: "v2"})
 
 
-def started(name: str, *, domain_id: DomainId = PAYMENTS, parent=None) -> Execution:
+def started(
+    name: str,
+    *,
+    domain_id: DomainId = PAYMENTS,
+    parent: ExecutionId | None = None,
+) -> Execution:
     return Execution.start(
         make_execution_id(name, domain_id=domain_id, parent=parent),
         canonical_arguments(),

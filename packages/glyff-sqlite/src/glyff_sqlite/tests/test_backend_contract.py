@@ -1,6 +1,8 @@
 import pytest
+from pathlib import Path
 
 from glyff.testing import (
+    BackendFactory,
     DomainVersionContract,
     DurableBackendContract,
     EngravedCallContract,
@@ -26,8 +28,8 @@ class TestSQLiteBackendContract(
     PruningContract,
 ):
     @pytest.fixture
-    def backend_factory(self, tmp_path):
-        def factory(store: str):
+    def backend_factory(self, tmp_path: Path) -> BackendFactory:
+        def factory(store: str) -> SQLiteBackend:
             return SQLiteBackend(tmp_path / f"{store}.sqlite3")
 
         return factory

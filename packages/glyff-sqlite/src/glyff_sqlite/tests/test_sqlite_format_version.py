@@ -80,9 +80,11 @@ def test_versioning_leaves_the_databases_user_version_untouched(tmp_path: Path):
 class TestConfigurableTablePrefix:
     def test_default_prefix_derives_both_table_names(self, tmp_path: Path):
         client = SQLiteClient(tmp_path / "default.sqlite3")
-        assert client._table_name == "glyff_executions"
-        assert client._session_domains_table_name == "glyff_session_domains"
-        assert client._meta_table_name == "glyff_meta"
+        assert client.table_names == (
+            "glyff_executions",
+            "glyff_session_domains",
+            "glyff_meta",
+        )
 
     async def test_custom_prefix_round_trips(self, tmp_path: Path):
         db = tmp_path / "custom.sqlite3"

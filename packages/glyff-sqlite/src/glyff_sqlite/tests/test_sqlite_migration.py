@@ -74,7 +74,7 @@ def backend(tmp_path: Path) -> SQLiteBackend:
 
 async def seed(backend: SQLiteBackend, *names: str) -> list[Execution]:
     await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
-    seeded = []
+    seeded: list[Execution] = []
     for name in names:
         execution = started(name)
         async with TransactionScope(backend.transaction_provider):
@@ -88,9 +88,9 @@ async def stored(backend: SQLiteBackend) -> list[Execution]:
 
 
 def refuse(backend: SQLiteBackend, monkeypatch: pytest.MonkeyPatch, word: str) -> None:
-    client = backend._client
-    connect = client._connect
-    monkeypatch.setattr(client, "_connect", lambda: RefusingConnection(connect(), word))
+    client = backend.client
+    connect = client.connect
+    monkeypatch.setattr(client, "connect", lambda: RefusingConnection(connect(), word))
 
 
 async def test_a_failed_execution_write_leaves_the_version_alone(

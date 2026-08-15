@@ -105,7 +105,7 @@ def test_a_models_state_is_its_identity(argument_canonicalizer: ArgumentCanonica
 
 def _agent_model_with_unsupported_member():
     class Tool:
-        def __init__(self, n):
+        def __init__(self, n: int) -> None:
             self.n = n
 
     class Agent(BaseModel):
@@ -196,7 +196,7 @@ def test_a_models_set_field_keeps_the_shared_ordering(
     argument_canonicalizer: ArgumentCanonicalizer,
 ):
     class M(BaseModel):
-        tags: set
+        tags: set[str]
 
     assert argument_canonicalizer.canonicalize(
         {"a": M(tags={"gamma", "alpha", "beta"})}

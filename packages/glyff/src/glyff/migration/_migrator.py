@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 from .._domain import Domain
 from .._canonical_arguments import CanonicalArguments
@@ -27,7 +27,9 @@ from ..exceptions import (
 from ._interfaces import SessionMigrator
 from ._models import SessionMetadata, StoredSession
 
-_ArgumentConverter = Callable[..., Mapping[str, Any]]
+
+class _ArgumentConverter(Protocol):
+    def __call__(self, *args: Any, **kwargs: Any) -> Mapping[str, Any]: ...
 
 
 def _is_string(value: object) -> bool:

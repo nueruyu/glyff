@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
+import pytest
+
 from glyff import Event, EventEmitter, EventHandler
 
 
@@ -87,7 +89,9 @@ async def test_event_emitter_deduplicates_handlers_registered_for_multiple_bases
     assert handler.handled == [event]
 
 
-async def test_emit_logs_and_continues_when_handler_raises(caplog):
+async def test_emit_logs_and_continues_when_handler_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     calls: list[str] = []
 
     class Boom(EventHandler[Event]):

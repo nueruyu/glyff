@@ -50,8 +50,8 @@ class FlakyConnection:
 def flaky(
     client: SQLiteClient, monkeypatch: pytest.MonkeyPatch, *, failing: set[str]
 ) -> FlakyConnection:
-    connection = FlakyConnection(client._connect(), failing=failing)
-    monkeypatch.setattr(client, "_connect", lambda: connection)
+    connection = FlakyConnection(client.connect(), failing=failing)
+    monkeypatch.setattr(client, "connect", lambda: connection)
     return connection
 
 
@@ -59,7 +59,7 @@ def flaky(
 
 
 def test_a_connection_closes_after_the_block(client: SQLiteClient):
-    with client._connection() as connection:
+    with client.connection() as connection:
         connection.execute("SELECT 1")
 
     with pytest.raises(sqlite3.ProgrammingError):
@@ -67,16 +67,18 @@ def test_a_connection_closes_after_the_block(client: SQLiteClient):
 
 
 def test_a_connection_closes_when_the_block_raises(client: SQLiteClient):
+    connection: sqlite3.Connection | None = None
     with pytest.raises(ValueError, match="boom"):
-        with client._connection() as connection:
+        with client.connection() as connection:
             raise ValueError("boom")
 
+    assert connection is not None
     with pytest.raises(sqlite3.ProgrammingError):
         connection.execute("SELECT 1")
 
 
 def test_a_read_does_not_open_a_transaction(client: SQLiteClient):
-    with client._connection() as connection:
+    with client.connection() as connection:
         connection.execute("SELECT 1")
         assert not connection.in_transaction
 
@@ -85,7 +87,7 @@ def test_a_read_does_not_open_a_transaction(client: SQLiteClient):
 
 
 async def test_a_transaction_commits_what_the_block_wrote(client: SQLiteClient):
-    with client._immediate_transaction() as connection:
+    with client.immediate_transaction() as connection:
         connection.execute(_INSERT)
 
     assert await client.read_sql(_SELECT) == [("v1",)]
@@ -93,7 +95,7 @@ async def test_a_transaction_commits_what_the_block_wrote(client: SQLiteClient):
 
 async def test_a_transaction_rolls_back_when_the_block_raises(client: SQLiteClient):
     with pytest.raises(ValueError, match="boom"):
-        with client._immediate_transaction() as connection:
+        with client.immediate_transaction() as connection:
             connection.execute(_INSERT)
             raise ValueError("boom")
 
@@ -105,7 +107,7 @@ def test_a_transaction_closes_its_connection_either_way(
 ):
     connection = flaky(client, monkeypatch, failing=set())
 
-    with client._immediate_transaction():
+    with client.immediate_transaction():
         pass
 
     assert connection.closed
@@ -118,7 +120,7 @@ def test_a_failing_begin_propagates_and_never_enters_the_block(
     entered = False
 
     with pytest.raises(sqlite3.OperationalError, match="BEGIN IMMEDIATE refused"):
-        with client._immediate_transaction():
+        with client.immediate_transaction():
             entered = True
 
     assert not entered
@@ -133,7 +135,7 @@ def test_a_failing_commit_rolls_back_and_propagates_the_commit_error(
     connection = flaky(client, monkeypatch, failing={"COMMIT"})
 
     with pytest.raises(sqlite3.OperationalError, match="COMMIT refused"):
-        with client._immediate_transaction() as open_connection:
+        with client.immediate_transaction() as open_connection:
             open_connection.execute(_INSERT)
 
     assert "ROLLBACK" in connection.statements
@@ -146,7 +148,7 @@ def test_a_failing_rollback_does_not_replace_the_error_that_caused_it(
     connection = flaky(client, monkeypatch, failing={"ROLLBACK"})
 
     with pytest.raises(ValueError, match="boom"):
-        with client._immediate_transaction():
+        with client.immediate_transaction():
             raise ValueError("boom")
 
     assert "ROLLBACK" in connection.statements

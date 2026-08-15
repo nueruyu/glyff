@@ -8,6 +8,8 @@ from glyff import (
     DomainId,
     DomainVersion,
     Execution,
+    Backend,
+    Serializer,
     SessionId,
 )
 from glyff.testing import BackendFactory, make_session
@@ -21,7 +23,7 @@ async def greet(name: str, times: int = 1) -> str:
     return " ".join([f"hello {name}"] * times)
 
 
-async def _only_execution(backend, session_id: str) -> Execution:
+async def _only_execution(backend: Backend, session_id: str) -> Execution:
     # Read back what was stored rather than rebuilding the key: deriving the
     # expected id through the same adapter production uses would find the record
     # a binding bug wrote just as happily as the right one.
@@ -33,8 +35,8 @@ async def _only_execution(backend, session_id: str) -> Execution:
 async def test_recorded_args_are_the_digest_preimage(
     backend_factory: BackendFactory,
     argument_canonicalizer: ArgumentCanonicalizer,
-    serializer,
-):
+    serializer: Serializer,
+) -> None:
     backend = backend_factory("recorded-args")
     async with make_session(
         "recorded-args", backend, argument_canonicalizer, serializer
@@ -52,8 +54,8 @@ async def test_recorded_args_are_the_digest_preimage(
 async def test_recorded_args_keep_non_ascii_readable(
     backend_factory: BackendFactory,
     argument_canonicalizer: ArgumentCanonicalizer,
-    serializer,
-):
+    serializer: Serializer,
+) -> None:
     backend = backend_factory("recorded-args-unicode")
     async with make_session(
         "recorded-args-unicode", backend, argument_canonicalizer, serializer
