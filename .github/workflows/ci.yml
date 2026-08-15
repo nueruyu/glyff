@@ -28,6 +28,11 @@ jobs:
       - name: Sync dependencies
         run: uv sync --all-packages --dev
 
+      - name: Verify Python version
+        run: >
+          uv run python -c
+          "import platform; assert platform.python_version().startswith('${{ matrix.python-version }}.')"
+
       - name: Ruff check
         run: uv run ruff check .
 
