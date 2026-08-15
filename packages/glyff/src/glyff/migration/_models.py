@@ -27,7 +27,7 @@ class StoredSession:
     executions: tuple[Execution, ...]
 
     def __post_init__(self) -> None:
-        seen = set()
+        seen: set[ExecutionId] = set()
         for execution in self.executions:
             if execution.id in seen:
                 raise MigrationCollisionError(
@@ -58,7 +58,7 @@ class StoredSession:
 
 
 def _domains_in(execution_id: ExecutionId) -> set[DomainId]:
-    domains = set()
+    domains: set[DomainId] = set()
     current: ExecutionId | None = execution_id
     while current is not None:
         domains.add(current.domain_id)

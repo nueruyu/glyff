@@ -112,7 +112,7 @@ class SessionMigrationContract:
         self, backend: MigratableBackend, *names: str, version: str = "v1"
     ) -> list[Execution]:
         await _claim_domain(backend, SESSION, DOMAIN, version)
-        seeded = []
+        seeded: list[Execution] = []
         for name in names:
             execution = Execution.start(make_execution_id(name), canonical_arguments())
             await save_execution(backend, execution, SESSION)

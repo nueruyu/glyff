@@ -74,7 +74,7 @@ def backend(tmp_path: Path) -> SQLiteBackend:
 
 async def seed(backend: SQLiteBackend, *names: str) -> list[Execution]:
     await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
-    seeded = []
+    seeded: list[Execution] = []
     for name in names:
         execution = started(name)
         async with TransactionScope(backend.transaction_provider):
@@ -88,8 +88,8 @@ async def stored(backend: SQLiteBackend) -> list[Execution]:
 
 
 def refuse(backend: SQLiteBackend, monkeypatch: pytest.MonkeyPatch, word: str) -> None:
-    client = backend._client
-    connect = client._connect
+    client = backend._client  # pyright: ignore[reportPrivateUsage]
+    connect = client._connect  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(client, "_connect", lambda: RefusingConnection(connect(), word))
 
 

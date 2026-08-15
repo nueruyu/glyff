@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from glyff import Execution, SerializedValue, SessionId, TransactionScope
+from glyff import Execution, ExecutionId, SerializedValue, SessionId, TransactionScope
 from glyff.store.utils import execution_id_to_path
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff_sqlite import SQLiteBackend
@@ -17,7 +17,7 @@ from glyff_sqlite._sqlite_client import SQLiteClient
 SESSION = SessionId("test")
 
 
-def _save(execution_id) -> SaveExecution:
+def _save(execution_id: ExecutionId) -> SaveExecution:
     execution = Execution.start(execution_id, canonical_arguments())
     return SaveExecution(ExecutionSnapshot.from_execution(execution))
 
@@ -55,7 +55,7 @@ async def test_sqlite_backend_reopens_existing_database(tmp_path: Path):
 
 async def test_sqlite_client_commits_a_batch_of_mutations(tmp_path: Path):
     client = SQLiteClient(tmp_path / "atomic.sqlite3")
-    client._initialize_schema_sync()
+    client._initialize_schema_sync()  # pyright: ignore[reportPrivateUsage]
     root = make_execution_id("task")
     child = make_execution_id("child", parent=root)
 
@@ -73,7 +73,7 @@ async def test_sqlite_client_commits_a_batch_of_mutations(tmp_path: Path):
 
 async def test_sqlite_client_commits_a_delete(tmp_path: Path):
     client = SQLiteClient(tmp_path / "delete.sqlite3")
-    client._initialize_schema_sync()
+    client._initialize_schema_sync()  # pyright: ignore[reportPrivateUsage]
     execution_id = make_execution_id("task")
     path = execution_id_to_path(execution_id)
 

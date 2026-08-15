@@ -7,10 +7,10 @@ import os
 import tempfile
 import time
 from contextlib import asynccontextmanager, contextmanager
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from filelock import AsyncFileLock, FileLock
 from glyff import DomainId
@@ -34,9 +34,9 @@ _LOCK_FILE = ".glyff.lock"
 _TEMP_PREFIX = ".glyff-write-"
 
 _FORMAT_VERSION_KEY = "format_version"
-_SESSIONS_KEY = "sessions"
-_DOMAIN_VERSIONS_KEY = "domain_versions"
-_EXECUTIONS_KEY = "executions"
+SESSIONS_KEY = "sessions"
+DOMAIN_VERSIONS_KEY = "domain_versions"
+EXECUTIONS_KEY = "executions"
 
 # Windows refuses to replace a file another handle has open; the reader releases
 # it in microseconds, so a short retry is enough.
@@ -75,12 +75,12 @@ class FileClient:
     # -- Locking ---------------------------------------------------------------
 
     @contextmanager
-    def _exclusive_sync(self) -> Iterator[None]:
+    def _exclusive_sync(self) -> Generator[None, None, None]:
         with FileLock(self._lock_path):
             yield
 
     @asynccontextmanager
-    async def _exclusive(self) -> AsyncIterator[None]:
+    async def _exclusive(self) -> AsyncGenerator[None, None]:
         """Store-wide exclusion for a read-modify-write.
 
         Both locks are needed: the file lock keeps other processes out, and the
@@ -104,7 +104,7 @@ class FileClient:
         stored = document.get(_FORMAT_VERSION_KEY)
         if stored is None:
             self._write_document_sync(
-                {_FORMAT_VERSION_KEY: self._format_version, _SESSIONS_KEY: {}}
+                {_FORMAT_VERSION_KEY: self._format_version, SESSIONS_KEY: {}}
             )
         elif stored != self._format_version:
             raise StoreFormatVersionError(
@@ -149,8 +149,8 @@ class FileClient:
 
     @staticmethod
     def _session_executions(document: dict[str, Any], session_id: str) -> Executions:
-        sessions = document.get(_SESSIONS_KEY, {})
-        return sessions.get(session_id, {}).get(_EXECUTIONS_KEY, {})
+        sessions = document.get(SESSIONS_KEY, {})
+        return sessions.get(session_id, {}).get(EXECUTIONS_KEY, {})
 
     # -- Read / commit ---------------------------------------------------------
 
@@ -167,10 +167,10 @@ class FileClient:
             return
 
         def apply(document: dict[str, Any]) -> DocumentUpdate[None]:
-            sessions = document.setdefault(_SESSIONS_KEY, {})
+            sessions = document.setdefault(SESSIONS_KEY, {})
             for key, mutation in mutations.items():
                 session = sessions.setdefault(key.session_id.value, {})
-                executions = session.setdefault(_EXECUTIONS_KEY, {})
+                executions = session.setdefault(EXECUTIONS_KEY, {})
                 path = execution_id_to_path(key.execution_id)
 
                 if isinstance(mutation, DeleteExecution):
@@ -215,13 +215,13 @@ class FileClient:
         self, session_id: str, domain_id: DomainId, version: str
     ) -> str:
         def claim(document: dict[str, Any]) -> DocumentUpdate[str]:
-            session = document.setdefault(_SESSIONS_KEY, {}).setdefault(session_id, {})
-            versions = session.setdefault(_DOMAIN_VERSIONS_KEY, {})
+            session = document.setdefault(SESSIONS_KEY, {}).setdefault(session_id, {})
+            versions = session.setdefault(DOMAIN_VERSIONS_KEY, {})
             recorded = versions.get(domain_id.value)
             if recorded is not None:
                 # Rewriting a whole store to report an unchanged version would
                 # re-serialize and fsync every session in it.
-                return DocumentUpdate.unchanged(recorded)
+                return DocumentUpdate[str].unchanged(recorded)
 
             versions[domain_id.value] = version
             return DocumentUpdate(version)

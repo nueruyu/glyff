@@ -3,6 +3,8 @@
 import hashlib
 import itertools
 import json
+from collections.abc import Mapping
+from typing import Any, Protocol
 
 import pytest
 from glyff import (
@@ -12,6 +14,7 @@ from glyff import (
     DomainId,
     DomainVersionMap,
     Execution,
+    ExecutionId,
     CanonicalFallback,
     SerializedValue,
 )
@@ -30,11 +33,15 @@ PAY = DomainId("com.example.payments")
 SHIP = DomainId("com.example.shipping")
 
 
+class ArgumentConverter(Protocol):
+    def __call__(self, *args: Any, **kwargs: Any) -> Mapping[str, Any]: ...
+
+
 def started(
     name: str,
     *,
     arguments: dict[str, CanonicalArgumentValue] | None = None,
-    parent=None,
+    parent: ExecutionId | None = None,
     sequence: int = 0,
     domain_id: DomainId = PAY,
 ) -> Execution:
@@ -69,11 +76,19 @@ class MigrationFixture:
         )
         self.transition = self.migration.transition(source, target)
 
-    def remap(self, *args, **kwargs) -> DomainVersionTransition:
-        return self.transition.remap(*args, **kwargs)
+    def remap(
+        self,
+        source: ExecutionShape,
+        target: ExecutionShape,
+        *,
+        convert_arguments: ArgumentConverter | None = None,
+    ) -> DomainVersionTransition:
+        return self.transition.remap(
+            source, target, convert_arguments=convert_arguments
+        )
 
-    def drop(self, *args, **kwargs) -> DomainVersionTransition:
-        return self.transition.drop(*args, **kwargs)
+    def drop(self, source: ExecutionShape) -> DomainVersionTransition:
+        return self.transition.drop(source)
 
     def migrate(self, source: StoredSession) -> StoredSession:
         return self.migration.migrate(source)
@@ -143,14 +158,14 @@ def test_a_renamed_boundary_keeps_everything_but_its_name():
 def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
     execution = started("authorize", arguments={"order": {"id": "ord_1"}, "units": 12})
 
+    def convert(order: Any, units: Any) -> dict[str, Any]:
+        return {"order_id": order["id"], "cents": units * 100}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("authorize", "order", "units"),
         ExecutionShape("charge", "order_id", "cents"),
-        convert_arguments=lambda order, units: {
-            "order_id": order["id"],
-            "cents": units * 100,
-        },
+        convert_arguments=convert,
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -163,11 +178,14 @@ def test_a_converted_argument_becomes_the_one_the_record_is_keyed_by():
 def test_a_default_the_new_boundary_gained_is_written_out_by_the_migration():
     execution = started("authorize", arguments={"order": "ord_1"})
 
+    def convert(order: Any) -> dict[str, Any]:
+        return {"order": order, "currency": "JPY"}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("authorize", "order"),
         ExecutionShape("authorize", "order", "currency"),
-        convert_arguments=lambda order: {"order": order, "currency": "JPY"},
+        convert_arguments=convert,
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -184,11 +202,15 @@ def test_a_fallback_argument_reaches_the_conversion_as_itself():
         arguments={"client": CanonicalFallback("com.example.PaymentClient")},
     )
 
+    def convert(client: Any) -> dict[str, Any]:
+        seen.append(client)
+        return {"client": client}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("authorize", "client"),
         ExecutionShape("charge", "client"),
-        convert_arguments=lambda client: seen.append(client) or {"client": client},
+        convert_arguments=convert,
     )
     migrate(migration, session(execution))
 
@@ -204,11 +226,14 @@ def test_a_fallback_argument_passed_through_keys_the_call_as_it_did_before():
         },
     )
 
+    def convert(client: Any, order: Any) -> dict[str, Any]:
+        return {"client": client, "order": order}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("authorize", "client", "order"),
         ExecutionShape("charge", "client", "order"),
-        convert_arguments=lambda client, order: {"client": client, "order": order},
+        convert_arguments=convert,
     )
     [migrated] = migrate(migration, session(execution))
 
@@ -310,11 +335,15 @@ def test_identical_repeated_calls_are_converted_once_between_them():
     # differ by being nondeterministic — and would scatter one class of repeated
     # calls across scopes that each start counting from 0 again.
     conversions = itertools.count()
+
+    def convert(order: Any) -> dict[str, Any]:
+        return {"order": f"{order}-{next(conversions)}"}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("retry", "order"),
         ExecutionShape("retried", "order"),
-        convert_arguments=lambda order: {"order": f"{order}-{next(conversions)}"},
+        convert_arguments=convert,
     )
 
     migrated = migrate(
@@ -339,11 +368,14 @@ def test_gathering_separate_calls_into_one_class_is_refused():
     first = started("authorize", arguments={"order": "ord_1"})
     second = started("authorize", arguments={"order": "ord_2"})
 
+    def convert(order: Any) -> dict[str, Any]:
+        return {"at_all": True}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("authorize", "order"),
         ExecutionShape("charge", "at_all"),
-        convert_arguments=lambda order: {"at_all": True},
+        convert_arguments=convert,
     )
 
     with pytest.raises(MigrationOrdinalAmbiguityError, match="which of them ran first"):
@@ -375,11 +407,14 @@ def test_two_boundaries_may_share_a_name_while_their_calls_stay_apart():
 def test_records_of_another_generation_are_refused():
     execution = started("authorize", arguments={"order": "ord_1"})
 
+    def convert(order: Any, currency: Any) -> dict[str, Any]:
+        return {"order": order}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("authorize", "order", "currency"),
         ExecutionShape("charge", "order"),
-        convert_arguments=lambda order, currency: {"order": order},
+        convert_arguments=convert,
     )
 
     with pytest.raises(MigrationError, match="another generation"):
@@ -389,11 +424,14 @@ def test_records_of_another_generation_are_refused():
 def test_a_conversion_that_misses_an_argument_is_refused():
     execution = started("authorize", arguments={"order": "ord_1"})
 
+    def convert(order: Any) -> dict[str, Any]:
+        return {"order_id": order}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("authorize", "order"),
         ExecutionShape("charge", "order_id", "cents"),
-        convert_arguments=lambda order: {"order_id": order},
+        convert_arguments=convert,
     )
 
     with pytest.raises(MigrationError, match="but it is keyed by"):
@@ -454,14 +492,14 @@ def test_a_fallback_nested_in_a_container_survives_a_conversion():
         },
     )
 
+    def convert(clients: Any, units: Any) -> dict[str, Any]:
+        return {"clients": clients, "cents": units * 100}
+
     migration = migrator()
     migration.remap(
         ExecutionShape("authorize", "clients", "units"),
         ExecutionShape("charge", "clients", "cents"),
-        convert_arguments=lambda clients, units: {
-            "clients": clients,
-            "cents": units * 100,
-        },
+        convert_arguments=convert,
     )
     [migrated] = migrate(migration, session(execution))
 

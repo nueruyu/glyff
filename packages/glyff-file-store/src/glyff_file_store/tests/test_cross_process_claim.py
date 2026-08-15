@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from glyff_file_store._file_client import _STORE_FILE
+from glyff_file_store._file_client import _STORE_FILE  # pyright: ignore[reportPrivateUsage]
 from glyff_file_store._store import FORMAT_VERSION
 
 # Interpreter startup alone staggers the children far more than a claim takes,
@@ -64,8 +64,8 @@ def _race(
     return running
 
 
-def _collect(running: list[subprocess.Popen[str]]) -> list:
-    outcomes = []
+def _collect(running: list[subprocess.Popen[str]]) -> list[str]:
+    outcomes: list[str] = []
     for process in running:
         stdout, stderr = process.communicate(timeout=60)
         assert process.returncode == 0, stderr

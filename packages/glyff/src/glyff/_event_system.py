@@ -4,7 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from types import UnionType
-from typing import Generic, TypeVar, Union, get_args, get_origin
+from typing import Any, Generic, TypeVar, Union, get_args, get_origin
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +67,14 @@ class EventHandler(ABC, Generic[E]):
 class EventEmitter:
     """Manages best-effort event handlers and dispatches events."""
 
-    def __init__(self, handlers: list[EventHandler]) -> None:
+    def __init__(self, handlers: list[EventHandler[Any]]) -> None:
         self._handler_map = self._resolve_handler_map(handlers)
 
     def _resolve_handler_map(
-        self, handlers: list[EventHandler]
-    ) -> dict[type[Event], list[EventHandler]]:
+        self, handlers: list[EventHandler[Any]]
+    ) -> dict[type[Event], list[EventHandler[Any]]]:
         """Inspects handlers to map event types to the handlers that process them."""
-        handler_map: dict[type[Event], list[EventHandler]] = defaultdict(list)
+        handler_map: dict[type[Event], list[EventHandler[Any]]] = defaultdict(list)
         for handler in handlers:
             for event_type in handler.event_types:
                 handler_map[event_type].append(handler)
@@ -86,8 +86,8 @@ class EventEmitter:
         Handlers run sequentially in registration order. Handler exceptions are
         logged and do not stop later handlers or propagate to the caller.
         """
-        handlers_to_run: list[EventHandler] = []
-        seen_handlers: set[EventHandler] = set()
+        handlers_to_run: list[EventHandler[Any]] = []
+        seen_handlers: set[EventHandler[Any]] = set()
         for event_type in type(event).__mro__:
             if not issubclass(event_type, Event):
                 continue

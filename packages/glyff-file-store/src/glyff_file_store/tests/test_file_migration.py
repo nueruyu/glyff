@@ -26,7 +26,10 @@ from glyff.migration import (
 from glyff.store.utils import path_to_execution_id
 from glyff.testing import canonical_arguments, make_execution_id
 from glyff_file_store import JsonFileBackend
-from glyff_file_store._file_client import _STORE_FILE, _TEMP_PREFIX
+from glyff_file_store._file_client import (
+    _STORE_FILE,  # pyright: ignore[reportPrivateUsage]
+    _TEMP_PREFIX,  # pyright: ignore[reportPrivateUsage]
+)
 
 SESSION = SessionId("migrate")
 DOMAIN = DomainId("test")
@@ -57,7 +60,7 @@ async def _save(backend: JsonFileBackend, execution: Execution) -> None:
 
 async def seed(backend: JsonFileBackend, *names: str) -> list[Execution]:
     await backend.claim_domain(SESSION, DOMAIN, DomainVersion("v1"))
-    seeded = []
+    seeded: list[Execution] = []
     for name in names:
         execution = started(name)
         async with TransactionScope(backend.transaction_provider):
@@ -76,7 +79,7 @@ async def test_a_failed_replacement_changes_neither_half(
     def refuse(source: str, target: Path) -> None:
         raise OSError("refusing to replace")
 
-    monkeypatch.setattr(backend._client, "_replace_sync", refuse)
+    monkeypatch.setattr(backend._client, "_replace_sync", refuse)  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(OSError, match="refusing to replace"):
         await backend.session_migration.run(
@@ -104,7 +107,7 @@ async def test_a_failed_replacement_strands_no_temporary(
     def refuse(source: str, target: Path) -> None:
         raise OSError("refusing to replace")
 
-    monkeypatch.setattr(backend._client, "_replace_sync", refuse)
+    monkeypatch.setattr(backend._client, "_replace_sync", refuse)  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(OSError):
         await backend.session_migration.run(
@@ -219,7 +222,7 @@ async def test_a_cancelled_migration_still_reports_a_worker_failure_as_cancelled
     def refuse(source: str, target: Path) -> None:
         raise OSError("refusing to replace")
 
-    monkeypatch.setattr(backend._client, "_replace_sync", refuse)
+    monkeypatch.setattr(backend._client, "_replace_sync", refuse)  # pyright: ignore[reportPrivateUsage]
 
     class SlowMigrator(ReplacingMigrator):
         def migrate(self, source: StoredSession) -> StoredSession:

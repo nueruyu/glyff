@@ -9,7 +9,7 @@ serializer output to be JSON text.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, cast
 
 from .._canonical_arguments import CanonicalArguments
 from .._execution import (
@@ -72,8 +72,9 @@ def _pack_metadata(metadata: dict[str, Metadata]) -> dict[str, Any]:
 def _unpack_metadata(raw: object) -> dict[str, Metadata]:
     if not isinstance(raw, dict):
         return {}
+    entries = cast(dict[object, object], raw)
     result: dict[str, Metadata] = {}
-    for key, value in raw.items():
+    for key, value in entries.items():
         if isinstance(key, str):
             result[key] = Metadata(key=key, value=SerializedValue(_json_bytes(value)))
     return result

@@ -18,13 +18,13 @@ def test_canonical_arguments_reject_values_outside_the_json_data_model():
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
-def test_canonical_arguments_reject_non_finite_numbers(value):
+def test_canonical_arguments_reject_non_finite_numbers(value: float) -> None:
     with pytest.raises(ArgumentCanonicalizationError, match="JSON data model"):
         CanonicalArguments({"a": value})
 
 
 @pytest.mark.parametrize("data", [b"not-json", b"[]", b'{"a":NaN}'])
-def test_decode_rejects_malformed_canonical_data(data):
+def test_decode_rejects_malformed_canonical_data(data: bytes) -> None:
     with pytest.raises(InvalidExecutionError):
         CanonicalArguments.from_recorded_bytes(data)
 

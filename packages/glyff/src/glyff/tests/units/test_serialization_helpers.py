@@ -1,5 +1,6 @@
 import dataclasses
 import functools
+from typing import Any
 
 import pytest
 
@@ -14,7 +15,7 @@ from glyff.serialization import (
     FallbackByTypeQualname,
 )
 from glyff.serialization._canonicalization import (
-    _canonicalize_set,
+    _canonicalize_set,  # pyright: ignore[reportPrivateUsage]
     to_canonical,
 )
 from glyff.serialization._fallback import fallback_representer_or_reject
@@ -106,7 +107,7 @@ def test_canonical_identifies_types_and_functions_by_qualified_name():
 
 
 def test_canonical_decomposes_partials():
-    def helper(a, b):
+    def helper(a: Any, b: Any) -> None:
         pass
 
     assert canonical(functools.partial(helper, 1, b=2)) == {
@@ -176,7 +177,7 @@ def test_canonical_tags_fallback_output_so_it_cannot_collide():
 
 
 @pytest.mark.parametrize("value", [{"__glyff_fallback__": "x"}, _TagField("x")])
-def test_canonical_refuses_a_value_that_claims_the_fallback_tag(value):
+def test_canonical_refuses_a_value_that_claims_the_fallback_tag(value: Any) -> None:
     # The marker is how a value with no representation is written down. Anything
     # else canonicalizing to it would share that value's key, whichever branch
     # of the walk built the mapping — a native one or a dataclass's fields.
@@ -206,7 +207,7 @@ def test_canonical_applies_the_fallback_at_any_depth():
 
 def test_a_fallback_representer_must_return_a_canonical_value():
     class InvalidFallback(CanonicalFallbackRepresenter):
-        def represent(self, value) -> CanonicalArgumentValue:
+        def represent(self, value: Any) -> CanonicalArgumentValue:
             return object()  # type: ignore[return-value]
 
     with pytest.raises(

@@ -1,6 +1,7 @@
 """Entering a domain's function claims or verifies its version — and no more."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 import pytest
 from glyff import (
@@ -32,11 +33,11 @@ def test_a_domain_is_not_hashable():
 
 
 async def test_an_engraved_function_captures_the_domain_values_at_decoration(
-    serializer, argument_canonicalizer
-):
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     payment_domain = domain(PAYMENTS, "v1")
     task = _task(payment_domain)
-    payment_domain._version = DomainVersion("v2")
+    object.__setattr__(payment_domain, "_version", DomainVersion("v2"))
 
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
@@ -61,7 +62,9 @@ def _session(
     )
 
 
-def _task(domain: Domain, calls: list[str] | None = None):
+def _task(
+    domain: Domain, calls: list[str] | None = None
+) -> Callable[[], Awaitable[str]]:
     @domain.engrave
     async def task() -> str:
         if calls is not None:
@@ -72,8 +75,8 @@ def _task(domain: Domain, calls: list[str] | None = None):
 
 
 async def test_a_first_call_records_the_domains_version(
-    serializer, argument_canonicalizer
-):
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
     task = _task(domain(PAYMENTS, "v1"))
 
@@ -86,8 +89,8 @@ async def test_a_first_call_records_the_domains_version(
 
 
 async def test_a_nested_domain_execution_records_its_parent_domain_identity(
-    serializer, argument_canonicalizer
-):
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     payments = domain(PAYMENTS, "v1")
     shipping = domain(SHIPPING, "v2")
 
@@ -124,8 +127,8 @@ async def test_a_nested_domain_execution_records_its_parent_domain_identity(
 
 
 async def test_entering_under_the_recorded_version_is_accepted(
-    serializer, argument_canonicalizer
-):
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
     task = _task(domain(PAYMENTS, "v1"))
 
@@ -134,7 +137,9 @@ async def test_entering_under_the_recorded_version_is_accepted(
             assert await task() == "v1"
 
 
-async def test_a_different_version_is_refused(serializer, argument_canonicalizer):
+async def test_a_different_version_is_refused(
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
         await _task(domain(PAYMENTS, "v1"))()
@@ -148,7 +153,9 @@ async def test_a_different_version_is_refused(serializer, argument_canonicalizer
     assert raised.value.current_version == DomainVersion("v2")
 
 
-async def test_a_mismatch_leaves_the_session_alone(serializer, argument_canonicalizer):
+async def test_a_mismatch_leaves_the_session_alone(
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
         await _task(domain(PAYMENTS, "v1"))()
@@ -167,8 +174,8 @@ async def test_a_mismatch_leaves_the_session_alone(serializer, argument_canonica
 
 
 async def test_a_mismatch_is_raised_on_entering_the_domain_not_the_session(
-    serializer, argument_canonicalizer
-):
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
         await _task(domain(PAYMENTS, "v1"))()
@@ -183,8 +190,8 @@ async def test_a_mismatch_is_raised_on_entering_the_domain_not_the_session(
 
 
 async def test_domains_in_one_session_carry_their_own_versions(
-    serializer, argument_canonicalizer
-):
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
 
     async with _session(backend, serializer, argument_canonicalizer):
@@ -200,8 +207,8 @@ async def test_domains_in_one_session_carry_their_own_versions(
 
 
 async def test_sessions_in_one_backend_carry_their_own_versions(
-    serializer, argument_canonicalizer
-):
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
     orders, refunds = SessionId("orders"), SessionId("refunds")
 
@@ -218,17 +225,21 @@ async def test_sessions_in_one_backend_carry_their_own_versions(
     ) == DomainVersion("v2")
 
 
-async def test_concurrent_first_calls_claim_once(serializer, argument_canonicalizer):
+async def test_concurrent_first_calls_claim_once(
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
     payment_domain = domain(PAYMENTS, "v1")
     tasks = [_task(payment_domain) for _ in range(8)]
     claims = 0
     claim_domain = backend.claim_domain
 
-    async def counting(*args, **kwargs):
+    async def counting(
+        session_id: SessionId, domain_id: DomainId, version: DomainVersion
+    ) -> DomainVersion:
         nonlocal claims
         claims += 1
-        return await claim_domain(*args, **kwargs)
+        return await claim_domain(session_id, domain_id, version)
 
     backend.claim_domain = counting  # type: ignore[method-assign]
 
@@ -239,8 +250,8 @@ async def test_concurrent_first_calls_claim_once(serializer, argument_canonicali
 
 
 async def test_a_mismatch_is_observed_without_a_second_round_trip(
-    serializer, argument_canonicalizer
-):
+    serializer: Serializer, argument_canonicalizer: ArgumentCanonicalizer
+) -> None:
     backend = MemoryBackend()
     async with _session(backend, serializer, argument_canonicalizer):
         await _task(domain(PAYMENTS, "v1"))()
@@ -248,10 +259,12 @@ async def test_a_mismatch_is_observed_without_a_second_round_trip(
     claims = 0
     claim_domain = backend.claim_domain
 
-    async def counting(*args, **kwargs):
+    async def counting(
+        session_id: SessionId, domain_id: DomainId, version: DomainVersion
+    ) -> DomainVersion:
         nonlocal claims
         claims += 1
-        return await claim_domain(*args, **kwargs)
+        return await claim_domain(session_id, domain_id, version)
 
     backend.claim_domain = counting  # type: ignore[method-assign]
 

@@ -106,7 +106,7 @@ class SQLiteExecutionRepository(ExecutionRepository):
         self, session_id: SessionId, prefix: str
     ) -> dict[str, ExecutionMutation]:
         stage = self._staging.current()
-        staged = {}
+        staged: dict[str, ExecutionMutation] = {}
         for key, mutation in (stage.snapshot() if stage else {}).items():
             if key.session_id != session_id:
                 continue
@@ -171,7 +171,7 @@ class SQLiteBackend(MigratableBackend):
             synchronous=synchronous,
             table_prefix=table_prefix,
         )
-        client._initialize_schema_sync()
+        client._initialize_schema_sync()  # pyright: ignore[reportPrivateUsage]
         staging = ExecutionStaging()
         self._client = client
         self._repository = SQLiteExecutionRepository(client, staging)

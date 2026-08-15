@@ -127,7 +127,7 @@ class ExecutionBackendContract:
 
     async def test_args_roundtrip_byte_for_byte(self, backend_factory: BackendFactory):
         backend = backend_factory("args-bytes")
-        raw = {"q": "こんにちは", "n": 1}
+        raw: dict[str, CanonicalArgumentValue] = {"q": "こんにちは", "n": 1}
         execution_id = make_execution_id("task", arguments=raw)
         args = canonical_arguments(raw)
 

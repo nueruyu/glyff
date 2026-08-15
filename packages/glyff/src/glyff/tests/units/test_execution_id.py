@@ -3,7 +3,12 @@ from glyff import ArgumentsDigest, DomainId, ExecutionId, ExecutionName
 DOMAIN = DomainId("test")
 
 
-def make(name: str, sequence: int, digest: str, parent=None) -> ExecutionId:
+def make(
+    name: str,
+    sequence: int,
+    digest: str,
+    parent: ExecutionId | None = None,
+) -> ExecutionId:
     return ExecutionId(
         parent_id=parent,
         domain_id=DOMAIN,

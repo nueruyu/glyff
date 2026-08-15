@@ -41,7 +41,7 @@ class Execution:
     arguments: CanonicalArguments
     """The arguments this call was keyed by: ``id.arguments_digest == arguments.digest``."""
     result: SerializedValue | None = None
-    metadata: dict[str, Metadata] = field(default_factory=dict)
+    metadata: dict[str, Metadata] = field(default_factory=lambda: {})
 
     def __post_init__(self) -> None:
         if self.id.arguments_digest != self.arguments.digest:

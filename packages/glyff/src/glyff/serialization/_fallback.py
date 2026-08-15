@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, cast
 
 from .._types import CanonicalArgumentValue
 from ..exceptions import ArgumentCanonicalizationError
@@ -21,7 +21,7 @@ class FallbackByTypeQualname(CanonicalFallbackRepresenter):
     """
 
     def represent(self, value: Any) -> CanonicalArgumentValue:
-        value_type = type(value)
+        value_type = cast(type[Any], type(value))
         return f"{value_type.__module__}.{value_type.__qualname__}"
 
 

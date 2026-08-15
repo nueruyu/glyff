@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable, Iterable
-from typing import Any, NamedTuple
+from collections.abc import AsyncIterator, Iterable
+from typing import Any, NamedTuple, Protocol
 
 from glyff import (
     Backend,
@@ -26,11 +26,12 @@ from glyff.store.staging import ExecutionStaging
 
 class Call(NamedTuple):
     name: str
-    args: tuple
-    kwargs: dict
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
 
 
-Recorder = Callable[..., None]
+class Recorder(Protocol):
+    def __call__(self, *args: Any, **kwargs: Any) -> None: ...
 
 
 class StubTransaction(Transaction):
@@ -99,10 +100,10 @@ class StubBackend(Backend):
         self._backend = MemoryBackend()
         self.staging = ExecutionStaging()
         self._repository = StubExecutionRepository(
-            self._record, MemoryExecutionRepository(client, self.staging)
+            self.record, MemoryExecutionRepository(client, self.staging)
         )
         self._transaction_provider = StubTransactionProvider(
-            self._record, MemoryTransactionProvider(client, self.staging)
+            self.record, MemoryTransactionProvider(client, self.staging)
         )
 
     @property
@@ -117,13 +118,17 @@ class StubBackend(Backend):
         """Swaps in a repository that fails where the real one would not."""
         self._repository = repository
 
+    @property
+    def client(self) -> MemoryClient:
+        return self._client
+
     async def claim_domain(
         self, session_id: SessionId, domain_id: DomainId, version: DomainVersion
     ) -> DomainVersion:
-        self._record("claim_domain", session_id, domain_id, version)
+        self.record("claim_domain", session_id, domain_id, version)
         return await self._backend.claim_domain(session_id, domain_id, version)
 
-    def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
+    def record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append(Call(name, args, kwargs))
 
     def get_calls(self, name: str) -> list[Call]:

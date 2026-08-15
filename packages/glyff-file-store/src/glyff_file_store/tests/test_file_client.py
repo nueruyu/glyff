@@ -3,6 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from glyff import DomainId, Execution, SessionId
@@ -16,7 +17,11 @@ from glyff.store.staging import (
 from glyff.store.utils import execution_id_to_path
 from glyff.testing import canonical_arguments, make_execution_id
 
-from glyff_file_store._file_client import _STORE_FILE, _TEMP_PREFIX, FileClient
+from glyff_file_store._file_client import (
+    _STORE_FILE,  # pyright: ignore[reportPrivateUsage]
+    _TEMP_PREFIX,  # pyright: ignore[reportPrivateUsage]
+    FileClient,
+)
 
 SESSION = SessionId("test-session")
 DOMAIN = DomainId("test")
@@ -42,7 +47,7 @@ def path_of(name: str) -> str:
     return execution_id_to_path(make_execution_id(name))
 
 
-def document(base_dir: Path) -> dict:
+def document(base_dir: Path) -> dict[str, Any]:
     return json.loads((base_dir / _STORE_FILE).read_text())
 
 
@@ -197,7 +202,7 @@ async def test_a_claim_on_a_claimed_domain_writes_nothing(
     # to say so would re-serialize and fsync every session in it.
     await client.claim_domain(SESSION.value, DOMAIN, "v1")
 
-    def refuse(document: dict) -> None:
+    def refuse(document: dict[str, Any]) -> None:
         raise AssertionError("a claim that changed nothing rewrote the store")
 
     monkeypatch.setattr(client, "_write_document_sync", refuse)

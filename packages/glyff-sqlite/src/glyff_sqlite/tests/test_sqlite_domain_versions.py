@@ -4,7 +4,15 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from glyff import Domain, DomainId, DomainVersion, Session, SessionId
+from glyff import (
+    ArgumentCanonicalizer,
+    Domain,
+    DomainId,
+    DomainVersion,
+    Serializer,
+    Session,
+    SessionId,
+)
 from glyff.exceptions import DomainVersionMismatchError
 
 from glyff_sqlite import SQLiteBackend
@@ -12,7 +20,12 @@ from glyff_sqlite import SQLiteBackend
 PAYMENTS = DomainId("com.example.payments")
 
 
-async def _enter(db: Path, version: str, serializer, argument_canonicalizer) -> None:
+async def _enter(
+    db: Path,
+    version: str,
+    serializer: Serializer,
+    argument_canonicalizer: ArgumentCanonicalizer,
+) -> None:
     domain = Domain(PAYMENTS, version=DomainVersion(version))
 
     @domain.engrave
@@ -29,8 +42,10 @@ async def _enter(db: Path, version: str, serializer, argument_canonicalizer) -> 
 
 
 async def test_concurrent_entries_under_different_versions_admit_one(
-    tmp_path: Path, serializer, argument_canonicalizer
-):
+    tmp_path: Path,
+    serializer: Serializer,
+    argument_canonicalizer: ArgumentCanonicalizer,
+) -> None:
     db = tmp_path / "race.sqlite3"
 
     outcomes = await asyncio.gather(
@@ -45,8 +60,10 @@ async def test_concurrent_entries_under_different_versions_admit_one(
 
 
 async def test_resuming_under_the_recorded_version_is_accepted(
-    tmp_path: Path, serializer, argument_canonicalizer
-):
+    tmp_path: Path,
+    serializer: Serializer,
+    argument_canonicalizer: ArgumentCanonicalizer,
+) -> None:
     db = tmp_path / "resume.sqlite3"
     await _enter(db, "v1", serializer, argument_canonicalizer)
     await _enter(db, "v1", serializer, argument_canonicalizer)

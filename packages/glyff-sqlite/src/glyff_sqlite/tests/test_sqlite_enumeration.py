@@ -8,7 +8,9 @@ from glyff import Execution, SessionId, TransactionScope
 from glyff.testing import canonical_arguments, make_execution_id
 
 from glyff_sqlite import SQLiteBackend
-from glyff_sqlite._sqlite_client import _READ_BATCH_SIZE
+from glyff_sqlite._sqlite_client import (
+    _READ_BATCH_SIZE,  # pyright: ignore[reportPrivateUsage]
+)
 
 SESSION = SessionId("test")
 
